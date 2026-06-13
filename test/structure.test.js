@@ -12,6 +12,10 @@ async function tempRoot() {
   return await fs.mkdtemp(path.join(os.tmpdir(), 'cricket-'));
 }
 
+async function assertDirectoryExists(directoryPath) {
+  assert.ok(await fs.stat(directoryPath).then(stat => stat.isDirectory()));
+}
+
 describe('Cricket CLI', () => {
   it('scaffolds the standard domain files', async () => {
     let root = await tempRoot();
@@ -35,7 +39,8 @@ describe('Cricket CLI', () => {
       'project-board.routes.js',
       'project-board.rules.js',
       'project-board.serializers.js',
-      'project-board.service.js'
+      'project-board.service.js',
+      'project-board.test.js'
     ]);
 
     let routes = await fs.readFile(
@@ -68,6 +73,14 @@ describe('Cricket CLI', () => {
     );
 
     assert.match(model, /table: 'project_board'/);
+
+    let endpointTest = await fs.readFile(
+      path.join(root, 'project-board', 'project-board.test.js'),
+      'utf8'
+    );
+
+    assert.match(endpointTest, /tests user-visible HTTP behavior/);
+    assert.match(endpointTest, /real app test server/);
   });
 
   it('does not overwrite existing domain files unless forced', async () => {
@@ -128,12 +141,91 @@ describe('Cricket CLI', () => {
     );
 
     assert.match(agents, /Cricket App Guidance/);
+    assert.match(agents, /App Shape/);
     assert.match(agents, /Domain Shape/);
+    assert.match(agents, /api\/middleware/);
+    assert.match(agents, /api\/services/);
+    assert.match(agents, /api\/workers/);
+    assert.match(agents, /api\/migrations/);
+    assert.match(agents, /api\/dev/);
+    assert.match(agents, /not product architecture/);
     assert.match(agents, /The folder is the domain/);
-    assert.match(agents, /Test endpoint behavior through HTTP\./);
+    assert.match(agents, /\*\.test\.js/);
+    assert.match(agents, /endpoint behavior through HTTP/);
     assert.match(skill, /name: cricket-api/);
     assert.match(skill, /OpenAPI generation/);
-    assert.match(skill, /domains.*root/s);
+    assert.match(skill, /api\/middleware/);
+    assert.match(skill, /api\/workers/);
+    assert.match(skill, /api\/dev/);
+    assert.match(skill, /local-only development support/);
+    assert.match(skill, /domain-local `\*\.test\.js`/);
+  });
+
+  it('scaffolds the small Cricket app structure', async () => {
+    let root = await tempRoot();
+
+    let result = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'init',
+      'app',
+      root
+    ]);
+
+    assert.match(result.stdout, /Created Cricket app structure/);
+    assert.match(result.stdout, /api\/index\.js/);
+    assert.match(result.stdout, /api\/domains/);
+    assert.match(result.stdout, /api\/middleware/);
+    assert.match(result.stdout, /api\/services/);
+    assert.match(result.stdout, /api\/workers/);
+    assert.match(result.stdout, /api\/migrations/);
+    assert.match(result.stdout, /api\/dev/);
+
+    let appEntry = await fs.readFile(path.join(root, 'api', 'index.js'), 'utf8');
+
+    assert.match(appEntry, /defineCricketApp/);
+    assert.match(appEntry, /domains: '\.\/domains'/);
+    await assertDirectoryExists(path.join(root, 'api', 'domains'));
+    await assertDirectoryExists(path.join(root, 'api', 'middleware'));
+    await assertDirectoryExists(path.join(root, 'api', 'services'));
+    await assertDirectoryExists(path.join(root, 'api', 'workers'));
+    await assertDirectoryExists(path.join(root, 'api', 'migrations'));
+    await assertDirectoryExists(path.join(root, 'api', 'dev'));
+  });
+
+  it('does not overwrite the app entry unless forced', async () => {
+    let root = await tempRoot();
+    let appPath = path.join(root, 'api', 'index.js');
+
+    await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'init',
+      'app',
+      root
+    ]);
+
+    await fs.writeFile(appPath, 'custom app\n');
+
+    let skipped = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'init',
+      'app',
+      root
+    ]);
+
+    assert.match(skipped.stdout, /skipped existing/);
+    assert.equal(await fs.readFile(appPath, 'utf8'), 'custom app\n');
+
+    let forced = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'init',
+      'app',
+      root,
+      '--force'
+    ]);
+
+    assert.match(forced.stdout, /\+ .*api\/index\.js/);
+    assert.match(forced.stdout, /skipped existing .*api\/domains/);
+    assert.notEqual(await fs.readFile(appPath, 'utf8'), 'custom app\n');
   });
 
   it('inspects a real Cricket app module', async () => {

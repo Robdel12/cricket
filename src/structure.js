@@ -9,7 +9,8 @@ export let domainFileTypes = [
   'serializers',
   'service',
   'rules',
-  'routes'
+  'routes',
+  'test'
 ];
 
 function toWords(value) {
@@ -100,12 +101,24 @@ export let ${camelName}Endpoints = [
 `;
 }
 
+function testTemplate({ fileStem }) {
+  return `import { describe, it } from 'node:test';
+
+describe('${fileStem} endpoints', () => {
+  it('tests user-visible HTTP behavior through the app boundary', async () => {
+    // Start the real app test server, make an HTTP request, and assert the response.
+  });
+});
+`;
+}
+
 let templates = {
   model: modelTemplate,
   serializers: serializersTemplate,
   service: serviceTemplate,
   rules: rulesTemplate,
-  routes: routesTemplate
+  routes: routesTemplate,
+  test: testTemplate
 };
 
 function templateFor(type, domain) {
@@ -235,8 +248,128 @@ export function formatScaffoldResult(result) {
   return lines.join('\n');
 }
 
+function appIndexTemplate() {
+  return `import { defineCricketApp, startCricketApp } from '@robdel12/cricket';
+
+export let app = defineCricketApp({
+  name: 'Cricket API',
+  version: '1.0.0',
+  domains: './domains'
+});
+
+if (process.env.NODE_ENV !== 'test')
+  await startCricketApp(app, { port: process.env.PORT || 3000 });
+`;
+}
+
+export let appPaths = [
+  'api/index.js',
+  'api/domains',
+  'api/middleware',
+  'api/services',
+  'api/workers',
+  'api/migrations',
+  'api/dev'
+];
+
+let appFileTemplates = {
+  'api/index.js': appIndexTemplate
+};
+
+async function scaffoldPath(root, relativePath, {
+  force
+}) {
+  let filePath = path.join(root, relativePath);
+  let template = appFileTemplates[relativePath];
+  let exists = await pathExists(filePath);
+
+  if (exists && (!template || !force))
+    return { skipped: filePath };
+
+  if (template) {
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, template());
+    return { created: filePath };
+  }
+
+  await fs.mkdir(filePath, { recursive: true });
+  return { created: filePath };
+}
+
+/**
+ * Scaffold the small recommended Cricket app shell.
+ *
+ * @param {object} [options]
+ * @param {string} [options.root='.'] - Project root.
+ * @param {boolean} [options.force=false] - Overwrite existing files when true.
+ * @returns {Promise<{root: string, created: string[], skipped: string[]}>}
+ */
+export async function scaffoldApp({
+  root = '.',
+  force = false
+} = {}) {
+  let created = [];
+  let skipped = [];
+
+  for (let relativePath of appPaths) {
+    let result = await scaffoldPath(root, relativePath, { force });
+
+    if (result.created)
+      created.push(result.created);
+
+    if (result.skipped)
+      skipped.push(result.skipped);
+  }
+
+  return {
+    root,
+    created,
+    skipped
+  };
+}
+
+/**
+ * Format the app scaffold summary for terminal output.
+ *
+ * @param {{root: string, created: string[], skipped: string[]}} result
+ * @returns {string}
+ */
+export function formatAppScaffoldResult(result) {
+  let lines = [
+    `Created Cricket app structure at ${result.root}`,
+    '',
+    'Paths'
+  ];
+
+  for (let filePath of result.created)
+    lines.push(`  + ${filePath}`);
+
+  for (let filePath of result.skipped)
+    lines.push(`  ! skipped existing ${filePath}`);
+
+  lines.push(
+    '',
+    'Next',
+    '  - Add domains with `pnpm cricket new domain project api/domains`.',
+    '  - Point your app-owned Knex config at `api/migrations` if you use Knex.',
+    '  - Run `pnpm cricket inspect api/index.js` and `pnpm cricket docs api/index.js --out openapi.json`.'
+  );
+
+  return lines.join('\n');
+}
+
 let agentFiles = {
   'AGENTS.md': `# Cricket App Guidance
+
+## App Shape
+
+- \`api/index.js\` is the normal Node entrypoint and visible Cricket app wiring.
+- \`api/domains/\` contains product API domains.
+- \`api/middleware/\` contains HTTP edge behavior such as auth extraction, uploads, rate limits, raw webhooks, CORS, and frontend fallbacks.
+- \`api/services/\` contains app-wide services that are not owned by one domain.
+- \`api/workers/\` contains background worker entrypoints that call services.
+- \`api/migrations/\` contains app-owned database migrations. Point your own Knex config or command at this folder.
+- \`api/dev/\` contains local-only developer support code. It is not product architecture and must not be required by production runtime.
 
 ## Domain Shape
 
@@ -245,13 +378,15 @@ let agentFiles = {
 - \`*.service.js\` owns data operations.
 - \`*.rules.js\` owns auth, existence, ownership, and business guards.
 - \`*.routes.js\` owns endpoint contracts.
+- \`*.test.js\` tests endpoint behavior through HTTP.
 
 The folder is the domain. Keep services boring, rules named, and routes thin.
-Test endpoint behavior through HTTP.
+Keep HTTP edge behavior in \`middleware/\`, not in rules. Keep app-wide clients
+and cross-domain helpers in \`services/\`, not in one random domain.
 `,
   '.codex/skills/cricket-api/SKILL.md': `---
 name: cricket-api
-description: Work in a Cricket Node API app with predictable domain files, Zod contracts, Koa adapters, Knex services, and OpenAPI generation.
+description: Work in a Cricket Node API app with predictable domain files, app middleware/services/workers/migrations, Zod contracts, Koa adapters, Knex services, and OpenAPI generation.
 ---
 
 # Cricket API Skill
@@ -260,7 +395,15 @@ Use this when changing a Cricket API app.
 
 ## Orientation
 
-Start with \`pnpm cricket inspect src/app.js\`, then read \`src/app.js\` and the domain files for the feature you are changing.
+Start with \`pnpm cricket inspect api/index.js\`, then read \`api/index.js\` and the domain files for the feature you are changing.
+
+## App Folders
+
+- \`api/middleware/\` is for HTTP edge concerns, not domain authorization.
+- \`api/services/\` is for app-wide services not owned by one domain.
+- \`api/workers/\` is for background worker entrypoints that call services.
+- \`api/migrations/\` is app-owned. Configure Knex there from the app, not Cricket.
+- \`api/dev/\` is for local-only development support. If code touches product behavior, move that behavior into a real service, worker, migration, or domain.
 
 ## Change Flow
 
@@ -269,14 +412,15 @@ Start with \`pnpm cricket inspect src/app.js\`, then read \`src/app.js\` and the
 3. Put auth, existence, and ownership checks in rules.
 4. Keep endpoint handlers focused on composition.
 5. Generate OpenAPI and check the contract diff.
-6. Test through HTTP for endpoint behavior.
+6. Add or update the domain-local \`*.test.js\` and test through HTTP for endpoint behavior.
 
 ## Commands
 
 \`\`\`sh
-pnpm cricket inspect src/app.js
-pnpm cricket docs src/app.js --out openapi.json
-pnpm cricket new domain project src/api
+pnpm cricket init app .
+pnpm cricket inspect api/index.js
+pnpm cricket docs api/index.js --out openapi.json
+pnpm cricket new domain project api/domains
 pnpm test
 \`\`\`
 
@@ -344,7 +488,7 @@ export function formatAgentScaffoldResult(result) {
     'Next',
     '  - AGENTS.md explains the Cricket domain split.',
     '  - .codex/skills/cricket-api/SKILL.md gives Codex a project-local workflow.',
-    '  - Run `pnpm cricket inspect src/app.js` and `pnpm cricket docs src/app.js --out openapi.json`.'
+    '  - Run `pnpm cricket inspect api/index.js` and `pnpm cricket docs api/index.js --out openapi.json`.'
   );
 
   return lines.join('\n');

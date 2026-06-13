@@ -4,7 +4,7 @@ Tiny contracts for sturdy Node APIs.
 
 Cricket gives Koa + Knex apps the backend shape that stays pleasant as the API
 grows: Zod models, pure serializers, boring services, named rules, thin routes,
-OpenAPI generation, and one app entrypoint.
+OpenAPI generation, and a normal Node entrypoint.
 
 It is intentionally plain JavaScript. No model instances, no hidden mutation, no
 ORM lifecycle. Your app passes POJOs around, composes functions, and keeps side
@@ -25,12 +25,13 @@ deployment.
 Use one folder per domain.
 
 ```text
-project/
+api/domains/project/
   project.model.js        durable Zod contracts
   project.serializers.js  response schemas and projections
   project.service.js      data and product operations
   project.rules.js        auth, existence, ownership, business guards
   project.routes.js       endpoint contracts
+  project.test.js         HTTP-boundary endpoint tests
 ```
 
 The folder is the domain. Cricket auto-loads the standard files from your domain
@@ -40,7 +41,45 @@ that structure.
 Extra files are fine when a domain needs them. Keep the standard files as the
 map.
 
+## App Shape
+
+Real apps need a few homes outside the domain folder.
+
+```text
+api/
+  index.js      app entrypoint and Cricket wiring
+  domains/      product API domains
+  middleware/   HTTP edge behavior
+  services/     app-wide services
+  workers/      background workers
+  migrations/   app-owned database migrations
+  dev/          local-only developer support
+```
+
+Use `middleware/` for edge work like auth extraction, uploads, rate limits, raw
+webhooks, CORS, and frontend fallbacks. Domain authorization still belongs in
+`*.rules.js`.
+
+Use `services/` for dependencies or workflows that are not owned by one domain:
+email, media storage, payment clients, shared caches, and cross-domain
+summaries. Domain-specific product work should stay in the domain.
+
+Use `workers/` for background process entrypoints. Workers can use BullMQ,
+cron, or whatever the app needs, but they should call services instead of
+becoming a second product layer.
+
+Use `migrations/` for Knex migrations if your app uses Knex. Point your own
+`knexfile.js` or migration command at that folder; Cricket does not configure
+Knex behind your back.
+
+Use `dev/` for local-only support code: wait-for-db helpers, fixture generators,
+local reset/setup helpers, smoke-test harnesses, and small inspection tools. It
+must not be required by production runtime. If code touches product behavior,
+move that behavior into a real service, worker, migration, or domain.
+
 ## App Entry
+
+Put the app contract in your normal Node entrypoint, usually `api/index.js`.
 
 ```js
 import knex from 'knex';
@@ -50,13 +89,16 @@ export let app = defineCricketApp({
   name: 'Project API',
   version: '1.0.0',
   prefix: '/api',
-  domains: './api',
+  // Cricket scans this folder for *.model.js, *.serializers.js, *.service.js, *.rules.js, and *.routes.js.
+  domains: './domains',
   async setup() {
+    // Create app-wide dependencies once at startup.
     let db = knex({
       client: 'pg',
       connection: process.env.DATABASE_URL
     });
 
+    // Return the things Cricket should pass into routes, rules, and cleanup.
     return {
       dependencies: { db },
       services: {
@@ -68,6 +110,7 @@ export let app = defineCricketApp({
     };
   },
   context({ ctx, dependencies, logger, services }) {
+    // Shape the per-request context your handlers and rules receive.
     return {
       ...dependencies,
       logger,
@@ -235,11 +278,16 @@ available when you pass them through `context(...)`.
 ## CLI
 
 ```sh
-cricket new domain project src/api
-cricket inspect src/app.js
-cricket docs src/app.js --out openapi.json
+cricket init app .
+cricket new domain project api/domains
+cricket inspect api/index.js
+cricket docs api/index.js --out openapi.json
 cricket init agents .
 ```
+
+`init app` creates the small app shell: `api/index.js`, `api/domains/`,
+`api/middleware/`, `api/services/`, `api/workers/`, `api/migrations/`, and
+`api/dev/`.
 
 `new domain` creates the standard files and skips existing files unless
 `--force` is passed.

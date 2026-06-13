@@ -10,8 +10,10 @@ import {
   outputOpenApi
 } from '../src/app-contract.js';
 import {
+  formatAppScaffoldResult,
   formatAgentScaffoldResult,
   formatScaffoldResult,
+  scaffoldApp,
   scaffoldAgentFiles,
   scaffoldDomain
 } from '../src/structure.js';
@@ -36,15 +38,17 @@ function optionValue(args, name) {
 function usage() {
   return `Usage:
   cricket new domain <name> [root] [--force]
+  cricket init app [root] [--force]
   cricket init agents [root] [--force]
   cricket inspect <appModule>
   cricket docs <appModule> [--out openapi.json]
 
 Examples:
-  cricket new domain project src/api
+  cricket init app .
+  cricket new domain project api/domains
   cricket init agents .
-  cricket inspect src/app.js
-  cricket docs src/app.js --out openapi.json`;
+  cricket inspect api/index.js
+  cricket docs api/index.js --out openapi.json`;
 }
 
 /**
@@ -67,6 +71,24 @@ async function runNewDomain(args) {
   });
 
   console.log(formatScaffoldResult(result));
+}
+
+/**
+ * Run the `cricket init app` command and print the scaffold summary.
+ *
+ * @param {string[]} args - Raw CLI arguments after `cricket`.
+ * @returns {Promise<void>} Resolves after the app shell is written.
+ */
+async function runInitApp(args) {
+  let positional = withoutFlags(args);
+  let [, , root = '.'] = positional;
+
+  let result = await scaffoldApp({
+    root,
+    force: hasFlag(args, '--force')
+  });
+
+  console.log(formatAppScaffoldResult(result));
 }
 
 /**
@@ -136,6 +158,9 @@ export async function runCli(argv = process.argv.slice(2)) {
 
   if (command === 'new' && subcommand === 'domain')
     return await runNewDomain(argv);
+
+  if (command === 'init' && subcommand === 'app')
+    return await runInitApp(argv);
 
   if (command === 'init' && subcommand === 'agents')
     return await runInitAgents(argv);

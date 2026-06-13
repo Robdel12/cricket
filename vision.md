@@ -13,12 +13,20 @@ Cricket should enforce architecture through domain folders.
 
 ```text
 api/
-  project/
-    project.model.js
-    project.serializers.js
-    project.service.js
-    project.rules.js
-    project.routes.js
+  index.js
+  domains/
+    project/
+      project.model.js
+      project.serializers.js
+      project.service.js
+      project.rules.js
+      project.routes.js
+      project.test.js
+  middleware/
+  services/
+  workers/
+  migrations/
+  dev/
 ```
 
 Those files are the framework's expected shape:
@@ -30,10 +38,41 @@ Those files are the framework's expected shape:
   visibility, and business constraints.
 - `routes` defines endpoints by composing schemas, rules, services,
   serializers, and response contracts.
+- `test` proves endpoint behavior through the HTTP boundary.
 
 Apps can add whatever else they need inside a domain folder. Cricket's happy
-path should keep the core files obvious, scaffolded, documented, and
-automatically loaded.
+path should keep the core files obvious, scaffolded, documented, and loaded.
+Tests are scaffolded next to the endpoint contract, but they are not part of
+runtime domain loading.
+
+## App Structure
+
+Cricket's core contract is the domain folder, but real apps have a few other
+recurring responsibilities. The recommended app shape gives those jobs a home
+without turning them into hidden framework behavior:
+
+- `api/index.js` is the normal Node entrypoint and visible Cricket app wiring.
+- `api/domains/` contains product API domains.
+- `api/middleware/` contains HTTP edge behavior such as auth extraction, CORS,
+  uploads, rate limits, raw webhooks, and frontend fallbacks.
+- `api/services/` contains app-wide services that are not owned by one domain,
+  such as email, media storage, payment clients, caches, and cross-domain
+  summaries.
+- `api/workers/` contains background worker entrypoints. Workers should call
+  services; they should not become a second product layer.
+- `api/migrations/` contains app-owned database migrations.
+- `api/dev/` contains local-only developer support code such as wait-for-db
+  helpers, fixture generators, local setup/reset helpers, and smoke-test
+  harnesses.
+
+This is guidance, not a cage. If an app earns another folder, it can have one.
+Cricket should provide rails around the common mess without pretending every
+app has the same shape.
+
+Cricket should not provide a `scripts/` junk drawer. If code has product
+responsibility, design that responsibility into a domain, app service, worker,
+or migration. If code is only local development support, keep it in `api/dev/`
+and keep it out of production runtime.
 
 ## Domain Files
 
@@ -161,6 +200,10 @@ the code easier for LLM agents to extend safely.
 Cricket is not an ORM. The app owns migrations, table design, query strategy,
 indexes, and product-specific data behavior.
 
+If an app uses Knex, its own `knexfile.js` or migration command should point at
+`api/migrations/`. Cricket can scaffold and document the folder, but it should
+not secretly configure database behavior.
+
 Cricket is not a generic backend platform. It is opinionated about API
 architecture, but it should stay small and plain.
 
@@ -178,15 +221,21 @@ cleaner and still let the app reach the underlying tools.
 The CLI should make the right shape the easiest path:
 
 ```sh
-cricket new domain project src/api
-cricket inspect src/app.js
-cricket docs src/app.js --out openapi.json
+cricket init app .
+cricket new domain project api/domains
+cricket inspect api/index.js
+cricket docs api/index.js --out openapi.json
 cricket init agents .
 ```
 
 `cricket new domain` should scaffold the standard files. Command output should
 explain the next useful step. That helps humans and gives agents a durable
 checklist.
+
+`cricket init app` should scaffold the small recommended app shell: entrypoint,
+domains, middleware, services, workers, migrations, and local dev support. It
+should not create a config file, jobs folder, scripts folder, or runtime
+abstraction.
 
 `cricket init agents` should ship project guidance that teaches the same
 architecture humans use: domains by folder, schemas at boundaries, services for

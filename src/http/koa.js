@@ -578,8 +578,8 @@ function closeServer(server) {
 /**
  * Start a Cricket app as the current Node process entrypoint.
  *
- * Pass `main: import.meta.url` from `src/app.js` to make the same module safe
- * for both `node src/app.js` and `cricket inspect src/app.js`.
+ * Pass `main: import.meta.url` from your app entrypoint to make the same module
+ * safe for both `node api/index.js` and `cricket inspect api/index.js`.
  *
  * @param {object} cricketApp - App contract returned by `defineCricketApp`.
  * @param {object} [options]
