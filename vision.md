@@ -4,8 +4,8 @@ Cricket is a tiny Node API framework for sturdy contracts in Koa + Knex apps.
 
 The bet is that backend code stays easier to grow when every domain has the
 same plain structure: models define contracts, serializers shape outgoing API
-data, services do data and product work, rules guard requests, and routes
-compose the pieces without becoming a junk drawer.
+data, normalizers translate outside data, services do product work, rules guard
+requests, and routes compose the pieces without becoming a junk drawer.
 
 ## Core Shape
 
@@ -17,6 +17,7 @@ api/
   domains/
     project/
       project.model.js
+      project.normalizers.js
       project.serializers.js
       project.service.js
       project.rules.js
@@ -32,6 +33,8 @@ api/
 Those files are the framework's expected shape:
 
 - `model` defines durable Zod contracts and reusable schemas.
+- `normalizers` defines pure source-boundary projections for third-party,
+  legacy, webhook, queue, or import payloads.
 - `serializers` defines pure outgoing API projections.
 - `service` defines product/data operations with explicit dependencies.
 - `rules` defines named guards for auth, existence, ownership, billing,
@@ -40,16 +43,19 @@ Those files are the framework's expected shape:
   serializers, and response contracts.
 - `test` proves endpoint behavior through the HTTP boundary.
 
-Apps can add whatever else they need inside a domain folder. Cricket's happy
-path should keep the core files obvious, scaffolded, documented, and loaded.
-Tests are scaffolded next to the endpoint contract, but they are not part of
-runtime domain loading.
+Apps can use only the files a domain earns. Cricket's happy path should keep
+the core files obvious, scaffolded, documented, and loaded when present. Tests
+are scaffolded next to the endpoint contract, but they are not part of runtime
+domain loading.
 
 ## App Structure
 
 Cricket's core contract is the domain folder, but real apps have a few other
 recurring responsibilities. The recommended app shape gives those jobs a home
-without turning them into hidden framework behavior:
+without turning them into hidden framework behavior.
+
+First-class means scaffolded, documented, inspectable, and agent-readable. It
+does not mean Cricket secretly owns runtime behavior:
 
 - `api/index.js` is the normal Node entrypoint and visible Cricket app wiring.
 - `api/domains/` contains product API domains.
@@ -66,13 +72,13 @@ without turning them into hidden framework behavior:
   harnesses.
 
 This is guidance, not a cage. If an app earns another folder, it can have one.
-Cricket should provide rails around the common mess without pretending every
-app has the same shape.
+Cricket should provide rails around the common mess without pretending every app
+has the same shape.
 
-Cricket should not provide a `scripts/` junk drawer. If code has product
-responsibility, design that responsibility into a domain, app service, worker,
-or migration. If code is only local development support, keep it in `api/dev/`
-and keep it out of production runtime.
+Cricket should not provide a `scripts/` junk drawer. If code affects product
+behavior, design it into a domain, app service, worker, middleware, or
+migration. If code is only local development support, keep it in `api/dev/` and
+keep it out of production runtime.
 
 ## Domain Files
 
@@ -87,6 +93,17 @@ persisted rows so bad data is caught when it enters or leaves storage.
 Some domains do not own persisted data. They may still have a `*.model.js` with
 request/response primitives and no `defineModel(...)` export. Do not create fake
 tables or fake model contracts just to satisfy the framework.
+
+### `*.normalizers.js`
+
+Normalizers own source-boundary translation.
+
+Put pure functions here when data comes from a third-party API, CSV, webhook,
+queue payload, legacy system, or import feed. A normalizer turns source-shaped
+data into an app-owned object before services persist or reason over it.
+
+Normalizers should not fetch, write to the database, enqueue work, check auth,
+or know about Koa. Services and workers own those side effects.
 
 ### `*.serializers.js`
 
@@ -146,6 +163,19 @@ HTTP adapter
 
 Routes stay thin because the other files have real jobs.
 
+## Source Ingest Flow
+
+```text
+source client or worker
+  -> normalizer
+  -> model/schema validation
+  -> service
+  -> database, queue, or app-owned side effect
+```
+
+Normalizers keep outside-system weirdness at the boundary. Services still own
+fetching, transactions, persistence, retries, and downstream work.
+
 ## Runtime Reality
 
 Koa and Knex are first-class, but Cricket should keep adapters at the edges.
@@ -182,7 +212,13 @@ hidden mutation, decorators, or ORM-style lifecycles.
 explicit inputs and outputs. Avoid magic containers and class hierarchies.
 
 **Strong contracts at real boundaries.** Validate request input, durable row
-shape, and outgoing API responses. Do not add schemas for theater.
+shape, normalized source data, and outgoing API responses. Do not add schemas
+for theater.
+
+**First-class does not mean hidden ownership.** Cricket can scaffold
+`normalizers`, `middleware/`, `services/`, `workers/`, `migrations/`, `dev/`,
+and domain tests without taking over auth, imports, migrations, queues, local
+tooling, or deployment.
 
 **Folder structure is the convention and the enforcement.** The framework should
 auto-load the expected domain files and make missing pieces obvious during

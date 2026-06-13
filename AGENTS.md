@@ -5,9 +5,9 @@
 Cricket is a tiny Node API framework for sturdy contracts in Koa + Knex apps.
 
 The core pattern is intentionally simple: services do data work, rules handle
-auth/existence/business guards, schemas protect boundaries, serializers shape
-outgoing API data, and routes stay thin. Keep that architecture obvious in every
-change.
+auth/existence/business guards, schemas protect boundaries, normalizers shape
+outside data entering the app, serializers shape API data leaving the app, and
+routes stay thin. Keep that architecture obvious in every change.
 
 ## Package Manager
 
@@ -29,6 +29,9 @@ change.
 ## Architecture
 
 - `defineModel` owns durable row/create/update schema contracts.
+- Normalizers are pure source-boundary functions for third-party APIs, CSVs,
+  webhooks, queue payloads, imports, and legacy data. They do not fetch, write,
+  enqueue, authorize, or know about HTTP.
 - Serializers are pure domain functions for outgoing API projections. Keep them
   near routes, not buried in model instances.
 - `defineEndpoint` owns request validation, auth enforcement, rules, handler
@@ -37,10 +40,18 @@ change.
   and business constraints.
 - Services are first-class app code. Keep them boring, explicit, and HTTP-
   agnostic by default.
+- First-class app folders mean scaffolded, documented, inspectable, and
+  agent-readable. They do not mean Cricket secretly owns runtime behavior.
 - Domain folders are the framework contract. Cricket auto-loads standard
-  `*.model.js`, `*.serializers.js`, `*.service.js`, `*.rules.js`, and
-  `*.routes.js` files from the configured domain root. Do not bring back
-  `*.domain.js` manifest files.
+  `*.model.js`, `*.normalizers.js`, `*.serializers.js`, `*.service.js`,
+  `*.rules.js`, and `*.routes.js` files when they exist. Do not bring back
+  `*.domain.js` manifest files or make optional files mandatory.
+- `api/middleware/` is for HTTP edge behavior. `api/services/` is for shared
+  app capabilities. `api/workers/` is for background entrypoints.
+  `api/migrations/` is app-owned database change history. `api/dev/` is
+  local-only support.
+- If code affects product behavior, design it into a domain, app service,
+  worker, middleware, or migration. Do not create generic junk drawers.
 - Logging is framework-owned. Apps may configure or extend the logger, but the
   runtime should pass one Cricket logger shape through setup, services, rules,
   handlers, adapters, startup, and errors.

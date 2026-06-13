@@ -3,8 +3,8 @@
 Tiny contracts for sturdy Node APIs.
 
 Cricket gives Koa + Knex apps the backend shape that stays pleasant as the API
-grows: Zod models, pure serializers, boring services, named rules, thin routes,
-OpenAPI generation, and a normal Node entrypoint.
+grows: Zod models, pure normalizers, pure serializers, boring services, named
+rules, thin routes, OpenAPI generation, and a normal Node entrypoint.
 
 It is intentionally plain JavaScript. No model instances, no hidden mutation, no
 ORM lifecycle. Your app passes POJOs around, composes functions, and keeps side
@@ -16,9 +16,10 @@ effects at the edges.
 pnpm add @robdel12/cricket
 ```
 
-Cricket includes first-class Koa and Knex adapters. Your app still owns its
-database schema, migrations, auth middleware, queues, external clients, and
-deployment.
+Cricket includes first-class Koa and Knex adapters. "First-class" means
+scaffolded, documented, inspectable, and easy for agents to follow. Your app
+still owns its database schema, migrations, auth middleware, queues, external
+clients, and deployment.
 
 ## Domain Shape
 
@@ -27,6 +28,7 @@ Use one folder per domain.
 ```text
 api/domains/project/
   project.model.js        durable Zod contracts
+  project.normalizers.js  third-party/source payload projections
   project.serializers.js  response schemas and projections
   project.service.js      data and product operations
   project.rules.js        auth, existence, ownership, business guards
@@ -35,15 +37,16 @@ api/domains/project/
 ```
 
 The folder is the domain. Cricket auto-loads the standard files from your domain
-root, then wires models, services, rules, routes, docs, and runtime behavior from
-that structure.
+root, then wires the files that exist. Models, normalizers, serializers,
+services, rules, and routes are standard homes, not mandatory paperwork.
 
 Extra files are fine when a domain needs them. Keep the standard files as the
 map.
 
 ## App Shape
 
-Real apps need a few homes outside the domain folder.
+Real apps need a few homes outside the domain folder. Cricket gives those jobs
+names so they don't become a junk drawer.
 
 ```text
 api/
@@ -56,26 +59,17 @@ api/
   dev/          local-only developer support
 ```
 
-Use `middleware/` for edge work like auth extraction, uploads, rate limits, raw
-webhooks, CORS, and frontend fallbacks. Domain authorization still belongs in
-`*.rules.js`.
+| Folder | Use it for | Keep out |
+| --- | --- | --- |
+| `domains/` | Product API behavior. | App-wide clients and edge middleware. |
+| `middleware/` | HTTP edge work: auth extraction, uploads, raw webhooks, CORS, rate limits, frontend fallbacks. | Domain authorization; put that in `*.rules.js`. |
+| `services/` | Shared app capabilities: email, media storage, payment clients, caches, cross-domain summaries. | Domain-specific product logic. |
+| `workers/` | Background entrypoints that call services. | A second product layer. |
+| `migrations/` | App-owned Knex migrations. | Hidden Cricket database behavior. |
+| `dev/` | Local-only helpers, fixture builders, reset/setup scripts, smoke-test harnesses. | Production runtime or product behavior. |
 
-Use `services/` for dependencies or workflows that are not owned by one domain:
-email, media storage, payment clients, shared caches, and cross-domain
-summaries. Domain-specific product work should stay in the domain.
-
-Use `workers/` for background process entrypoints. Workers can use BullMQ,
-cron, or whatever the app needs, but they should call services instead of
-becoming a second product layer.
-
-Use `migrations/` for Knex migrations if your app uses Knex. Point your own
-`knexfile.js` or migration command at that folder; Cricket does not configure
-Knex behind your back.
-
-Use `dev/` for local-only support code: wait-for-db helpers, fixture generators,
-local reset/setup helpers, smoke-test harnesses, and small inspection tools. It
-must not be required by production runtime. If code touches product behavior,
-move that behavior into a real service, worker, migration, or domain.
+If code affects product behavior, design it into a domain, app service, worker,
+middleware, or migration. `dev/` is local-only.
 
 ## App Entry
 
@@ -89,7 +83,7 @@ export let app = defineCricketApp({
   name: 'Project API',
   version: '1.0.0',
   prefix: '/api',
-  // Cricket scans this folder for *.model.js, *.serializers.js, *.service.js, *.rules.js, and *.routes.js.
+  // Cricket scans this folder for standard domain files that exist.
   domains: './domains',
   async setup() {
     // Create app-wide dependencies once at startup.
@@ -153,6 +147,29 @@ export let Project = defineModel({
 Use `row` at the database boundary and `create` / `update` at the request
 boundary. Domains that do not own persisted rows can still keep shared Zod
 schemas in `*.model.js`.
+
+## Normalizer
+
+Normalizers translate outside-world payloads into app-owned shapes.
+
+```js
+export function normalizeStormEventRow(row) {
+  if (row.EVENT_TYPE !== 'Tornado')
+    return null;
+
+  return {
+    event_id: row.EVENT_ID,
+    state: row.STATE || null,
+    injuries: Number.parseInt(row.INJURIES_DIRECT || '0', 10),
+    raw_data: row
+  };
+}
+```
+
+Reach for `*.normalizers.js` when a third-party API, CSV, webhook, queue
+payload, or legacy source speaks in its own shape. Keep normalizers pure: no
+fetching, no DB writes, no auth, no queues. Services can fetch, call a
+normalizer, validate with a model schema, then persist.
 
 ## Serializer
 

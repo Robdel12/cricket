@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export let domainFileTypes = [
   'model',
+  'normalizers',
   'serializers',
   'service',
   'rules',
@@ -95,24 +96,28 @@ function filePathFor(domainPath, fileStem, type) {
   return path.join(domainPath, `${fileStem}.${type}.js`);
 }
 
-async function hasModelFile(domainPath) {
+async function hasDomainFile(domainPath) {
   let fileStem = path.basename(domainPath);
 
-  try {
-    await fs.access(filePathFor(domainPath, fileStem, 'model'));
-    return true;
-  } catch {
-    return false;
+  for (let type of domainFileTypes) {
+    try {
+      await fs.access(filePathFor(domainPath, fileStem, type));
+      return true;
+    } catch {
+      // Keep looking for another standard domain file.
+    }
   }
+
+  return false;
 }
 
-async function importDomainFile(domainPath, fileStem, type) {
+async function importOptionalDomainFile(domainPath, fileStem, type) {
   let filePath = filePathFor(domainPath, fileStem, type);
 
   try {
     await fs.access(filePath);
   } catch {
-    throw new Error(`Cricket domain ${fileStem} is missing ${path.basename(filePath)}`);
+    return null;
   }
 
   return await import(pathToFileURL(filePath).href);
@@ -151,14 +156,18 @@ async function loadDomainFolder(domainPath) {
   let modules = {};
 
   for (let type of domainFileTypes)
-    modules[type] = await importDomainFile(domainPath, fileStem, type);
+    modules[type] = await importOptionalDomainFile(domainPath, fileStem, type);
 
-  let models = collectExported(modules.model, isModelContract);
-  let endpoints = collectExported(modules.routes, isEndpointContract);
-  let createService = serviceFactoryFor(modules.service, {
-    camelName,
-    pascalName
-  });
+  let models = modules.model ? collectExported(modules.model, isModelContract) : [];
+  let endpoints = modules.routes ? collectExported(modules.routes, isEndpointContract) : [];
+  let services = {};
+
+  if (modules.service) {
+    services[camelName] = serviceFactoryFor(modules.service, {
+      camelName,
+      pascalName
+    });
+  }
 
   return {
     name: camelName,
@@ -166,14 +175,13 @@ async function loadDomainFolder(domainPath) {
     fileStem,
     models,
     endpoints,
-    services: {
-      [camelName]: createService
-    }
+    normalizers: modules.normalizers ?? {},
+    services
   };
 }
 
 async function listDomainFolders(rootPath) {
-  if (await hasModelFile(rootPath))
+  if (await hasDomainFile(rootPath))
     return [rootPath];
 
   let entries = await fs.readdir(rootPath, {
@@ -187,7 +195,7 @@ async function listDomainFolders(rootPath) {
 
     let folder = path.join(rootPath, entry.name);
 
-    if (await hasModelFile(folder))
+    if (await hasDomainFile(folder))
       domainFolders.push(folder);
   }
 

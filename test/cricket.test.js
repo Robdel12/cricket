@@ -360,6 +360,52 @@ describe('Cricket', () => {
     assert.deepEqual(await services.adminSocial.listPosts(), []);
   });
 
+  it('loads sparse domain folders and optional normalizers', async () => {
+    let root = await tempRoot();
+    let domainRoot = path.join(root, 'storm-events');
+
+    await fs.mkdir(domainRoot);
+    await fs.writeFile(path.join(domainRoot, 'storm-events.normalizers.js'), `
+      export function normalizeStormEventRow(row) {
+        return {
+          event_id: row.EVENT_ID,
+          raw_data: row
+        };
+      }
+    `);
+    await fs.writeFile(path.join(domainRoot, 'storm-events.routes.js'), `
+      export let health = {
+        method: 'GET',
+        path: '/storm-events/health',
+        async handle() {
+          return {
+            status: 200,
+            body: {
+              ok: true
+            }
+          };
+        }
+      };
+    `);
+
+    let domains = await loadDomains(root);
+    let [domain] = domains;
+
+    assert.equal(domains.length, 1);
+    assert.equal(domain.name, 'stormEvents');
+    assert.deepEqual(collectModels(domains), []);
+    assert.equal(collectEndpoints(domains).length, 1);
+    assert.deepEqual(createServices(domains), {});
+    assert.deepEqual(domain.normalizers.normalizeStormEventRow({
+      EVENT_ID: '123'
+    }), {
+      event_id: '123',
+      raw_data: {
+        EVENT_ID: '123'
+      }
+    });
+  });
+
   it('shares request state from rules to handlers through Koa', async () => {
     let loadProject = defineRule('loadProject', ({ input, state }) => {
       state.project = {

@@ -6,6 +6,7 @@ import path from 'node:path';
  */
 export let domainFileTypes = [
   'model',
+  'normalizers',
   'serializers',
   'service',
   'rules',
@@ -82,6 +83,11 @@ export let serialize${pascalName}Public = pickFields([
 `;
 }
 
+function normalizersTemplate({ pascalName }) {
+  return `// Add ${pascalName} source-boundary normalizers here.
+`;
+}
+
 function serviceTemplate({ pascalName }) {
   return `export function create${pascalName}Service() {
   return {};
@@ -114,6 +120,7 @@ describe('${fileStem} endpoints', () => {
 
 let templates = {
   model: modelTemplate,
+  normalizers: normalizersTemplate,
   serializers: serializersTemplate,
   service: serviceTemplate,
   rules: rulesTemplate,
@@ -363,6 +370,8 @@ let agentFiles = {
 
 ## App Shape
 
+Cricket owns the architecture. Your app owns the behavior.
+
 - \`api/index.js\` is the normal Node entrypoint and visible Cricket app wiring.
 - \`api/domains/\` contains product API domains.
 - \`api/middleware/\` contains HTTP edge behavior such as auth extraction, uploads, rate limits, raw webhooks, CORS, and frontend fallbacks.
@@ -371,9 +380,12 @@ let agentFiles = {
 - \`api/migrations/\` contains app-owned database migrations. Point your own Knex config or command at this folder.
 - \`api/dev/\` contains local-only developer support code. It is not product architecture and must not be required by production runtime.
 
+First-class means scaffolded, documented, inspectable, and easy for agents to follow. It does not mean Cricket secretly owns auth, migrations, queues, local tooling, or deployment.
+
 ## Domain Shape
 
 - \`*.model.js\` owns row and input schemas.
+- \`*.normalizers.js\` owns pure source-boundary projections for third-party, webhook, queue, import, or legacy payloads.
 - \`*.serializers.js\` owns response projections.
 - \`*.service.js\` owns data operations.
 - \`*.rules.js\` owns auth, existence, ownership, and business guards.
@@ -383,10 +395,14 @@ let agentFiles = {
 The folder is the domain. Keep services boring, rules named, and routes thin.
 Keep HTTP edge behavior in \`middleware/\`, not in rules. Keep app-wide clients
 and cross-domain helpers in \`services/\`, not in one random domain.
+Keep source payload weirdness in \`*.normalizers.js\`, not scattered through
+services and routes.
+If code affects product behavior, design it into a domain, app service, worker,
+middleware, or migration. Keep \`dev/\` local-only.
 `,
   '.codex/skills/cricket-api/SKILL.md': `---
 name: cricket-api
-description: Work in a Cricket Node API app with predictable domain files, app middleware/services/workers/migrations, Zod contracts, Koa adapters, Knex services, and OpenAPI generation.
+description: Work in a Cricket Node API app with predictable domain files, normalizers, app middleware/services/workers/migrations, Zod contracts, Koa adapters, Knex services, and OpenAPI generation.
 ---
 
 # Cricket API Skill
@@ -399,6 +415,7 @@ Start with \`pnpm cricket inspect api/index.js\`, then read \`api/index.js\` and
 
 ## App Folders
 
+- Cricket owns the architecture. The app owns product behavior and runtime choices.
 - \`api/middleware/\` is for HTTP edge concerns, not domain authorization.
 - \`api/services/\` is for app-wide services not owned by one domain.
 - \`api/workers/\` is for background worker entrypoints that call services.
@@ -408,11 +425,12 @@ Start with \`pnpm cricket inspect api/index.js\`, then read \`api/index.js\` and
 ## Change Flow
 
 1. Update the schema at the boundary that changed.
-2. Keep data work in services.
-3. Put auth, existence, and ownership checks in rules.
-4. Keep endpoint handlers focused on composition.
-5. Generate OpenAPI and check the contract diff.
-6. Add or update the domain-local \`*.test.js\` and test through HTTP for endpoint behavior.
+2. Normalize third-party/source payloads in \`*.normalizers.js\`.
+3. Keep data work in services.
+4. Put auth, existence, and ownership checks in rules.
+5. Keep endpoint handlers focused on composition.
+6. Generate OpenAPI and check the contract diff.
+7. Add or update the domain-local \`*.test.js\` and test through HTTP for endpoint behavior.
 
 ## Commands
 
@@ -424,7 +442,7 @@ pnpm cricket new domain project api/domains
 pnpm test
 \`\`\`
 
-After scaffolding a domain, make sure the app's \`domains\` value points at the domain root, add the table or migration, then regenerate OpenAPI.
+After scaffolding a domain, make sure the app's \`domains\` value points at the domain root, add the table or migration if this domain persists data, then regenerate OpenAPI.
 `
 };
 

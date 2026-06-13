@@ -26,6 +26,12 @@ function serviceKeysFor(domain) {
   return [];
 }
 
+function normalizerKeysFor(domain) {
+  return Object.entries(domain.normalizers ?? {})
+    .filter(([, value]) => typeof value === 'function')
+    .map(([name]) => name);
+}
+
 function domainNameFor(domain, index) {
   if (domain.name)
     return domain.name;
@@ -100,6 +106,7 @@ export function createAppMap(contract) {
     domains: contract.domains.map((domain, index) => ({
       name: domainNameFor(domain, index),
       models: toArray(domain.models ?? domain.model).map(model => model.name),
+      normalizers: normalizerKeysFor(domain),
       endpoints: toArray(domain.endpoints ?? domain.endpoint).length,
       services: serviceKeysFor(domain)
     })),
@@ -132,6 +139,7 @@ export function formatAppMap(appMap) {
   for (let domain of appMap.domains) {
     lines.push(`  ${domain.name}`);
     lines.push(`    models: ${domain.models.join(', ') || 'none'}`);
+    lines.push(`    normalizers: ${domain.normalizers.join(', ') || 'none'}`);
     lines.push(`    endpoints: ${domain.endpoints}`);
     lines.push(`    services: ${domain.services.join(', ') || 'none'}`);
   }
