@@ -1,7 +1,6 @@
 import { applyRules } from './rule.js';
 import {
   responseContractFailed,
-  unauthenticated,
   validationFailed
 } from './errors.js';
 import {
@@ -40,29 +39,6 @@ function parseRequestObjectSchema(schema, value) {
   return parseRequestSchema(schema, value ?? {});
 }
 
-function mergeNormalizedRequest(request, normalized = {}) {
-  let inputFields = ['body', 'params', 'query', 'files', 'cookies'];
-  let normalizedInput = Object.fromEntries(
-    inputFields
-      .filter(field => Object.hasOwn(normalized, field))
-      .map(field => [field, normalized[field]])
-  );
-
-  return {
-    ...request,
-    ...normalizedInput
-  };
-}
-
-async function normalizeRequestInput(normalize, request, context) {
-  if (!normalize)
-    return request;
-
-  let normalized = await normalize(request, context);
-
-  return mergeNormalizedRequest(request, normalized ?? {});
-}
-
 function responseDefinitionFor(endpoint, status) {
   if (!endpoint.responses)
     return endpoint.response;
@@ -78,9 +54,6 @@ function responseSchemaFrom(definition) {
 }
 
 function normalizeResponse(endpoint, response) {
-  if (isWebResponse(response))
-    return response;
-
   if (response && typeof response === 'object' && 'status' in response)
     return response;
 
@@ -97,34 +70,11 @@ function normalizeResponse(endpoint, response) {
   };
 }
 
-function isWebResponse(value) {
-  return value &&
-    typeof value.status === 'number' &&
-    typeof value.headers?.forEach === 'function' &&
-    typeof value.arrayBuffer === 'function';
-}
-
 function parseResponse(schema, value) {
   if (!schema) return value;
   if (!isZodSchema(schema)) return value;
 
   return parseZod(schema, value, responseContractFailed);
-}
-
-function requireAuthenticatedContext(context) {
-  if (!context.user && !context.userId)
-    throw unauthenticated();
-}
-
-/**
- * Enforce an endpoint's auth flag against a resolved request context.
- *
- * @param {object} endpoint
- * @param {object} context
- */
-export function assertEndpointAuth(endpoint, context) {
-  if (endpoint.auth)
-    requireAuthenticatedContext(context);
 }
 
 /**
@@ -143,19 +93,16 @@ export function defaultStatusForMethod(method) {
 /**
  * Define a request/response contract around a handler.
  *
- * This keeps validation, auth, rule execution, and response parsing in one
- * place so routes can stay thin and app-specific logic can stay in the handler.
+ * This keeps validation, rule execution, and response parsing in one place so
+ * routes can stay thin and app-specific logic can stay in the handler.
  *
  * @param {object} config
  * @param {string} config.method
  * @param {string} config.path
- * @param {boolean} [config.auth=false]
  * @param {string} [config.summary]
  * @param {string} [config.description]
  * @param {string[]} [config.tags=[]]
  * @param {string} [config.operationId]
- * @param {Array<Function>} [config.before=[]] - Cricket exchange hooks mounted before the handler.
- * @param {Function} [config.normalize] - Optional request input normalizer. Returned `body`, `params`, `query`, `files`, and `cookies` replace those request fields before validation.
  * @param {number} [config.maxBodyBytes] - Maximum buffered request body size for this endpoint.
  * @param {boolean|object} [config.rawBody=false] - Endpoint option for requests that need the unparsed request body.
  * @param {import('zod').ZodTypeAny} [config.body]
@@ -168,13 +115,10 @@ export function defaultStatusForMethod(method) {
  * @returns {{
  *   method: string,
  *   path: string,
- *   auth: boolean,
  *   summary?: string,
  *   description?: string,
  *   tags: string[],
  *   operationId?: string,
- *   before: Array<Function>,
- *   normalize?: Function,
  *   maxBodyBytes?: number,
  *   rawBody?: boolean|object,
  *   body?: any,
@@ -196,13 +140,10 @@ export function defaultStatusForMethod(method) {
 export function defineEndpoint({
   method,
   path,
-  auth = false,
   summary,
   description,
   tags = [],
   operationId,
-  before = [],
-  normalize,
   maxBodyBytes,
   rawBody = false,
   body,
@@ -223,13 +164,10 @@ export function defineEndpoint({
   let endpoint = {
     method: normalizedMethod,
     path,
-    auth,
     summary,
     description,
     tags,
     operationId,
-    before,
-    normalize,
     maxBodyBytes,
     rawBody,
     body,
@@ -240,28 +178,21 @@ export function defineEndpoint({
     rules,
 
     async handle(request, context = {}) {
-      assertEndpointAuth(endpoint, context);
-
-      let normalizedRequest = await normalizeRequestInput(normalize, request, context);
-
       let input = {
-        body: parseRequestSchema(body, normalizedRequest.body),
-        params: parseRequestObjectSchema(params, normalizedRequest.params),
-        query: parseRequestObjectSchema(query, normalizedRequest.query)
+        body: parseRequestSchema(body, request.body),
+        params: parseRequestObjectSchema(params, request.params),
+        query: parseRequestObjectSchema(query, request.query)
       };
 
       let endpointContext = {
         ...context,
-        request: normalizedRequest,
+        request,
         input
       };
 
-      let ruleResponse = await applyRules(rules, endpointContext);
+      let handlerContext = await applyRules(rules, endpointContext);
 
-      if (ruleResponse)
-        return parseEndpointResponse(endpoint, ruleResponse);
-
-      return parseEndpointResponse(endpoint, await handler(endpointContext));
+      return parseEndpointResponse(endpoint, await handler(handlerContext));
     }
   };
 
@@ -269,9 +200,6 @@ export function defineEndpoint({
 }
 
 function parseEndpointResponse(endpoint, result) {
-  if (isWebResponse(result))
-    return result;
-
   let response = normalizeResponse(endpoint, result);
 
   if (response.redirect)

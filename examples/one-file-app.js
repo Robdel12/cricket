@@ -12,6 +12,7 @@ import {
   ok,
   pickFields,
   startCricketApp,
+  unauthenticated,
   z
 } from '@robdel12/cricket';
 
@@ -52,7 +53,6 @@ function createProjectService({ db }) {
 let isKnownProject = defineRule('isKnownProject', async ({
   input,
   services,
-  state,
   user
 }) => {
   let project = await services.project.findForUserBySlug({
@@ -63,13 +63,19 @@ let isKnownProject = defineRule('isKnownProject', async ({
   if (!project)
     return notFound('Project not found');
 
-  state.project = project;
+  return {
+    project
+  };
+});
+
+let requireUser = defineRule('requireUser', ({ user }) => {
+  if (!user)
+    return unauthenticated();
 });
 
 let readProject = defineEndpoint({
   method: 'get',
   path: '/projects/:slug',
-  auth: true,
   params: z.object({
     slug: z.string().min(3)
   }),
@@ -77,11 +83,14 @@ let readProject = defineEndpoint({
     success: z.literal(true),
     project: Project.public
   }),
-  rules: [isKnownProject],
-  async handler({ state }) {
+  rules: [
+    requireUser,
+    isKnownProject
+  ],
+  async handler({ project }) {
     return ok({
       success: true,
-      project: serializeProjectPublic(state.project)
+      project: serializeProjectPublic(project)
     });
   }
 });
@@ -94,6 +103,20 @@ let projectDomain = {
     project: createProjectService
   }
 };
+
+function readUser() {
+  return async (exchange, next) => {
+    let token = String(exchange.request.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
+
+    return await next({
+      ...exchange,
+      context: {
+        ...exchange.context,
+        user: token ? { id: token } : undefined
+      }
+    });
+  };
+}
 
 export let app = defineCricketApp({
   name: 'One File API',
@@ -134,13 +157,11 @@ export let app = defineCricketApp({
       }
     };
   },
-  context({ request, dependencies, services }) {
-    let token = String(request.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
-
+  use: [readUser()],
+  context({ dependencies, services }) {
     return {
       ...dependencies,
-      services,
-      user: token ? { id: token } : undefined
+      services
     };
   }
 });

@@ -40,9 +40,8 @@ obvious in every change.
 - Serializers are pure domain functions for outgoing API projections. Keep them
   near routes, not buried in model instances. Use `defineSerializer` when the
   output should be actively parsed.
-- `defineEndpoint` owns request validation, auth enforcement, rules, handler
-  execution, response validation, route-local normalization, route-local hooks,
-  and docs metadata.
+- `defineEndpoint` owns request validation, rule execution, handler execution,
+  response validation, and docs metadata.
 - `defineRule` owns named guards such as auth, ownership, existence, billing,
   and business constraints.
 - Services are first-class app code. Keep them boring, explicit, and HTTP-

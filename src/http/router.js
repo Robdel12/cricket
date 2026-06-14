@@ -1,5 +1,4 @@
 import {
-  defineEndpoint,
   normalizeEndpointMethod
 } from '../endpoint.js';
 import { badRequest } from '../errors.js';
@@ -77,101 +76,10 @@ function compareRouteSpecificity(left, right) {
     || left.index - right.index;
 }
 
-function routeGroupWith(prefix, hooks, endpoints) {
-  let group = {
-    kind: 'cricket.routeGroup',
-    prefix,
-    endpoints: Object.freeze([...endpoints]),
-
-    use(...values) {
-      return routeGroupWith(prefix, [
-        ...hooks,
-        ...values.flat()
-      ], endpoints);
-    },
-
-    mount(...values) {
-      let mountedEndpoints = flattenRoutes(values).map(endpoint =>
-        endpointWithPrefix({
-          ...endpoint,
-          before: [
-            ...hooks,
-            ...(endpoint.before ?? [])
-          ]
-        }, prefix)
-      );
-
-      return routeGroupWith(prefix, hooks, [
-        ...endpoints,
-        ...mountedEndpoints
-      ]);
-    },
-
-    add(endpoint) {
-      return routeGroupWith(prefix, hooks, [
-        ...endpoints,
-        endpointWithPrefix({
-          ...endpoint,
-          before: [
-            ...hooks,
-            ...(endpoint.before ?? [])
-          ]
-        }, prefix)
-      ]);
-    },
-
-    get(path, config) {
-      return group.add(configFor('GET', path, config));
-    },
-
-    post(path, config) {
-      return group.add(configFor('POST', path, config));
-    },
-
-    put(path, config) {
-      return group.add(configFor('PUT', path, config));
-    },
-
-    patch(path, config) {
-      return group.add(configFor('PATCH', path, config));
-    },
-
-    delete(path, config) {
-      return group.add(configFor('DELETE', path, config));
-    }
-  };
-
-  return Object.freeze(group);
-}
-
-export function defineRouteGroup(prefix = '', items = []) {
-  let group = routeGroupWith(prefix, [], []);
-
-  return items.length ? group.mount(...items) : group;
-}
-
-function configFor(method, path, config) {
-  if (config?.method && config?.path)
-    return config;
-
-  return defineEndpoint({
-    ...config,
-    method,
-    path
-  });
-}
-
-export function isRouteGroup(value) {
-  return value?.kind === 'cricket.routeGroup' && Array.isArray(value.endpoints);
-}
-
 export function flattenRoutes(values) {
   return toArray(values).flatMap(value => {
     if (!value)
       return [];
-
-    if (isRouteGroup(value))
-      return [...value.endpoints];
 
     if (Array.isArray(value))
       return flattenRoutes(value);
@@ -297,8 +205,4 @@ function decodeParam(value) {
   } catch {
     throw badRequest('Invalid path parameter encoding');
   }
-}
-
-export function group(prefix = '', items = []) {
-  return defineRouteGroup(prefix, items);
 }

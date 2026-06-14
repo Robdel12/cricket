@@ -47,7 +47,7 @@ Those files are the expected shape:
 - `rules` defines named guards for auth, existence, ownership, billing,
   visibility, and business constraints.
 - `routes` defines endpoints by composing schemas, rules, services,
-  serializers, response contracts, and route-local HTTP behavior.
+  serializers, response contracts, and HTTP metadata.
 - `test` proves endpoint behavior through the HTTP boundary.
 
 Apps can use only the files a domain earns. Cricket's happy path should keep
@@ -155,8 +155,9 @@ pass the specific value it needs.
 Rules own guards and preconditions.
 
 Put auth checks, existence checks, ownership checks, visibility checks, billing
-gates, feature limits, and business constraints here. Rules may load state for
-the handler when loading it is part of the guard.
+gates, feature limits, and business constraints here. Rules may return
+request-local facts for later rules and handlers when loading them is part of
+the guard.
 
 A rule should answer "can this request continue?" If it starts doing the actual
 product operation, move that work into the service.
@@ -165,10 +166,10 @@ product operation, move that work into the service.
 
 Routes own HTTP composition.
 
-Put endpoint definitions here: method, path, params, query, body, auth, rules,
-handler, response schema, OpenAPI metadata, route-local normalization, and
-route-local hooks. Routes should read like a concise product flow: validate
-input, run rules, call services, serialize output.
+Put endpoint definitions here: method, path, params, query, body, rules,
+handler, response schema, and OpenAPI metadata. Routes should read like a
+concise product flow: validate input, run rules, call services, serialize
+output.
 
 ## Source Ingest Flow
 
@@ -195,7 +196,7 @@ runtime hooks, startup, shutdown, and error handling.
 ## Design Principles
 
 **Plain functions win.** Keep models, serializers, rules, services, endpoints,
-hooks, and route groups as functions and POJOs.
+and hooks as functions and POJOs.
 
 **Plain objects stay plain.** Cricket should not introduce model instances,
 hidden mutation, decorators, or ORM-style lifecycles.
@@ -249,11 +250,11 @@ Cricket is not a web-framework wrapper. It owns its HTTP runtime.
 The CLI should make the right shape the easiest path:
 
 ```sh
-cricket init app .
-cricket new domain project api/domains
-cricket inspect api/index.js
-cricket docs api/index.js --out openapi.json
-cricket init agents .
+pnpm cricket init app .
+pnpm cricket new domain project api/domains
+pnpm cricket inspect api/index.js
+pnpm cricket docs api/index.js --out openapi.json
+pnpm cricket init agents .
 ```
 
 `cricket new domain` should scaffold the standard files. Command output should

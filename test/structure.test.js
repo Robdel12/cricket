@@ -239,7 +239,7 @@ describe('Cricket CLI', () => {
     assert.match(result.stdout, /validations: BuildCreateInput/);
     assert.match(result.stdout, /normalizers: normalizeBuildImport/);
     assert.match(result.stdout, /serializers: serializeBuildPublic/);
-    assert.match(result.stdout, /POST\s+\/api\/builds auth/);
+    assert.match(result.stdout, /POST\s+\/api\/builds/);
     assert.match(result.stdout, /Build -> build/);
   });
 

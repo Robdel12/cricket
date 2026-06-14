@@ -153,7 +153,6 @@ function endpointOperation(endpoint) {
     ...(endpoint.description ? { description: endpoint.description } : {}),
     ...(endpoint.tags?.length ? { tags: endpoint.tags } : {}),
     operationId: endpoint.operationId ?? toOperationId(endpoint.method, endpoint.path),
-    ...(endpoint.auth ? { security: [{ bearerAuth: [] }] } : {}),
     ...(parameters.length ? { parameters } : {}),
     ...(requestBody ? { requestBody } : {}),
     responses: responsesForEndpoint(endpoint)
@@ -188,17 +187,8 @@ export function generateOpenApi({
 } = {}) {
   let paths = {};
   let schemas = componentSchemas(models);
-  let usesBearerAuth = endpoints.some(endpoint => endpoint.auth);
   let components = {
-    ...(Object.keys(schemas).length ? { schemas } : {}),
-    ...(usesBearerAuth ? {
-      securitySchemes: {
-        bearerAuth: {
-          type: 'http',
-          scheme: 'bearer'
-        }
-      }
-    } : {})
+    ...(Object.keys(schemas).length ? { schemas } : {})
   };
 
   for (let endpoint of endpoints) {

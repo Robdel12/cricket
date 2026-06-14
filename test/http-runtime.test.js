@@ -17,43 +17,6 @@ import {
 } from './fixtures/http.js';
 
 describe('Cricket HTTP runtime', () => {
-  it('applies hardened HTTP server defaults and runtime overrides', async () => {
-    let endpoint = defineEndpoint({
-      method: 'get',
-      path: '/health',
-      handler: () => ok({ success: true })
-    });
-    let runtime = await createCricketRuntime(defineCricketApp({
-      endpoints: [endpoint],
-      server: {
-        maxHeadersCount: 42
-      }
-    }), {
-      server: {
-        headersTimeout: 12_000,
-        keepAliveTimeout: 3_000,
-        maxRequestsPerSocket: 7,
-        requestTimeout: 24_000,
-        timeout: 1_000
-      }
-    });
-    let server = runtime.app.listen(0);
-
-    try {
-      assert.equal(server.headersTimeout, 12_000);
-      assert.equal(server.keepAliveTimeout, 3_000);
-      assert.equal(server.maxHeadersCount, 42);
-      assert.equal(server.maxRequestsPerSocket, 7);
-      assert.equal(server.requestTimeout, 24_000);
-      assert.equal(server.timeout, 1_000);
-    } finally {
-      await new Promise((resolve, reject) => {
-        server.close(error => error ? reject(error) : resolve());
-      });
-    }
-  });
-
-
   it('closes malformed parser-level requests with a controlled bad request response', async () => {
     let endpoint = defineEndpoint({
       method: 'get',

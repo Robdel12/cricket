@@ -1,30 +1,13 @@
 import {
   badRequest,
-  payloadTooLarge,
-  unsupportedMediaType
+  payloadTooLarge
 } from '../errors.js';
 
 let defaultMaxBodyBytes = 10 * 1024 * 1024;
-let allowedConnectionTokens = new Set(['close', 'keep-alive']);
 let securityHeaderNames = [
   'authorization',
-  'cookie',
-  'origin',
-  'referer',
-  'access-control-request-method',
-  'sec-fetch-site',
-  'sec-fetch-mode',
-  'sec-fetch-dest',
-  'sec-fetch-user'
+  'cookie'
 ];
-let commaJoinedSecurityHeaders = new Set([
-  'origin',
-  'access-control-request-method',
-  'sec-fetch-site',
-  'sec-fetch-mode',
-  'sec-fetch-dest',
-  'sec-fetch-user'
-]);
 function headerValues(headers, rawHeaders, name) {
   let lowerName = name.toLowerCase();
   let rawValues = [];
@@ -68,84 +51,10 @@ function singleHeaderValue(req, name, {
   return values[0];
 }
 
-function forwardedHeaderValue(req, name) {
-  let value = singleHeaderValue(req, name, {
-    ambiguousMessage: `Ambiguous ${name} header`
-  });
-
-  if (!value)
-    return undefined;
-
-  let values = String(value)
-    .split(',')
-    .map(part => part.trim())
-    .filter(Boolean);
-
-  if (values.length > 1)
-    throw badRequest(`Ambiguous ${name} header`);
-
-  return values[0];
-}
-
-function unquotedForwardedValue(value) {
-  let trimmed = value.trim();
-
-  if (!trimmed.startsWith('"'))
-    return trimmed;
-
-  if (!trimmed.endsWith('"') || trimmed.length < 2)
-    throw badRequest('Invalid Forwarded header');
-
-  return trimmed
-    .slice(1, -1)
-    .replace(/\\(["\\])/g, '$1');
-}
-
-function forwardedParameters(req) {
-  let value = singleHeaderValue(req, 'forwarded', {
-    ambiguousMessage: 'Ambiguous Forwarded header',
-    rejectCommaSeparated: true
-  });
-
-  if (!value)
-    return {};
-
-  let parameters = {};
-
-  for (let part of value.split(';')) {
-    let [rawName, ...rawValueParts] = part.split('=');
-    let name = rawName.trim().toLowerCase();
-
-    if (!name || !rawValueParts.length)
-      throw badRequest('Invalid Forwarded header');
-
-    if (!['host', 'proto'].includes(name))
-      continue;
-
-    if (Object.hasOwn(parameters, name))
-      throw badRequest('Ambiguous Forwarded header');
-
-    setPlainValue(parameters, name, unquotedForwardedValue(rawValueParts.join('=')));
-  }
-
-  return parameters;
-}
-
-function trustedProxyValue(req, forwarded, forwardedName, legacyName) {
-  let modern = forwarded[forwardedName];
-  let legacy = forwardedHeaderValue(req, legacyName);
-
-  if (modern && legacy && modern !== legacy)
-    throw badRequest(`Ambiguous ${legacyName} header`);
-
-  return modern ?? legacy;
-}
-
 function assertSingleSecurityHeaders(req) {
   for (let name of securityHeaderNames)
     singleHeaderValue(req, name, {
-      ambiguousMessage: `Ambiguous ${name} header`,
-      rejectCommaSeparated: commaJoinedSecurityHeaders.has(name)
+      ambiguousMessage: `Ambiguous ${name} header`
     });
 }
 
@@ -179,12 +88,12 @@ function hasValidPort(value) {
   return number > 0 && number <= 65535;
 }
 
-function hostFrom(req, trustProxy, requestTarget, forwarded) {
-  if (requestTarget.host)
-    return requestTarget.host;
-
+function hostFrom(req, trustProxy) {
   let host = trustProxy
-    ? trustedProxyValue(req, forwarded, 'host', 'x-forwarded-host')
+    ? singleHeaderValue(req, 'x-forwarded-host', {
+      ambiguousMessage: 'Ambiguous x-forwarded-host header',
+      rejectCommaSeparated: true
+    })
     : undefined;
 
   host ??= singleHeaderValue(req, 'host', {
@@ -200,12 +109,12 @@ function hostFrom(req, trustProxy, requestTarget, forwarded) {
   return host;
 }
 
-function protocolFrom(req, trustProxy, requestTarget, forwarded) {
-  if (requestTarget.protocol)
-    return requestTarget.protocol;
-
+function protocolFrom(req, trustProxy) {
   return normalizeProtocol(
-    trustProxy ? trustedProxyValue(req, forwarded, 'proto', 'x-forwarded-proto') : undefined
+    trustProxy ? singleHeaderValue(req, 'x-forwarded-proto', {
+      ambiguousMessage: 'Ambiguous x-forwarded-proto header',
+      rejectCommaSeparated: true
+    }) : undefined
   ) ?? (req.socket?.encrypted ? 'https' : 'http');
 }
 
@@ -298,45 +207,6 @@ function parsedOriginFormTarget(target) {
   };
 }
 
-function parsedAbsoluteFormTarget(target) {
-  if (target.includes('#'))
-    throw badRequest('Invalid request target');
-
-  let match = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/([^/?#]*)([^?#]*)(?:\?(.*))?$/.exec(target);
-
-  if (!match)
-    throw badRequest('Invalid request target');
-
-  let [, rawProtocol, rawHost, rawPath, rawQuery = ''] = match;
-
-  if (rawHost.includes('@'))
-    throw badRequest('Invalid request target');
-
-  let url;
-
-  try {
-    url = new URL(target);
-  } catch {
-    throw badRequest('Invalid request target');
-  }
-
-  let protocol = normalizeProtocol(rawProtocol);
-  let host = url.host;
-  let path = rawPath || '/';
-
-  if (!protocol || !host || url.username || url.password || !isValidHost(host))
-    throw badRequest('Invalid request target');
-
-  assertRouteSafePath(path);
-
-  return {
-    host,
-    path,
-    protocol,
-    searchParams: new URLSearchParams(rawQuery)
-  };
-}
-
 function requestTargetFrom(req) {
   let target = req.url ?? '/';
 
@@ -360,10 +230,7 @@ function requestTargetFrom(req) {
     };
   }
 
-  return {
-    ...parsedAbsoluteFormTarget(target),
-    raw: target
-  };
+  throw badRequest('Invalid request target');
 }
 
 function paramsFromSearchParams(searchParams) {
@@ -382,9 +249,8 @@ export function createBaseRequest(req, {
   assertSingleSecurityHeaders(req);
 
   let requestTarget = requestTargetFrom(req);
-  let forwarded = trustProxy ? forwardedParameters(req) : {};
-  let host = hostFrom(req, trustProxy, requestTarget, forwarded);
-  let protocol = protocolFrom(req, trustProxy, requestTarget, forwarded);
+  let host = hostFrom(req, trustProxy);
+  let protocol = protocolFrom(req, trustProxy);
 
   return {
     body: undefined,
@@ -441,40 +307,14 @@ function maxBodyBytesFor(endpoint) {
     ?? defaultMaxBodyBytes;
 }
 
-function connectionTokens(req) {
-  return headerValues(req.headers, req.rawHeaders, 'connection')
-    .flatMap(value => String(value).split(','))
-    .map(value => value.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-function assertConnectionHeader(req) {
-  let tokens = connectionTokens(req);
-
-  if (!tokens.length)
-    return;
-
-  if (tokens.some(token => !allowedConnectionTokens.has(token)))
-    throw badRequest('Unsupported Connection header');
-
-  if (tokens.includes('close') && tokens.includes('keep-alive'))
-    throw badRequest('Unsupported Connection header');
-}
-
 function assertBodyFraming(req) {
   let contentLengths = headerValues(req.headers, req.rawHeaders, 'content-length')
     .map(value => value.trim());
   let transferEncodings = headerValues(req.headers, req.rawHeaders, 'transfer-encoding')
     .map(value => value.trim().toLowerCase());
-  let trailers = headerValues(req.headers, req.rawHeaders, 'trailer');
   let transferEncoding = transferEncodings[0];
   let method = req.method?.toUpperCase();
   let bodylessMethod = ['GET', 'HEAD'].includes(method);
-
-  assertConnectionHeader(req);
-
-  if (trailers.length)
-    throw badRequest('Unsupported Trailer header');
 
   if (transferEncodings.length > 1)
     throw badRequest('Invalid Transfer-Encoding header');
@@ -575,28 +415,6 @@ function contentTypeFor(request) {
   }) ?? '').split(';')[0].trim().toLowerCase();
 }
 
-function assertSupportedContentEncoding(request) {
-  let values = headerValues(
-    request.headers,
-    request.rawHeaders,
-    'content-encoding'
-  );
-
-  if (!values.length)
-    return;
-
-  let codings = values
-    .join(',')
-    .split(',')
-    .map(coding => coding.trim().toLowerCase())
-    .filter(Boolean);
-
-  if (!codings.length || codings.every(coding => coding === 'identity'))
-    return;
-
-  throw unsupportedMediaType('Unsupported request content encoding');
-}
-
 function isJsonContentType(contentType) {
   return contentType === 'application/json' || contentType.endsWith('+json');
 }
@@ -648,7 +466,6 @@ export async function completeRequestBody(req, request, endpoint) {
 
   let maxBytes = maxBodyBytesFor(endpoint);
   assertContentLength(request, maxBytes);
-  assertSupportedContentEncoding(request);
 
   let raw = await readRequestBody(req, {
     maxBytes

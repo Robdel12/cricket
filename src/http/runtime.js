@@ -3,10 +3,7 @@ import {
   setImmediate as nextTick
 } from 'node:timers/promises';
 
-import {
-  assertEndpointAuth,
-  supportedEndpointMethods
-} from '../endpoint.js';
+import { supportedEndpointMethods } from '../endpoint.js';
 import {
   isMainModule,
   resolveCricketApp
@@ -17,7 +14,6 @@ import {
   toHttpError
 } from '../errors.js';
 import { normalizeLogger } from '../logger.js';
-import { generateOpenApi } from '../openapi.js';
 import {
   assertAllowedHost,
   completeRequestBody,
@@ -31,19 +27,6 @@ import {
   prepareRoutes
 } from './router.js';
 import { writeHttpResponse } from './response.js';
-
-let defaultServerOptions = {
-  headersTimeout: 60_000,
-  keepAliveTimeout: 5_000,
-  keepAliveTimeoutBuffer: 1_000,
-  maxHeaderSize: 16 * 1024,
-  maxHeadersCount: 100,
-  maxRequestsPerSocket: 1_000,
-  requestTimeout: 120_000,
-  timeout: 0,
-  insecureHTTPParser: false,
-  requireHostHeader: true
-};
 
 function toArray(value) {
   if (!value)
@@ -80,53 +63,6 @@ async function resolveRuntimeHooks(hooks, runtime) {
     : hooks;
 
   return toArray(value);
-}
-
-function openApiOptionsFor(cricketApp) {
-  if (cricketApp.openApi === false)
-    return false;
-
-  let options = {
-    title: cricketApp.name,
-    version: cricketApp.version,
-    description: cricketApp.description,
-    models: cricketApp.models,
-    path: '/openapi.json'
-  };
-
-  if (cricketApp.openApi === true)
-    return options;
-
-  return {
-    ...options,
-    ...cricketApp.openApi
-  };
-}
-
-function responseFromOpenApi(openApi, {
-  endpoints,
-  prefix
-}) {
-  if (!openApi)
-    return undefined;
-
-  let {
-    path = '/openapi.json',
-    document,
-    ...options
-  } = openApi;
-
-  return {
-    path,
-    response: {
-      status: 200,
-      body: document ?? generateOpenApi({
-        ...options,
-        pathPrefix: prefix,
-        endpoints
-      })
-    }
-  };
 }
 
 function defaultNotFound(request) {
@@ -170,40 +106,6 @@ function composeHooks(hooks, finalHandler) {
     (next, hook) => exchange => hook(exchange, next),
     finalHandler
   );
-}
-
-function omitUndefined(value) {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined)
-  );
-}
-
-function serverOptionsFor(...configs) {
-  let merged = Object.assign({}, defaultServerOptions, ...configs.filter(Boolean));
-  let {
-    maxHeadersCount,
-    maxRequestsPerSocket,
-    timeout,
-    ...createServerOptions
-  } = merged;
-
-  return {
-    createServerOptions: omitUndefined(createServerOptions),
-    maxHeadersCount,
-    maxRequestsPerSocket,
-    timeout
-  };
-}
-
-function applyServerRuntimeOptions(server, options) {
-  if (options.maxHeadersCount !== undefined)
-    server.maxHeadersCount = options.maxHeadersCount;
-
-  if (options.maxRequestsPerSocket !== undefined)
-    server.maxRequestsPerSocket = options.maxRequestsPerSocket;
-
-  if (options.timeout !== undefined)
-    server.timeout = options.timeout;
 }
 
 function closeClientErrorSocket(error, socket, logger) {
@@ -260,11 +162,9 @@ function closeUnsupportedProtocolSocket(req, socket, logger, event) {
   ].join('\r\n'));
 }
 
-function createNodeServer(handle, options, logger) {
-  let normalized = serverOptionsFor(options);
-  let server = http.createServer(normalized.createServerOptions, handle);
+function createNodeServer(handle, logger) {
+  let server = http.createServer(handle);
 
-  applyServerRuntimeOptions(server, normalized);
   server.on('checkContinue', (req, res) => {
     void handle(req, res, {
       expectContinue: true
@@ -294,24 +194,17 @@ function baseContextFor({
   return {
     ...setup.dependencies,
     logger,
-    services,
-    state: {}
+    services
   };
 }
 
 async function resolveContext(appContract, {
   baseContext,
   request,
-  state,
   setup
 }) {
-  let currentState = state ?? baseContext.state ?? {};
-
   if (!appContract.context)
-    return {
-      ...baseContext,
-      state: currentState
-    };
+    return baseContext;
 
   let appContext = await appContract.context({
     app: appContract,
@@ -323,11 +216,7 @@ async function resolveContext(appContract, {
 
   return {
     ...appContext,
-    ...baseContext,
-    state: {
-      ...(appContext.state ?? {}),
-      ...currentState
-    }
+    ...baseContext
   };
 }
 
@@ -338,15 +227,13 @@ async function resolveExchangeContext(appContract, exchange, {
   let context = await resolveContext(appContract, {
     baseContext: exchange.context,
     request,
-    state: exchange.state,
     setup
   });
 
   return {
     ...exchange,
     context,
-    request,
-    state: context.state
+    request
   };
 }
 
@@ -359,20 +246,6 @@ function withMatchedParams(request, match) {
 
 async function runEndpoint(exchange, endpoint) {
   return await endpoint.handle(exchange.request, exchange.context);
-}
-
-async function runEndpointBefore(exchange, endpoint) {
-  let before = toArray(endpoint.before);
-  let finalHandler = async nextExchange => nextExchange;
-
-  return await composeHooks(before, finalHandler)(exchange);
-}
-
-function isExchange(value) {
-  return value &&
-    typeof value === 'object' &&
-    value.request &&
-    value.context;
 }
 
 async function reportRequestError(appContract, {
@@ -416,7 +289,6 @@ async function reportRequestError(appContract, {
 function createRuntimeHandler({
   appContract,
   logger,
-  openApi,
   routes,
   setup,
   services,
@@ -466,17 +338,9 @@ function createRuntimeHandler({
         context,
         logger,
         request: baseRequest,
-        services,
-        state: context.state ?? {}
+        services
       };
       let finalHandler = async nextExchange => {
-        if (
-          openApi &&
-          nextExchange.request.method.toUpperCase() === 'GET' &&
-          nextExchange.request.path === openApi.path
-        )
-          return openApi.response;
-
         let match = matchRoute(routes, nextExchange.request);
 
         if (match) {
@@ -486,25 +350,16 @@ function createRuntimeHandler({
             setup
           });
 
-          assertEndpointAuth(match.endpoint, exchangeForMatchedRequest.context);
-
-          let preparedExchange = await runEndpointBefore({
-            ...exchangeForMatchedRequest
-          }, match.endpoint);
-
-          if (!isExchange(preparedExchange))
-            return preparedExchange;
-
           writeContinue();
 
           let parsedRequest = await completeRequestBody(
             req,
-            preparedExchange.request,
+            exchangeForMatchedRequest.request,
             match.endpoint
           );
 
           return await runEndpoint({
-            ...preparedExchange,
+            ...exchangeForMatchedRequest,
             request: parsedRequest,
           }, match.endpoint);
         }
@@ -564,8 +419,7 @@ function closeServer(server, {
 
 export async function createCricketRuntime(cricketApp, {
   baseUrl,
-  logger: runtimeLogger,
-  server: runtimeServer
+  logger: runtimeLogger
 } = {}) {
   let appContract = await resolveCricketApp(cricketApp, {
     baseUrl
@@ -611,14 +465,9 @@ export async function createCricketRuntime(cricketApp, {
     endpointWithPrefix(endpoint, appContract.prefix)
   );
   let routes = prepareRoutes(prefixedEndpoints);
-  let openApi = responseFromOpenApi(openApiOptionsFor(appContract), {
-    endpoints: appContract.endpoints,
-    prefix: appContract.prefix
-  });
   let handle = createRuntimeHandler({
     appContract,
     logger,
-    openApi,
     routes,
     setup,
     services,
@@ -627,10 +476,7 @@ export async function createCricketRuntime(cricketApp, {
   let app = Object.assign(handle, {
     handle,
     listen(...args) {
-      let server = createNodeServer(handle, {
-        ...appContract.server,
-        ...runtimeServer
-      }, logger);
+      let server = createNodeServer(handle, logger);
       return server.listen(...args);
     }
   });
@@ -650,16 +496,14 @@ export async function startCricketApp(cricketApp, {
   port = 3000,
   host,
   main,
-  logger,
-  server: serverOptions
+  logger
 } = {}) {
   if (main && !isMainModule(main))
     return undefined;
 
   let runtime = await createCricketRuntime(cricketApp, {
     baseUrl: main,
-    logger,
-    server: serverOptions
+    logger
   });
   let server = runtime.app.listen(port, host, () => {
     runtime.logger.info('server.started', {

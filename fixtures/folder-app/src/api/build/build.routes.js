@@ -11,14 +11,19 @@ import {
   BuildCreateInput,
   BuildParams
 } from './build.validations.js';
-import { isNamedBuild } from './build.rules.js';
+import {
+  isNamedBuild,
+  requireUser
+} from './build.rules.js';
 
 export let createBuild = defineEndpoint({
   method: 'post',
   path: '/builds',
-  auth: true,
   body: BuildCreateInput,
-  rules: [isNamedBuild],
+  rules: [
+    requireUser,
+    isNamedBuild
+  ],
   response: z.object({
     success: z.literal(true),
     build: Build.public
@@ -39,8 +44,8 @@ export let createBuild = defineEndpoint({
 export let showBuild = defineEndpoint({
   method: 'get',
   path: '/builds/:buildId',
-  auth: true,
   params: BuildParams,
+  rules: [requireUser],
   responses: {
     200: z.object({
       success: z.literal(true),

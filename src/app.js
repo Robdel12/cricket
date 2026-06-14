@@ -34,7 +34,6 @@ export function defineCricketApp(options) {
     : (loadedDomains ? collectModels(domains) : undefined);
   let allowedHosts = options.allowedHosts;
   let prefix = options.prefix ?? '';
-  let openApi = options.openApi ?? true;
   let trustProxy = options.trustProxy ?? false;
   let use = options.use ?? [];
 
@@ -43,7 +42,6 @@ export function defineCricketApp(options) {
     domains,
     allowedHosts,
     prefix,
-    openApi,
     trustProxy,
     use,
     ...(endpoints === undefined ? {} : { endpoints }),

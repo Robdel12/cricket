@@ -17,8 +17,7 @@ pnpm add @robdel12/cricket
 ```
 
 Cricket owns the HTTP runtime. It routes requests, parses bodies, validates
-contracts, runs rules, writes responses, serves OpenAPI, and handles startup and
-shutdown.
+contracts, runs rules, writes responses, and handles startup and shutdown.
 
 Your app still owns its database schema, migrations, auth policy, queues,
 external clients, workers, and deployment.
@@ -80,6 +79,23 @@ Put the app contract in your normal Node entrypoint, usually `api/index.js`.
 import knex from 'knex';
 import { defineCricketApp, startCricketApp } from '@robdel12/cricket';
 
+function readSession() {
+  return async (exchange, next) => {
+    let authorization = String(exchange.request.headers.authorization ?? '');
+    let user = authorization
+      ? await exchange.services.sessions.verifyBearerToken(authorization)
+      : undefined;
+
+    return await next({
+      ...exchange,
+      context: {
+        ...exchange.context,
+        user
+      }
+    });
+  };
+}
+
 export let app = defineCricketApp({
   name: 'Project API',
   version: '1.0.0',
@@ -105,18 +121,13 @@ export let app = defineCricketApp({
       }
     };
   },
-  context({ request, dependencies, logger, services }) {
+  use: [readSession()],
+  context({ dependencies, logger, services }) {
     // Shape the per-request context your handlers and rules receive.
-    let authorization = String(request.headers.authorization ?? '');
-    let user = authorization
-      ? services.sessions.verifyBearerToken(authorization)
-      : undefined;
-
     return {
       ...dependencies,
       logger,
-      services,
-      user
+      services
     };
   }
 });
@@ -127,14 +138,6 @@ if (process.env.NODE_ENV !== 'test')
     main: import.meta.url
   });
 ```
-
-OpenAPI is served at `/openapi.json` by default.
-
-## HTTP Runtime
-
-Cricket owns HTTP now. It routes requests, builds plain request data, runs
-hooks and endpoint contracts, writes responses, serves OpenAPI, and handles
-startup and shutdown on top of Node's HTTP server.
 
 ## Exchange Hooks
 
@@ -155,8 +158,7 @@ export function requestId() {
 }
 ```
 
-Use app-level `use` hooks for cross-cutting HTTP work. Use endpoint-level
-`before` hooks when the work belongs to one route.
+Use `use` hooks for cross-cutting HTTP work.
 
 ## Model
 
@@ -307,20 +309,22 @@ import { defineRule, forbidden } from '@robdel12/cricket';
 
 export let ownsProject = defineRule(
   'project.ownsProject',
-  async ({ input, services, user, state }) => {
+  async ({ input, services, user }) => {
     let project = await services.project.findBySlug(input.params.slug);
 
     if (!project || project.owner_id !== user.id)
       throw forbidden('Project access denied');
 
-    state.project = project;
+    return {
+      project
+    };
   }
 );
 ```
 
 Rules are the right place for auth, ownership, existence, billing, feature
-limits, and business preconditions. They may load request-scoped `state` for the
-handler.
+limits, and business preconditions. When a rule loads request-local facts, return
+them as a plain object so the next rule and handler receive them directly.
 
 ## Route
 
@@ -331,14 +335,19 @@ import { created, defineEndpoint, z } from '@robdel12/cricket';
 import { Project } from './project.model.js';
 import { serializeProjectPublic } from './project.serializers.js';
 import { ProjectCreateInput } from './project.validations.js';
-import { slugAvailable } from './project.rules.js';
+import {
+  requireUser,
+  slugAvailable
+} from './project.rules.js';
 
 export let createProject = defineEndpoint({
   method: 'post',
   path: '/projects',
-  auth: true,
   body: ProjectCreateInput,
-  rules: [slugAvailable],
+  rules: [
+    requireUser,
+    slugAvailable
+  ],
   response: z.object({
     success: z.literal(true),
     project: Project.public
@@ -363,46 +372,16 @@ export let projectEndpoints = [
 
 Handlers receive Cricket input plus the context your app returns. Knex `db`,
 transactions, logger, services, auth facts, request IDs, and loaded resources
-remain available when you pass them through `context(...)`, `use`, `before`, or
-rules.
-
-## Route Groups
-
-Use route groups when a product surface shares a prefix or hooks.
-
-```js
-import { created, group, z } from '@robdel12/cricket';
-
-export let projectRoutes = group('/projects')
-  .post('/', {
-    body: ProjectCreateInput,
-    response: z.object({
-      project: Project.public
-    }),
-    async handler({ input, services, user }) {
-      let project = await services.project.createForUser({
-        userId: user.id,
-        ...input.body
-      });
-
-      return created({
-        project: serializeProjectPublic(project)
-      });
-    }
-  });
-```
-
-To mount an existing endpoint object under a prefix, use `.mount(createProject)`
-instead.
+remain available when you pass them through `context(...)`, `use`, or rules.
 
 ## CLI
 
 ```sh
-cricket init app .
-cricket new domain project api/domains
-cricket inspect api/index.js
-cricket docs api/index.js --out openapi.json
-cricket init agents .
+pnpm cricket init app .
+pnpm cricket new domain project api/domains
+pnpm cricket inspect api/index.js
+pnpm cricket docs api/index.js --out openapi.json
+pnpm cricket init agents .
 ```
 
 `init app` creates the small app shell: `api/index.js`, `api/domains/`,
@@ -428,7 +407,6 @@ import {
   startCricketApp,
   createCricketRuntime,
   defineEndpoint,
-  group,
   defineModel,
   defineRule,
   defineSerializer,

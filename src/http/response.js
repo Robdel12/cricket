@@ -286,31 +286,8 @@ function isReadable(value) {
   return value instanceof Readable || typeof value?.pipe === 'function';
 }
 
-function isWebReadable(value) {
-  return typeof value?.getReader === 'function';
-}
-
-function isWebResponse(value) {
-  return value &&
-    typeof value.status === 'number' &&
-    typeof value.headers?.forEach === 'function' &&
-    typeof value.arrayBuffer === 'function';
-}
-
 function isBinary(value) {
-  return Buffer.isBuffer(value)
-    || value instanceof ArrayBuffer
-    || ArrayBuffer.isView(value);
-}
-
-function binaryBuffer(value) {
-  if (Buffer.isBuffer(value))
-    return value;
-
-  if (value instanceof ArrayBuffer)
-    return Buffer.from(value);
-
-  return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+  return Buffer.isBuffer(value);
 }
 
 function preparedBody(body, headers) {
@@ -320,17 +297,17 @@ function preparedBody(body, headers) {
     };
   }
 
-  if (isReadable(body) || isWebReadable(body)) {
+  if (isReadable(body)) {
     return {
       kind: 'stream',
-      body: isWebReadable(body) ? Readable.fromWeb(body) : body
+      body
     };
   }
 
   if (isBinary(body) || typeof body === 'string') {
     return {
       kind: 'buffer',
-      body: isBinary(body) ? binaryBuffer(body) : body
+      body
     };
   }
 
@@ -396,11 +373,6 @@ function assertContentLengthFraming(headers, body) {
 }
 
 function discardBody(body) {
-  if (isWebReadable(body)) {
-    body.cancel?.().catch?.(() => {});
-    return;
-  }
-
   if (isReadable(body))
     body.destroy();
 }
@@ -452,28 +424,7 @@ function assertValidStatus(status) {
     throw new Error(`Invalid response status: ${status}`);
 }
 
-function isMultipartByteRange(headers) {
-  return String(headers['content-type'] ?? '')
-    .toLowerCase()
-    .split(';')[0]
-    .trim() === 'multipart/byteranges';
-}
-
-function assertContentRangeStatus(headers, status) {
-  if (headers['content-range'] !== undefined && ![206, 416].includes(status))
-    throw new Error('Content-Range is only valid for 206 or 416 responses');
-
-  if (
-    status === 206 &&
-    headers['content-range'] === undefined &&
-    !isMultipartByteRange(headers)
-  )
-    throw new Error('Partial content responses require Content-Range');
-}
-
-function assertValidHeaders(headers, status) {
-  assertContentRangeStatus(headers, status);
-
+function assertValidHeaders(headers) {
   for (let [name, value] of Object.entries(headers)) {
     validateHeaderName(name);
 
@@ -490,9 +441,6 @@ function assertValidHeaders(headers, status) {
 }
 
 function prepareResponse(response) {
-  if (isWebResponse(response))
-    return prepareWebResponse(response);
-
   let headers = {};
 
   if (response?.headers) {
@@ -523,93 +471,14 @@ function prepareResponse(response) {
   };
 }
 
-function headersFromWebResponse(response) {
-  let headers = {};
-
-  response.headers.forEach((value, name) => {
-    headers[name.toLowerCase()] = value;
-  });
-
-  let setCookies = response.headers.getSetCookie?.();
-
-  if (setCookies?.length)
-    headers['set-cookie'] = setCookies;
-
-  return headers;
-}
-
-function prepareWebResponse(response) {
-  let headers = headersFromWebResponse(response);
-
-  let body = preparedBody(response.body, headers);
-  let contentLength = contentLengthFor(body);
-
-  assertContentLengthFraming(headers, body);
-  applyContentLength(headers, contentLength);
-
-  return {
-    body,
-    headers,
-    status: response.status
-  };
-}
-
-function etagMatches(ifNoneMatch, etag) {
-  if (!ifNoneMatch || !etag)
-    return false;
-
-  let normalizedEtag = String(etag).replace(/^W\//, '');
-
-  return String(ifNoneMatch)
-    .split(',')
-    .map(value => value.trim())
-    .some(value => value === '*' || value.replace(/^W\//, '') === normalizedEtag);
-}
-
-function modifiedSinceMatches(ifModifiedSince, lastModified) {
-  if (!ifModifiedSince || !lastModified)
-    return false;
-
-  let requested = Date.parse(ifModifiedSince);
-  let modified = Date.parse(lastModified);
-
-  return Number.isFinite(requested) &&
-    Number.isFinite(modified) &&
-    modified <= requested;
-}
-
-function applyConditionalRequest(req, prepared) {
-  if (!['GET', 'HEAD'].includes(req.method) || prepared.status !== 200)
-    return prepared;
-
-  if (etagMatches(req.headers['if-none-match'], prepared.headers.etag)) {
-    return {
-      ...prepared,
-      status: 304
-    };
-  }
-
-  if (req.headers['if-none-match'])
-    return prepared;
-
-  if (modifiedSinceMatches(req.headers['if-modified-since'], prepared.headers['last-modified'])) {
-    return {
-      ...prepared,
-      status: 304
-    };
-  }
-
-  return prepared;
-}
-
 export function writeHttpResponse(req, res, response) {
   let cleanup = applyResponseCleanup(req, res, response ?? {});
   let prepared;
 
   try {
-    prepared = applyConditionalRequest(req, prepareResponse(response));
+    prepared = prepareResponse(response);
     assertValidStatus(prepared.status);
-    assertValidHeaders(prepared.headers, prepared.status);
+    assertValidHeaders(prepared.headers);
   } catch (error) {
     cleanup();
     discardBody(response?.body);

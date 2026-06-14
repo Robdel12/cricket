@@ -53,11 +53,6 @@ export {
 } from './http/runtime.js';
 
 export {
-  defineRouteGroup,
-  group
-} from './http/router.js';
-
-export {
   generateOpenApi
 } from './openapi.js';
 
