@@ -131,7 +131,7 @@ describe('Cricket HTTP requests', () => {
     assert.deepEqual(nullable.body.body, null);
   });
 
-  it('lets app hooks reject invalid, oversized, or expect-continue bodies before parsing', async () => {
+  it('lets middleware reject invalid, oversized, or expect-continue bodies before parsing', async () => {
     let endpoint = defineEndpoint({
       method: 'post',
       path: '/protected',
@@ -144,8 +144,8 @@ describe('Cricket HTTP requests', () => {
     let app = await createHttpApp({
       endpoints: [endpoint],
       use: [
-        async exchange => {
-          if (!exchange.request.headers.authorization)
+        async requestContext => {
+          if (!requestContext.request.headers.authorization)
             return {
               status: 401,
               body: {
@@ -183,7 +183,7 @@ describe('Cricket HTTP requests', () => {
     assert.doesNotMatch(expect, /^HTTP\/1\.1 100 Continue/);
   });
 
-  it('allows hook-approved expect-continue requests after preflight', async () => {
+  it('allows middleware-approved expect-continue requests after preflight', async () => {
     let endpoint = defineEndpoint({
       method: 'post',
       path: '/protected',
@@ -199,11 +199,11 @@ describe('Cricket HTTP requests', () => {
     let app = await createHttpApp({
       endpoints: [endpoint],
       use: [
-        async (exchange, next) => {
-          if (!exchange.request.headers.authorization)
+        async (requestContext, next) => {
+          if (!requestContext.request.headers.authorization)
             return toHttpError(unauthenticated());
 
-          return await next(exchange);
+          return await next(requestContext);
         }
       ]
     });

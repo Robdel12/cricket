@@ -57,10 +57,10 @@ function normalizeSetupResult(result) {
   };
 }
 
-async function resolveRuntimeHooks(hooks, runtime) {
-  let value = typeof hooks === 'function'
-    ? await hooks(runtime)
-    : hooks;
+async function resolveMiddleware(middleware, runtime) {
+  let value = typeof middleware === 'function'
+    ? await middleware(runtime)
+    : middleware;
 
   return toArray(value);
 }
@@ -101,9 +101,9 @@ function optionsResponse(allowedMethods) {
   };
 }
 
-function composeHooks(hooks, finalHandler) {
-  return hooks.reduceRight(
-    (next, hook) => exchange => hook(exchange, next),
+function composeMiddleware(middleware, finalHandler) {
+  return middleware.reduceRight(
+    (next, use) => requestContext => use(requestContext, next),
     finalHandler
   );
 }
@@ -220,18 +220,18 @@ async function resolveContext(appContract, {
   };
 }
 
-async function resolveExchangeContext(appContract, exchange, {
-  request = exchange.request,
+async function resolveRequestContext(appContract, requestContext, {
+  request = requestContext.request,
   setup
 }) {
   let context = await resolveContext(appContract, {
-    baseContext: exchange.context,
+    baseContext: requestContext.context,
     request,
     setup
   });
 
   return {
-    ...exchange,
+    ...requestContext,
     context,
     request
   };
@@ -244,8 +244,8 @@ function withMatchedParams(request, match) {
   };
 }
 
-async function runEndpoint(exchange, endpoint) {
-  return await endpoint.handle(exchange.request, exchange.context);
+async function runEndpoint(requestContext, endpoint) {
+  return await endpoint.handle(requestContext.request, requestContext.context);
 }
 
 async function reportRequestError(appContract, {
@@ -333,19 +333,19 @@ function createRuntimeHandler({
         services,
         setup
       });
-      let exchange = {
+      let requestContext = {
         app: appContract,
         context,
         logger,
         request: baseRequest,
         services
       };
-      let finalHandler = async nextExchange => {
-        let match = matchRoute(routes, nextExchange.request);
+      let finalHandler = async nextRequestContext => {
+        let match = matchRoute(routes, nextRequestContext.request);
 
         if (match) {
-          let matchedRequest = withMatchedParams(nextExchange.request, match);
-          let exchangeForMatchedRequest = await resolveExchangeContext(appContract, nextExchange, {
+          let matchedRequest = withMatchedParams(nextRequestContext.request, match);
+          let requestContextForMatchedRequest = await resolveRequestContext(appContract, nextRequestContext, {
             request: matchedRequest,
             setup
           });
@@ -354,34 +354,34 @@ function createRuntimeHandler({
 
           let parsedRequest = await completeRequestBody(
             req,
-            exchangeForMatchedRequest.request,
+            requestContextForMatchedRequest.request,
             match.endpoint
           );
 
           return await runEndpoint({
-            ...exchangeForMatchedRequest,
-            request: parsedRequest,
+            ...requestContextForMatchedRequest,
+            request: parsedRequest
           }, match.endpoint);
         }
 
-        let allowedMethods = allowedMethodsForPath(routes, nextExchange.request);
+        let allowedMethods = allowedMethodsForPath(routes, nextRequestContext.request);
 
-        if (allowedMethods.length && nextExchange.request.method.toUpperCase() === 'OPTIONS')
+        if (allowedMethods.length && nextRequestContext.request.method.toUpperCase() === 'OPTIONS')
           return optionsResponse(allowedMethods);
 
         if (allowedMethods.length)
-          return methodNotAllowed(nextExchange.request, allowedMethods);
+          return methodNotAllowed(nextRequestContext.request, allowedMethods);
 
-        let exchangeForRequest = await resolveExchangeContext(appContract, nextExchange, {
+        let requestContextForRequest = await resolveRequestContext(appContract, nextRequestContext, {
           setup
         });
 
         if (appContract.fallback)
-          return await appContract.fallback(exchangeForRequest);
+          return await appContract.fallback(requestContextForRequest);
 
-        return defaultNotFound(exchangeForRequest.request);
+        return defaultNotFound(requestContextForRequest.request);
       };
-      let response = await composeHooks(use, finalHandler)(exchange);
+      let response = await composeMiddleware(use, finalHandler)(requestContext);
 
       writeHttpResponse(req, res, response);
     } catch (error) {
@@ -460,7 +460,7 @@ export async function createCricketRuntime(cricketApp, {
     logger,
     services
   };
-  let use = await resolveRuntimeHooks(appContract.use, runtimeBag);
+  let use = await resolveMiddleware(appContract.use, runtimeBag);
   let prefixedEndpoints = appContract.endpoints.map(endpoint =>
     endpointWithPrefix(endpoint, appContract.prefix)
   );

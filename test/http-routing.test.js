@@ -82,7 +82,7 @@ describe('Cricket HTTP routing', () => {
     });
   });
 
-  it('lets app hooks stop malformed bodies before Cricket reads them', async () => {
+  it('lets middleware stop malformed bodies before Cricket reads them', async () => {
     let endpoint = defineEndpoint({
       method: 'post',
       path: '/projects',
@@ -94,7 +94,7 @@ describe('Cricket HTTP routing', () => {
     let app = await createHttpApp({
       endpoints: [endpoint],
       use: [
-        async exchange => ({
+        async requestContext => ({
           status: 401,
           body: {
             error: 'Sign in first'
@@ -113,7 +113,7 @@ describe('Cricket HTTP routing', () => {
     });
   });
 
-  it('routes after app hooks rewrite request data', async () => {
+  it('routes after middleware rewrites request data', async () => {
     let endpoint = defineEndpoint({
       method: 'get',
       path: '/projects/:slug',
@@ -132,10 +132,10 @@ describe('Cricket HTTP routing', () => {
         };
       },
       use: [
-        async (exchange, next) => await next({
-          ...exchange,
+        async (requestContext, next) => await next({
+          ...requestContext,
           request: {
-            ...exchange.request,
+            ...requestContext.request,
             path: '/projects/signal-notes'
           }
         })
@@ -201,7 +201,7 @@ describe('Cricket HTTP routing', () => {
   });
 
   for (let method of ['TRACE', 'PROPFIND']) {
-    it(`rejects unsupported ${method} before hooks or handlers run`, async () => {
+    it(`rejects unsupported ${method} before middleware or handlers run`, async () => {
       let called = false;
       let app = await createHttpApp({
         endpoints: [healthEndpoint()],
@@ -210,9 +210,9 @@ describe('Cricket HTTP routing', () => {
           return ok({ success: true });
         },
         use: [
-          async (exchange, next) => {
+          async (requestContext, next) => {
             called = true;
-            return await next(exchange);
+            return await next(requestContext);
           }
         ]
       });
@@ -425,15 +425,15 @@ describe('Cricket HTTP routing', () => {
       message: 'Ambiguous authorization header'
     }
   ]) {
-    it(`rejects ${scenario.name} before hooks run`, async () => {
+    it(`rejects ${scenario.name} before middleware runs`, async () => {
       let called = false;
       let app = await createHttpApp({
         endpoints: [healthEndpoint('/session')],
         trustProxy: true,
         use: [
-          async (exchange, next) => {
+          async (requestContext, next) => {
             called = true;
-            return await next(exchange);
+            return await next(requestContext);
           }
         ]
       });

@@ -105,13 +105,13 @@ let projectDomain = {
 };
 
 function readUser() {
-  return async (exchange, next) => {
-    let token = String(exchange.request.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
+  return async (requestContext, next) => {
+    let token = String(requestContext.request.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
 
     return await next({
-      ...exchange,
+      ...requestContext,
       context: {
-        ...exchange.context,
+        ...requestContext.context,
         user: token ? { id: token } : undefined
       }
     });

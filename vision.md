@@ -66,7 +66,7 @@ does not mean Cricket secretly owns product policy:
 
 - `api/index.js` is the normal Node entrypoint and visible Cricket app wiring.
 - `api/domains/` contains product API domains.
-- `api/middleware/` contains Cricket exchange hooks such as auth extraction,
+- `api/middleware/` contains request middleware such as auth extraction,
   request IDs, CORS, rate limits, raw webhooks, and frontend fallbacks.
 - `api/services/` contains app-wide services that are not owned by one domain,
   such as email, media storage, payment clients, caches, and cross-domain
@@ -191,12 +191,12 @@ Cricket should provide one logging story.
 Apps configure and extend the logger: levels, redaction, transports, request
 IDs, user IDs, domain metadata, and environment behavior. Cricket should then
 pass that logger through app setup, request context, rules, handlers, services,
-runtime hooks, startup, shutdown, and error handling.
+middleware, startup, shutdown, and error handling.
 
 ## Design Principles
 
 **Plain functions win.** Keep models, serializers, rules, services, endpoints,
-and hooks as functions and POJOs.
+and middleware as functions and POJOs.
 
 **Plain objects stay plain.** Cricket should not introduce model instances,
 hidden mutation, decorators, or ORM-style lifecycles.
@@ -268,7 +268,7 @@ abstraction.
 
 `cricket init agents` should ship project guidance that teaches the same
 architecture humans use: domains by folder, schemas at boundaries, services for
-data work, rules for guards, serializers for outgoing API shape, runtime hooks
+data work, rules for guards, serializers for outgoing API shape, middleware
 for HTTP edge work, and tests through the HTTP API.
 
 ## Product Feel

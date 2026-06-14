@@ -52,7 +52,7 @@ map.
 api/
   index.js      app entrypoint and Cricket wiring
   domains/      product API domains
-  middleware/   Cricket exchange hooks
+  middleware/   request middleware
   services/     app-wide services
   workers/      background workers
   migrations/   app-owned database migrations
@@ -61,8 +61,8 @@ api/
 
 | Folder | Use it for | Keep out |
 | --- | --- | --- |
-| `domains/` | Product API behavior. | App-wide clients and app-level hooks. |
-| `middleware/` | Cricket exchange hooks: auth extraction, request IDs, CORS, rate limits, raw webhooks, frontend fallbacks. | Domain authorization; put that in `*.rules.js`. |
+| `domains/` | Product API behavior. | App-wide clients and app-level middleware. |
+| `middleware/` | Request middleware: auth extraction, request IDs, CORS, rate limits, raw webhooks, frontend fallbacks. | Domain authorization; put that in `*.rules.js`. |
 | `services/` | Shared app capabilities: email, media storage, payment clients, caches, cross-domain summaries. | Domain-specific product logic. |
 | `workers/` | Background entrypoints that call services. | A second product layer. |
 | `migrations/` | App-owned Knex migrations. | Hidden Cricket database behavior. |
@@ -80,16 +80,16 @@ import knex from 'knex';
 import { defineCricketApp, startCricketApp } from '@robdel12/cricket';
 
 function readSession() {
-  return async (exchange, next) => {
-    let authorization = String(exchange.request.headers.authorization ?? '');
+  return async (requestContext, next) => {
+    let authorization = String(requestContext.request.headers.authorization ?? '');
     let user = authorization
-      ? await exchange.services.sessions.verifyBearerToken(authorization)
+      ? await requestContext.services.sessions.verifyBearerToken(authorization)
       : undefined;
 
     return await next({
-      ...exchange,
+      ...requestContext,
       context: {
-        ...exchange.context,
+        ...requestContext.context,
         user
       }
     });
@@ -139,18 +139,19 @@ if (process.env.NODE_ENV !== 'test')
   });
 ```
 
-## Exchange Hooks
+## Middleware
 
-Cricket hooks receive a plain exchange object and return the next exchange or a
-response. Treat the exchange as immutable: copy what you change.
+Cricket middleware receives a plain request context and returns a response or
+passes the next request context forward. Treat it as immutable: copy what you
+change.
 
 ```js
 export function requestId() {
-  return async (exchange, next) => {
+  return async (requestContext, next) => {
     return await next({
-      ...exchange,
+      ...requestContext,
       context: {
-        ...exchange.context,
+        ...requestContext.context,
         requestId: crypto.randomUUID()
       }
     });
@@ -158,7 +159,7 @@ export function requestId() {
 }
 ```
 
-Use `use` hooks for cross-cutting HTTP work.
+Use middleware for cross-cutting HTTP work.
 
 ## Model
 

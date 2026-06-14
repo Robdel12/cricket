@@ -389,7 +389,7 @@ Cricket owns the architecture. Your app owns the behavior.
 
 - \`api/index.js\` is the normal Node entrypoint and visible Cricket app wiring.
 - \`api/domains/\` contains product API domains.
-- \`api/middleware/\` contains Cricket exchange hooks such as auth extraction, request IDs, rate limits, raw webhooks, CORS, and frontend fallbacks.
+- \`api/middleware/\` contains request middleware such as auth extraction, request IDs, rate limits, raw webhooks, CORS, and frontend fallbacks.
 - \`api/services/\` contains app-wide services that are not owned by one domain.
 - \`api/workers/\` contains background worker entrypoints that call services.
 - \`api/migrations/\` contains app-owned database migrations. Point your own Knex config or command at this folder.
@@ -409,7 +409,7 @@ First-class means scaffolded, documented, inspectable, and easy for agents to fo
 - \`*.test.js\` tests endpoint behavior through HTTP.
 
 The folder is the domain. Keep services boring, rules named, and routes thin.
-Keep HTTP exchange behavior in \`middleware/\`, not in rules. Keep app-wide clients
+Keep HTTP request behavior in \`middleware/\`, not in rules. Keep app-wide clients
 and cross-domain helpers in \`services/\`, not in one random domain.
 Keep source payload weirdness in \`*.normalizers.js\`, not scattered through
 services and routes.
@@ -421,7 +421,7 @@ middleware, or migration. Keep \`dev/\` local-only.
 `,
   '.codex/skills/cricket-api/SKILL.md': `---
 name: cricket-api
-description: Work in a Cricket Node API app with predictable domain files, validations, normalizers, serializers, app exchange hooks/services/workers/migrations, Zod contracts, Knex services, and OpenAPI generation.
+description: Work in a Cricket Node API app with predictable domain files, validations, normalizers, serializers, app middleware/services/workers/migrations, Zod contracts, Knex services, and OpenAPI generation.
 ---
 
 # Cricket API Skill
@@ -435,7 +435,7 @@ Start with \`pnpm cricket inspect api/index.js\`, then read \`api/index.js\` and
 ## App Folders
 
 - Cricket owns the architecture and HTTP runtime. The app owns product behavior, auth policy, data work, queues, and deployment.
-- \`api/middleware/\` is for Cricket exchange hooks, not domain authorization.
+- \`api/middleware/\` is for request middleware, not domain authorization.
 - \`api/services/\` is for app-wide services not owned by one domain.
 - \`api/workers/\` is for background worker entrypoints that call services.
 - \`api/migrations/\` is app-owned. Configure Knex there from the app, not Cricket.
