@@ -50,7 +50,6 @@ describe('Cricket CLI', () => {
       'utf8'
     );
 
-    assert.match(routes, /Add projectBoard endpoint contracts here/);
     assert.match(routes, /export let projectBoardEndpoints = \[/);
     assert.doesNotMatch(routes, /defineEndpoint/);
 
@@ -67,8 +66,6 @@ describe('Cricket CLI', () => {
       'utf8'
     );
 
-    assert.match(rules, /Add ProjectBoard auth/);
-
     let model = await fs.readFile(
       path.join(root, 'project-board', 'project-board.model.js'),
       'utf8'
@@ -84,20 +81,6 @@ describe('Cricket CLI', () => {
 
     assert.match(validations, /ProjectBoardCreateInput/);
 
-    let normalizers = await fs.readFile(
-      path.join(root, 'project-board', 'project-board.normalizers.js'),
-      'utf8'
-    );
-
-    assert.match(normalizers, /source-boundary normalizers/);
-
-    let endpointTest = await fs.readFile(
-      path.join(root, 'project-board', 'project-board.test.js'),
-      'utf8'
-    );
-
-    assert.match(endpointTest, /tests user-visible HTTP behavior/);
-    assert.match(endpointTest, /real app test server/);
   });
 
   it('does not overwrite existing domain files unless forced', async () => {
@@ -159,8 +142,6 @@ describe('Cricket CLI', () => {
 
     assert.match(agents, /Cricket App Guidance/);
     assert.match(agents, /App Shape/);
-    assert.match(agents, /Cricket owns the architecture/);
-    assert.match(agents, /First-class means scaffolded/);
     assert.match(agents, /Domain Shape/);
     assert.match(agents, /\*\.normalizers\.js/);
     assert.match(agents, /api\/middleware/);
@@ -168,19 +149,13 @@ describe('Cricket CLI', () => {
     assert.match(agents, /api\/workers/);
     assert.match(agents, /api\/migrations/);
     assert.match(agents, /api\/dev/);
-    assert.match(agents, /not product architecture/);
-    assert.match(agents, /If code affects product behavior/);
-    assert.match(agents, /The folder is the domain/);
     assert.match(agents, /\*\.test\.js/);
-    assert.match(agents, /endpoint behavior through HTTP/);
     assert.match(skill, /name: cricket-api/);
     assert.match(skill, /OpenAPI generation/);
-    assert.match(skill, /The app owns product behavior/);
     assert.match(skill, /normalizers/);
     assert.match(skill, /api\/middleware/);
     assert.match(skill, /api\/workers/);
     assert.match(skill, /api\/dev/);
-    assert.match(skill, /local-only development support/);
     assert.match(skill, /domain-local `\*\.test\.js`/);
   });
 

@@ -22,7 +22,6 @@
     "./app": "./src/app.js",
     "./domain": "./src/domain.js",
     "./knex": "./src/persistence/knex.js",
-    "./koa": "./src/http/koa.js",
     "./logger": "./src/logger.js",
     "./openapi": "./src/openapi.js",
     "./serializer": "./src/serializer.js"
@@ -30,7 +29,7 @@
   "scripts": {
     "cricket": "node bin/cricket.js",
     "test": "node --test",
-    "check": "node --check bin/*.js src/*.js src/**/*.js test/*.test.js fixtures/**/*.js examples/*.js",
+    "check": "node --check bin/*.js src/*.js src/**/*.js test/*.test.js test/fixtures/*.js fixtures/**/*.js examples/*.js",
     "prepublishOnly": "pnpm run check && pnpm test"
   },
   "repository": {
@@ -45,10 +44,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@koa/router": "^15.6.0",
     "knex": "^3.2.10",
-    "koa": "^3.2.1",
-    "koa-bodyparser": "^4.4.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {

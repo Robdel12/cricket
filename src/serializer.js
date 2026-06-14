@@ -14,7 +14,7 @@ function parseOutput(schema, value) {
  * @param {object} config
  * @param {string} config.name
  * @param {import('zod').ZodTypeAny} config.output
- * @param {(value: any, ctx?: any) => any} config.serialize
+ * @param {(value: any, context?: any) => any} config.serialize
  * @returns {Function & { serializerName: string, output: import('zod').ZodTypeAny }}
  */
 export function defineSerializer({
@@ -27,7 +27,7 @@ export function defineSerializer({
   if (typeof serialize !== 'function')
     throw new Error(`Serializer ${name} needs a serialize function`);
 
-  let serializer = (value, ctx) => parseOutput(output, serialize(value, ctx));
+  let serializer = (value, context) => parseOutput(output, serialize(value, context));
 
   Object.defineProperties(serializer, {
     serializerName: { value: name },
@@ -40,16 +40,16 @@ export function defineSerializer({
 /**
  * Compose multiple serializers into one shallow merged projection.
  *
- * @param  {...Function} serializers - Functions that accept `(value, ctx)` and
+ * @param  {...Function} serializers - Functions that accept `(value, context)` and
  * return plain objects.
  * @returns {Function} Serializer that merges every serializer result into one
  * object.
  */
 export function composeSerializers(...serializers) {
-  return (value, ctx) =>
+  return (value, context) =>
     serializers.reduce((result, serialize) => ({
       ...result,
-      ...serialize(value, ctx)
+      ...serialize(value, context)
     }), {});
 }
 
@@ -73,8 +73,8 @@ export function pickFields(fields) {
  * @returns {Function} Serializer that remaps keys in the returned object.
  */
 export function mapKeys(mapKey, serialize = value => value) {
-  return (value, ctx) => Object.fromEntries(
-    Object.entries(serialize(value, ctx)).map(([key, fieldValue]) => [
+  return (value, context) => Object.fromEntries(
+    Object.entries(serialize(value, context)).map(([key, fieldValue]) => [
       mapKey(key),
       fieldValue
     ])

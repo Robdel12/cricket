@@ -165,7 +165,7 @@ function endpointOperation(endpoint) {
  *
  * The generator is intentionally narrow: it translates the framework's own
  * endpoint/model shapes into an OpenAPI document without knowing anything
- * about Koa, Knex, or a specific app layout.
+ * about a specific app layout.
  *
  * @param {object} [options]
  * @param {string} [options.title='Cricket API'] - OpenAPI info title.
@@ -188,6 +188,18 @@ export function generateOpenApi({
 } = {}) {
   let paths = {};
   let schemas = componentSchemas(models);
+  let usesBearerAuth = endpoints.some(endpoint => endpoint.auth);
+  let components = {
+    ...(Object.keys(schemas).length ? { schemas } : {}),
+    ...(usesBearerAuth ? {
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer'
+        }
+      }
+    } : {})
+  };
 
   for (let endpoint of endpoints) {
     let openApiPath = toOpenApiPath(withPathPrefix(endpoint.path, pathPrefix));
@@ -204,14 +216,6 @@ export function generateOpenApi({
     },
     ...(servers.length ? { servers } : {}),
     paths,
-    components: {
-      ...(Object.keys(schemas).length ? { schemas } : {}),
-      securitySchemes: {
-        bearerAuth: {
-          type: 'http',
-          scheme: 'bearer'
-        }
-      }
-    }
+    ...(Object.keys(components).length ? { components } : {})
   };
 }

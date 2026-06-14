@@ -2,9 +2,9 @@
 
 Tiny contracts for sturdy Node APIs.
 
-Cricket gives Koa + Knex apps the backend shape that stays pleasant as the API
-grows: Zod models, pure normalizers, pure serializers, boring services, named
-rules, thin routes, OpenAPI generation, and a normal Node entrypoint.
+Cricket gives Node APIs the backend shape that stays pleasant as the API grows:
+Zod models, pure normalizers, pure serializers, boring services, named rules,
+thin routes, OpenAPI generation, and a normal Node entrypoint.
 
 It is intentionally plain JavaScript. No model instances, no hidden mutation, no
 ORM lifecycle. Your app passes POJOs around, composes functions, and keeps side
@@ -16,10 +16,12 @@ effects at the edges.
 pnpm add @robdel12/cricket
 ```
 
-Cricket includes first-class Koa and Knex adapters. "First-class" means
-scaffolded, documented, inspectable, and easy for agents to follow. Your app
-still owns its database schema, migrations, auth middleware, queues, external
-clients, and deployment.
+Cricket owns the HTTP runtime. It routes requests, parses bodies, validates
+contracts, runs rules, writes responses, serves OpenAPI, and handles startup and
+shutdown.
+
+Your app still owns its database schema, migrations, auth policy, queues,
+external clients, workers, and deployment.
 
 ## Domain Shape
 
@@ -47,14 +49,11 @@ map.
 
 ## App Shape
 
-Real apps need a few homes outside the domain folder. Cricket gives those jobs
-names so they don't become a junk drawer.
-
 ```text
 api/
   index.js      app entrypoint and Cricket wiring
   domains/      product API domains
-  middleware/   HTTP edge behavior
+  middleware/   Cricket exchange hooks
   services/     app-wide services
   workers/      background workers
   migrations/   app-owned database migrations
@@ -63,8 +62,8 @@ api/
 
 | Folder | Use it for | Keep out |
 | --- | --- | --- |
-| `domains/` | Product API behavior. | App-wide clients and edge middleware. |
-| `middleware/` | HTTP edge work: auth extraction, uploads, raw webhooks, CORS, rate limits, frontend fallbacks. | Domain authorization; put that in `*.rules.js`. |
+| `domains/` | Product API behavior. | App-wide clients and app-level hooks. |
+| `middleware/` | Cricket exchange hooks: auth extraction, request IDs, CORS, rate limits, raw webhooks, frontend fallbacks. | Domain authorization; put that in `*.rules.js`. |
 | `services/` | Shared app capabilities: email, media storage, payment clients, caches, cross-domain summaries. | Domain-specific product logic. |
 | `workers/` | Background entrypoints that call services. | A second product layer. |
 | `migrations/` | App-owned Knex migrations. | Hidden Cricket database behavior. |
@@ -98,29 +97,66 @@ export let app = defineCricketApp({
     return {
       dependencies: { db },
       services: {
-        mailer: createMailer()
+        mailer: createMailer(),
+        sessions: createSessionService({ db })
       },
       cleanup() {
         return db.destroy();
       }
     };
   },
-  context({ ctx, dependencies, logger, services }) {
+  context({ request, dependencies, logger, services }) {
     // Shape the per-request context your handlers and rules receive.
+    let authorization = String(request.headers.authorization ?? '');
+    let user = authorization
+      ? services.sessions.verifyBearerToken(authorization)
+      : undefined;
+
     return {
       ...dependencies,
       logger,
       services,
-      user: ctx.state.user
+      user
     };
   }
 });
 
 if (process.env.NODE_ENV !== 'test')
-  await startCricketApp(app, { port: process.env.PORT || 3000 });
+  await startCricketApp(app, {
+    port: process.env.PORT || 3000,
+    main: import.meta.url
+  });
 ```
 
 OpenAPI is served at `/openapi.json` by default.
+
+## HTTP Runtime
+
+Cricket owns HTTP now. It routes requests, builds plain request data, runs
+hooks and endpoint contracts, writes responses, serves OpenAPI, and handles
+startup and shutdown on top of Node's HTTP server.
+
+## Exchange Hooks
+
+Cricket hooks receive a plain exchange object and return the next exchange or a
+response. Treat the exchange as immutable: copy what you change.
+
+```js
+export function requestId() {
+  return async (exchange, next) => {
+    return await next({
+      ...exchange,
+      context: {
+        ...exchange.context,
+        requestId: crypto.randomUUID()
+      }
+    });
+  };
+}
+```
+
+Use app-level `use` hooks for cross-cutting HTTP work. Use endpoint-level
+`before` hooks when the work belongs to one route.
 
 ## Model
 
@@ -269,9 +305,9 @@ Rules answer whether the request can continue.
 ```js
 import { defineRule, forbidden } from '@robdel12/cricket';
 
-export let ownsProject = defineRule({
-  name: 'project.ownsProject',
-  async check({ input, services, user, state }) {
+export let ownsProject = defineRule(
+  'project.ownsProject',
+  async ({ input, services, user, state }) => {
     let project = await services.project.findBySlug(input.params.slug);
 
     if (!project || project.owner_id !== user.id)
@@ -279,7 +315,7 @@ export let ownsProject = defineRule({
 
     state.project = project;
   }
-});
+);
 ```
 
 Rules are the right place for auth, ownership, existence, billing, feature
@@ -325,9 +361,39 @@ export let projectEndpoints = [
 ];
 ```
 
-Handlers receive Cricket input plus the adapter context your app returns. Koa
-`ctx`, Knex `db`, transactions, logger, services, and other dependencies remain
-available when you pass them through `context(...)`.
+Handlers receive Cricket input plus the context your app returns. Knex `db`,
+transactions, logger, services, auth facts, request IDs, and loaded resources
+remain available when you pass them through `context(...)`, `use`, `before`, or
+rules.
+
+## Route Groups
+
+Use route groups when a product surface shares a prefix or hooks.
+
+```js
+import { created, group, z } from '@robdel12/cricket';
+
+export let projectRoutes = group('/projects')
+  .post('/', {
+    body: ProjectCreateInput,
+    response: z.object({
+      project: Project.public
+    }),
+    async handler({ input, services, user }) {
+      let project = await services.project.createForUser({
+        userId: user.id,
+        ...input.body
+      });
+
+      return created({
+        project: serializeProjectPublic(project)
+      });
+    }
+  });
+```
+
+To mount an existing endpoint object under a prefix, use `.mount(createProject)`
+instead.
 
 ## CLI
 
@@ -360,7 +426,9 @@ Cricket app.
 import {
   defineCricketApp,
   startCricketApp,
+  createCricketRuntime,
   defineEndpoint,
+  group,
   defineModel,
   defineRule,
   defineSerializer,
@@ -374,7 +442,10 @@ import {
 Public subpaths are also available:
 
 ```js
-import { createKoaApp } from '@robdel12/cricket/koa';
 import { createKnexRepository } from '@robdel12/cricket/knex';
 import { generateOpenApi } from '@robdel12/cricket/openapi';
+import { defineCricketApp } from '@robdel12/cricket/app';
+import { loadDomains } from '@robdel12/cricket/domain';
+import { normalizeLogger } from '@robdel12/cricket/logger';
+import { defineSerializer } from '@robdel12/cricket/serializer';
 ```
