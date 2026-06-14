@@ -3,7 +3,9 @@ let statusByCode = {
   UNAUTHENTICATED: 401,
   FORBIDDEN: 403,
   NOT_FOUND: 404,
+  NORMALIZER_CONTRACT_FAILED: 500,
   RESPONSE_CONTRACT_FAILED: 500,
+  SERIALIZER_CONTRACT_FAILED: 500,
   VALIDATION_FAILED: 422
 };
 
@@ -74,6 +76,30 @@ export function validationFailed(error) {
  */
 export function responseContractFailed(error) {
   return cricketError('RESPONSE_CONTRACT_FAILED', 'Response contract failed', {
+    issues: error.issues ?? []
+  });
+}
+
+/**
+ * Normalize serializer output schema failures into the framework error format.
+ *
+ * @param {{ issues?: Array<any> }} error
+ * @returns {Error & { code: string, details: { issues: Array<any> } }}
+ */
+export function serializerContractFailed(error) {
+  return cricketError('SERIALIZER_CONTRACT_FAILED', 'Serializer contract failed', {
+    issues: error.issues ?? []
+  });
+}
+
+/**
+ * Normalize normalizer output schema failures into the framework error format.
+ *
+ * @param {{ issues?: Array<any> }} error
+ * @returns {Error & { code: string, details: { issues: Array<any> } }}
+ */
+export function normalizerContractFailed(error) {
+  return cricketError('NORMALIZER_CONTRACT_FAILED', 'Normalizer contract failed', {
     issues: error.issues ?? []
   });
 }

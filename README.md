@@ -28,6 +28,7 @@ Use one folder per domain.
 ```text
 api/domains/project/
   project.model.js        durable Zod contracts
+  project.validations.js  request/source input contracts
   project.normalizers.js  third-party/source payload projections
   project.serializers.js  response schemas and projections
   project.service.js      data and product operations
@@ -37,8 +38,9 @@ api/domains/project/
 ```
 
 The folder is the domain. Cricket auto-loads the standard files from your domain
-root, then wires the files that exist. Models, normalizers, serializers,
-services, rules, and routes are standard homes, not mandatory paperwork.
+root, then wires the files that exist. Models, validations, normalizers,
+serializers, services, rules, and routes are standard homes, not mandatory
+paperwork.
 
 Extra files are fine when a domain needs them. Keep the standard files as the
 map.
@@ -122,77 +124,111 @@ OpenAPI is served at `/openapi.json` by default.
 
 ## Model
 
-Models define durable contracts and reusable schemas.
+Models define durable row contracts and public/private visibility.
 
 ```js
-import { z } from 'zod';
-import { defineModel } from '@robdel12/cricket';
+import { defineModel, field, z } from '@robdel12/cricket';
 
 export let Project = defineModel({
   name: 'Project',
   table: 'project',
-  row: z.object({
-    id: z.uuid(),
-    owner_id: z.uuid(),
-    slug: z.string(),
-    name: z.string()
-  }),
-  create: z.object({
-    slug: z.string().min(3),
-    name: z.string().min(1)
-  })
+  row: {
+    id: field.public(z.uuid()),
+    owner_id: field.private(z.uuid()),
+    slug: field.public(z.string()),
+    name: field.public(z.string())
+  },
+  views: {
+    owner: ['id', 'owner_id', 'slug', 'name']
+  }
 });
 ```
 
-Use `row` at the database boundary and `create` / `update` at the request
-boundary. Domains that do not own persisted rows can still keep shared Zod
-schemas in `*.model.js`.
+Cricket derives strict Zod schemas from the row map:
+
+```js
+Project.row       // all fields
+Project.public    // public fields only
+Project.owner     // explicit named view
+```
+
+Use `Project.row` at the database boundary. Request and source input contracts
+belong in `*.validations.js`, not as model lifecycle keys.
+
+## Validation
+
+Validations are reusable Zod schemas for data entering a boundary.
+
+```js
+import { z } from '@robdel12/cricket';
+
+export let ProjectCreateInput = z.object({
+  slug: z.string().min(3),
+  name: z.string().min(1)
+});
+
+export let ProjectInsert = z.object({
+  id: z.uuid(),
+  owner_id: z.uuid(),
+  slug: z.string().min(3),
+  name: z.string().min(1)
+});
+
+export let ProjectParams = z.object({
+  slug: z.string().min(3)
+});
+```
+
+Routes, rules, services, and normalizers import the schemas they use. Cricket
+does not auto-wire validations by name.
 
 ## Normalizer
 
 Normalizers translate outside-world payloads into app-owned shapes.
 
 ```js
-export function normalizeStormEventRow(row) {
-  if (row.EVENT_TYPE !== 'Tornado')
-    return null;
+import { defineNormalizer, z } from '@robdel12/cricket';
+import { ProjectCreateInput } from './project.validations.js';
 
-  return {
-    event_id: row.EVENT_ID,
-    state: row.STATE || null,
-    injuries: Number.parseInt(row.INJURIES_DIRECT || '0', 10),
-    raw_data: row
-  };
-}
+export let normalizeProjectImport = defineNormalizer({
+  name: 'project.import',
+  source: z.object({
+    SLUG: z.string(),
+    NAME: z.string()
+  }).passthrough(),
+  output: ProjectCreateInput,
+  normalize(row) {
+    return {
+      slug: row.SLUG,
+      name: row.NAME
+    };
+  }
+});
 ```
 
 Reach for `*.normalizers.js` when a third-party API, CSV, webhook, queue
 payload, or legacy source speaks in its own shape. Keep normalizers pure: no
-fetching, no DB writes, no auth, no queues. Services can fetch, call a
-normalizer, validate with a model schema, then persist.
+fetching, no DB writes, no auth, no queues. Cricket validates source and output
+contracts when the normalizer runs.
 
 ## Serializer
 
 Serializers are pure projections for data leaving the API.
 
 ```js
-import { z } from 'zod';
-import { camelCaseKeys, pickFields } from '@robdel12/cricket';
+import { defineSerializer, pickFields } from '@robdel12/cricket';
+import { Project } from './project.model.js';
 
-export let ProjectPublic = z.object({
-  id: z.uuid(),
-  ownerId: z.uuid(),
-  slug: z.string(),
-  name: z.string()
+export let serializeProjectPublic = defineSerializer({
+  name: 'project.public',
+  output: Project.public,
+  serialize: pickFields(['id', 'slug', 'name'])
 });
-
-export let serializeProjectPublic = camelCaseKeys(
-  pickFields(['id', 'owner_id', 'slug', 'name'])
-);
 ```
 
-Use serializers to drop private fields, rename keys, and create endpoint-specific
-API shapes. They should not query, mutate, or check permissions.
+Use serializers to drop private fields and create endpoint-specific API shapes.
+They should not query, mutate, or check permissions. Cricket validates serializer
+output, so leaking a private field through `Project.public` fails.
 
 ## Service
 
@@ -201,12 +237,13 @@ Services do data and product work without knowing about HTTP.
 ```js
 import { createKnexRepository } from '@robdel12/cricket';
 import { Project } from './project.model.js';
+import { ProjectInsert } from './project.validations.js';
 
 export function createProjectService({ db, ids }) {
   let projects = createKnexRepository({
     db,
     model: Project,
-    insert: Project.row
+    insert: ProjectInsert
   });
 
   return {
@@ -254,21 +291,21 @@ handler.
 Routes compose the HTTP contract.
 
 ```js
-import { z } from 'zod';
-import { created, defineEndpoint } from '@robdel12/cricket';
+import { created, defineEndpoint, z } from '@robdel12/cricket';
 import { Project } from './project.model.js';
-import { ProjectPublic, serializeProjectPublic } from './project.serializers.js';
+import { serializeProjectPublic } from './project.serializers.js';
+import { ProjectCreateInput } from './project.validations.js';
 import { slugAvailable } from './project.rules.js';
 
 export let createProject = defineEndpoint({
   method: 'post',
   path: '/projects',
   auth: true,
-  body: Project.create,
+  body: ProjectCreateInput,
   rules: [slugAvailable],
   response: z.object({
     success: z.literal(true),
-    project: ProjectPublic
+    project: Project.public
   }),
   async handler({ input, services, user }) {
     let project = await services.project.createForUser({
@@ -326,7 +363,11 @@ import {
   defineEndpoint,
   defineModel,
   defineRule,
-  createKnexRepository
+  defineSerializer,
+  defineNormalizer,
+  field,
+  createKnexRepository,
+  z
 } from '@robdel12/cricket';
 ```
 

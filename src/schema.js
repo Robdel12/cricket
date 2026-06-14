@@ -30,18 +30,31 @@ export function parseZod(schema, value, errorFactory) {
 }
 
 /**
- * Strip JSON Schema dialect metadata from generated output so Cricket returns
- * the lean schema shape callers expect.
+ * Strip generator-only metadata from generated output so OpenAPI does not leak
+ * Zod dialect markers or Cricket field visibility hints.
  *
  * @param {any} schema
  * @returns {any}
  */
 function withoutSchemaDialect(schema) {
-  if (!schema || typeof schema !== 'object' || Array.isArray(schema))
+  if (!schema || typeof schema !== 'object')
     return schema;
 
-  let { $schema, ...rest } = schema;
-  return rest;
+  if (Array.isArray(schema))
+    return schema.map(withoutSchemaDialect);
+
+  let {
+    $schema,
+    cricket,
+    ...rest
+  } = schema;
+
+  return Object.fromEntries(
+    Object.entries(rest).map(([key, value]) => [
+      key,
+      withoutSchemaDialect(value)
+    ])
+  );
 }
 
 /**

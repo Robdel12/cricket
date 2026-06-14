@@ -1,61 +1,181 @@
 import { validationFailed } from './errors.js';
+import { fieldVisibility, isFieldSchema } from './field.js';
 import { parseZod } from './schema.js';
+import { z } from 'zod';
 
 function parseModelSchema(schema, value) {
   return parseZod(schema, value, validationFailed);
 }
 
+let reservedModelKeys = new Set([
+  'name',
+  'table',
+  'fields',
+  'row',
+  'public',
+  'views',
+  'viewNames',
+  'publicFields',
+  'privateFields',
+  'parseRow',
+  'parsePublic',
+  'parseView'
+]);
+
+function toPascalCase(value) {
+  return String(value)
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+    .map(word => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
+    .join('');
+}
+
+function parseHelperName(viewName) {
+  return `parse${toPascalCase(viewName)}`;
+}
+
+function schemaFromFields(fields, fieldNames) {
+  return z.object(Object.fromEntries(
+    fieldNames.map(fieldName => [fieldName, fields[fieldName]])
+  )).strict();
+}
+
+function assertFieldMap(name, fields) {
+  if (!fields || typeof fields !== 'object' || Array.isArray(fields))
+    throw new Error(`Model ${name} needs a row field map`);
+
+  for (let [fieldName, schema] of Object.entries(fields)) {
+    if (!isFieldSchema(schema))
+      throw new Error(`Model ${name} field ${fieldName} needs field.public(...) or field.private(...)`);
+  }
+}
+
+function viewFieldsFor(name, fields, viewName, fieldNames) {
+  if (!Array.isArray(fieldNames))
+    throw new Error(`Model ${name} view ${viewName} needs a field list`);
+
+  for (let fieldName of fieldNames) {
+    if (!fields[fieldName])
+      throw new Error(`Model ${name} view ${viewName} includes unknown field ${fieldName}`);
+  }
+
+  return fieldNames;
+}
+
+function assertParseHelperName(name, viewNames, helperNames, viewName) {
+  let helperName = parseHelperName(viewName);
+
+  if (reservedModelKeys.has(helperName) || viewNames.has(helperName))
+    throw new Error(`Model ${name} view ${viewName} creates conflicting helper ${helperName}`);
+
+  if (helperNames.has(helperName))
+    throw new Error(`Model ${name} view ${viewName} creates duplicate helper ${helperName}`);
+
+  helperNames.add(helperName);
+  return helperName;
+}
+
 /**
- * Define a model contract for a table row plus its create/update payloads.
+ * Define a model contract for a table row and its output views.
  *
- * The model stays framework-agnostic: it only owns schema parsing and named
- * metadata, while persistence stays with the caller.
+ * The model stays framework-agnostic: it owns durable row parsing plus
+ * public/private visibility metadata, while persistence and serialization stay
+ * with the caller.
  *
  * @param {object} config
  * @param {string} config.name
  * @param {string} config.table
- * @param {import('zod').ZodTypeAny} config.row
- * @param {import('zod').ZodTypeAny} [config.create]
- * @param {import('zod').ZodTypeAny} [config.update]
+ * @param {Record<string, import('zod').ZodTypeAny>} config.row
+ * @param {Record<string, string[]>} [config.views]
  * @returns {{
  *   name: string,
  *   table: string,
+ *   fields: Record<string, import('zod').ZodTypeAny>,
  *   row: import('zod').ZodTypeAny,
- *   create?: import('zod').ZodTypeAny,
- *   update?: import('zod').ZodTypeAny,
+ *   public: import('zod').ZodTypeAny,
+ *   views: Record<string, import('zod').ZodTypeAny>,
  *   parseRow(value: any): any,
- *   parseCreate(value: any): any,
- *   parseUpdate(value: any): any
+ *   parsePublic(value: any): any,
+ *   parseView(name: string, value: any): any
  * }}
  */
 export function defineModel({
   name,
   table,
   row,
-  create,
-  update
+  views = {}
 }) {
   if (!name) throw new Error('Model name is required');
   if (!table) throw new Error(`Model ${name} needs a table`);
-  if (!row) throw new Error(`Model ${name} needs a row schema`);
+  assertFieldMap(name, row);
 
-  return {
+  let fields = Object.freeze({ ...row });
+  let fieldNames = Object.freeze(Object.keys(fields));
+  let publicFields = fieldNames.filter(fieldName =>
+    fieldVisibility(fields[fieldName]) === 'public'
+  );
+  let privateFields = fieldNames.filter(fieldName =>
+    fieldVisibility(fields[fieldName]) === 'private'
+  );
+  let rowSchema = schemaFromFields(fields, fieldNames);
+  let publicSchema = schemaFromFields(fields, publicFields);
+  let viewSchemas = {};
+  let viewNames = new Set(Object.keys(views));
+  let viewHelperNames = new Map();
+  let helperNames = new Set();
+
+  for (let [viewName, viewFieldNames] of Object.entries(views)) {
+    if (reservedModelKeys.has(viewName))
+      throw new Error(`Model ${name} view ${viewName} conflicts with a model property`);
+
+    viewHelperNames.set(
+      viewName,
+      assertParseHelperName(name, viewNames, helperNames, viewName)
+    );
+    viewSchemas[viewName] = schemaFromFields(
+      fields,
+      viewFieldsFor(name, fields, viewName, viewFieldNames)
+    );
+  }
+
+  publicFields = Object.freeze(publicFields);
+  privateFields = Object.freeze(privateFields);
+  viewSchemas = Object.freeze(viewSchemas);
+
+  let model = {
     name,
     table,
-    row,
-    create,
-    update,
+    fields,
+    row: rowSchema,
+    public: publicSchema,
+    views: viewSchemas,
+    viewNames: Object.keys(viewSchemas),
+    publicFields,
+    privateFields,
+
+    ...viewSchemas,
 
     parseRow(value) {
-      return parseModelSchema(row, value);
+      return parseModelSchema(rowSchema, value);
     },
 
-    parseCreate(value) {
-      return parseModelSchema(create, value);
+    parsePublic(value) {
+      return parseModelSchema(publicSchema, value);
     },
 
-    parseUpdate(value) {
-      return parseModelSchema(update, value);
+    parseView(viewName, value) {
+      if (!viewSchemas[viewName])
+        throw new Error(`Model ${name} does not define view ${viewName}`);
+
+      return parseModelSchema(viewSchemas[viewName], value);
     }
   };
+
+  for (let [viewName, helperName] of viewHelperNames) {
+    model[helperName] = value => {
+      return parseModelSchema(viewSchemas[viewName], value);
+    };
+  }
+
+  return Object.freeze(model);
 }

@@ -8,6 +8,7 @@ import {
 } from './domain.js';
 import { resolveCricketApp } from './app.js';
 import { generateOpenApi } from './openapi.js';
+import { isZodSchema } from './schema.js';
 
 function toArray(value) {
   if (!value)
@@ -26,10 +27,25 @@ function serviceKeysFor(domain) {
   return [];
 }
 
-function normalizerKeysFor(domain) {
-  return Object.entries(domain.normalizers ?? {})
+function functionKeysFor(module) {
+  return Object.entries(module ?? {})
     .filter(([, value]) => typeof value === 'function')
     .map(([name]) => name);
+}
+
+function schemaKeysFor(module) {
+  return Object.entries(module ?? {})
+    .filter(([, value]) => isZodSchema(value))
+    .map(([name]) => name);
+}
+
+function modelSummaryFor(model) {
+  return {
+    name: model.name,
+    publicFields: model.publicFields ?? [],
+    privateFields: model.privateFields ?? [],
+    views: model.viewNames ?? []
+  };
 }
 
 function domainNameFor(domain, index) {
@@ -105,8 +121,10 @@ export function createAppMap(contract) {
     name: contract.name,
     domains: contract.domains.map((domain, index) => ({
       name: domainNameFor(domain, index),
-      models: toArray(domain.models ?? domain.model).map(model => model.name),
-      normalizers: normalizerKeysFor(domain),
+      models: toArray(domain.models ?? domain.model).map(modelSummaryFor),
+      validations: schemaKeysFor(domain.validations),
+      normalizers: functionKeysFor(domain.normalizers),
+      serializers: functionKeysFor(domain.serializers),
       endpoints: toArray(domain.endpoints ?? domain.endpoint).length,
       services: serviceKeysFor(domain)
     })),
@@ -138,8 +156,15 @@ export function formatAppMap(appMap) {
   lines.push('', 'Domains');
   for (let domain of appMap.domains) {
     lines.push(`  ${domain.name}`);
-    lines.push(`    models: ${domain.models.join(', ') || 'none'}`);
+    lines.push(`    models: ${domain.models.map(model => model.name).join(', ') || 'none'}`);
+    for (let model of domain.models) {
+      lines.push(`      ${model.name} public: ${model.publicFields.join(', ') || 'none'}`);
+      lines.push(`      ${model.name} private: ${model.privateFields.join(', ') || 'none'}`);
+      lines.push(`      ${model.name} views: ${model.views.join(', ') || 'none'}`);
+    }
+    lines.push(`    validations: ${domain.validations.join(', ') || 'none'}`);
     lines.push(`    normalizers: ${domain.normalizers.join(', ') || 'none'}`);
+    lines.push(`    serializers: ${domain.serializers.join(', ') || 'none'}`);
     lines.push(`    endpoints: ${domain.endpoints}`);
     lines.push(`    services: ${domain.services.join(', ') || 'none'}`);
   }

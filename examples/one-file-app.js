@@ -1,44 +1,36 @@
 import knex from 'knex';
-import { z } from 'zod';
 
 import {
-  camelCaseKeys,
   createKnexRepository,
   defineCricketApp,
   defineEndpoint,
   defineModel,
   defineRule,
+  defineSerializer,
+  field,
   notFound,
   ok,
   pickFields,
-  startCricketApp
+  startCricketApp,
+  z
 } from '@robdel12/cricket';
 
 let Project = defineModel({
   name: 'Project',
   table: 'project',
-  row: z.object({
-    id: z.uuid(),
-    owner_id: z.uuid(),
-    slug: z.string(),
-    name: z.string()
-  }),
-  create: z.object({
-    slug: z.string().min(3),
-    name: z.string().min(1)
-  })
+  row: {
+    id: field.public(z.uuid()),
+    owner_id: field.private(z.uuid()),
+    slug: field.public(z.string()),
+    name: field.public(z.string())
+  }
 });
 
-let ProjectPublic = z.object({
-  id: z.uuid(),
-  ownerId: z.uuid(),
-  slug: z.string(),
-  name: z.string()
+let serializeProjectPublic = defineSerializer({
+  name: 'project.public',
+  output: Project.public,
+  serialize: pickFields(['id', 'slug', 'name'])
 });
-
-let serializeProjectPublic = camelCaseKeys(
-  pickFields(['id', 'owner_id', 'slug', 'name'])
-);
 
 function createProjectService({ db }) {
   let projects = createKnexRepository({
@@ -83,7 +75,7 @@ let readProject = defineEndpoint({
   }),
   response: z.object({
     success: z.literal(true),
-    project: ProjectPublic
+    project: Project.public
   }),
   rules: [isKnownProject],
   async handler({ state }) {

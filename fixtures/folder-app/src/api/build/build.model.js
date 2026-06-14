@@ -1,24 +1,16 @@
-import { z } from 'zod';
-
-import { defineModel } from '../../../../../src/index.js';
-
-export let BuildInsert = z.object({
-  id: z.uuid(),
-  user_id: z.uuid(),
-  name: z.string().min(1),
-  public: z.boolean().default(false)
-});
+import {
+  defineModel,
+  field,
+  z
+} from '../../../../../src/index.js';
 
 export let Build = defineModel({
   name: 'Build',
   table: 'build',
-  row: z.object({
-    id: z.uuid(),
-    user_id: z.uuid(),
-    name: z.string(),
-    public: z.coerce.boolean()
-  }),
-  create: z.object({
-    name: z.string().min(1)
-  })
+  row: {
+    id: field.public(z.uuid()),
+    user_id: field.private(z.uuid()),
+    name: field.public(z.string()),
+    public: field.public(z.coerce.boolean())
+  }
 });

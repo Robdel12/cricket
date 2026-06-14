@@ -41,7 +41,8 @@ describe('Cricket CLI', () => {
       'project-board.rules.js',
       'project-board.serializers.js',
       'project-board.service.js',
-      'project-board.test.js'
+      'project-board.test.js',
+      'project-board.validations.js'
     ]);
 
     let routes = await fs.readFile(
@@ -74,6 +75,14 @@ describe('Cricket CLI', () => {
     );
 
     assert.match(model, /table: 'project_board'/);
+    assert.match(model, /field\.public/);
+
+    let validations = await fs.readFile(
+      path.join(root, 'project-board', 'project-board.validations.js'),
+      'utf8'
+    );
+
+    assert.match(validations, /ProjectBoardCreateInput/);
 
     let normalizers = await fs.readFile(
       path.join(root, 'project-board', 'project-board.normalizers.js'),
@@ -252,7 +261,9 @@ describe('Cricket CLI', () => {
     assert.match(result.stdout, /Cricket app/);
     assert.match(result.stdout, /Domains/);
     assert.match(result.stdout, /build/);
+    assert.match(result.stdout, /validations: BuildCreateInput/);
     assert.match(result.stdout, /normalizers: normalizeBuildImport/);
+    assert.match(result.stdout, /serializers: serializeBuildPublic/);
     assert.match(result.stdout, /POST\s+\/api\/builds auth/);
     assert.match(result.stdout, /Build -> build/);
   });
@@ -276,5 +287,8 @@ describe('Cricket CLI', () => {
     assert.equal(document.openapi, '3.1.0');
     assert.equal(document.info.title, 'Folder Build API');
     assert.ok(document.paths['/api/builds']);
+    assert.ok(document.components.schemas.BuildPublic);
+    assert.equal(document.components.schemas.BuildPublic.properties.user_id, undefined);
+    assert.equal(document.components.schemas.BuildPublic.properties.id.cricket, undefined);
   });
 });

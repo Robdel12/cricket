@@ -1,27 +1,27 @@
-import { z } from 'zod';
-
 import {
   created,
   defineEndpoint,
   notFound,
-  ok
+  ok,
+  z
 } from '../../../../../src/index.js';
 import { Build } from './build.model.js';
+import { serializeBuildPublic } from './build.serializers.js';
 import {
-  BuildPublic,
-  serializeBuildPublic
-} from './build.serializers.js';
+  BuildCreateInput,
+  BuildParams
+} from './build.validations.js';
 import { isNamedBuild } from './build.rules.js';
 
 export let createBuild = defineEndpoint({
   method: 'post',
   path: '/builds',
   auth: true,
-  body: Build.create,
+  body: BuildCreateInput,
   rules: [isNamedBuild],
   response: z.object({
     success: z.literal(true),
-    build: BuildPublic
+    build: Build.public
   }),
   async handler({ input, services, user }) {
     let build = await services.build.createForUser({
@@ -40,13 +40,11 @@ export let showBuild = defineEndpoint({
   method: 'get',
   path: '/builds/:buildId',
   auth: true,
-  params: z.object({
-    buildId: z.uuid()
-  }),
+  params: BuildParams,
   responses: {
     200: z.object({
       success: z.literal(true),
-      build: BuildPublic
+      build: Build.public
     }),
     404: z.object({
       error: z.object({

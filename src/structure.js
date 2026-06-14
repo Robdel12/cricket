@@ -6,6 +6,7 @@ import path from 'node:path';
  */
 export let domainFileTypes = [
   'model',
+  'validations',
   'normalizers',
   'serializers',
   'service',
@@ -53,33 +54,43 @@ function domainFilePath(domainRoot, fileStem, type) {
 }
 
 function modelTemplate({ pascalName, tableName }) {
-  return `import { z } from 'zod';
-
-import { defineModel } from '@robdel12/cricket';
+  return `import {
+  defineModel,
+  field,
+  z
+} from '@robdel12/cricket';
 
 export let ${pascalName} = defineModel({
   name: '${pascalName}',
   table: '${tableName}',
-  row: z.object({
-    id: z.uuid()
-  }),
-  create: z.object({})
+  row: {
+    id: field.public(z.uuid())
+  }
 });
 `;
 }
 
-function serializersTemplate({ pascalName }) {
-  return `import { z } from 'zod';
+function validationsTemplate({ pascalName }) {
+  return `import { z } from '@robdel12/cricket';
 
-import { pickFields } from '@robdel12/cricket';
+// Rename this to the first body, params, query, source, or service input your domain needs.
+export let ${pascalName}CreateInput = z.object({});
+`;
+}
 
-export let ${pascalName}Public = z.object({
-  id: z.uuid()
+function serializersTemplate({ fileStem, pascalName }) {
+  return `import {
+  defineSerializer,
+  pickFields
+} from '@robdel12/cricket';
+
+import { ${pascalName} } from './${fileStem}.model.js';
+
+export let serialize${pascalName}Public = defineSerializer({
+  name: '${pascalName}.public',
+  output: ${pascalName}.public,
+  serialize: pickFields(['id'])
 });
-
-export let serialize${pascalName}Public = pickFields([
-  'id'
-]);
 `;
 }
 
@@ -120,6 +131,7 @@ describe('${fileStem} endpoints', () => {
 
 let templates = {
   model: modelTemplate,
+  validations: validationsTemplate,
   normalizers: normalizersTemplate,
   serializers: serializersTemplate,
   service: serviceTemplate,
@@ -384,9 +396,10 @@ First-class means scaffolded, documented, inspectable, and easy for agents to fo
 
 ## Domain Shape
 
-- \`*.model.js\` owns row and input schemas.
+- \`*.model.js\` owns durable row fields and public/private visibility.
+- \`*.validations.js\` owns reusable request, source, and service input schemas.
 - \`*.normalizers.js\` owns pure source-boundary projections for third-party, webhook, queue, import, or legacy payloads.
-- \`*.serializers.js\` owns response projections.
+- \`*.serializers.js\` owns response projections and validates output contracts.
 - \`*.service.js\` owns data operations.
 - \`*.rules.js\` owns auth, existence, ownership, and business guards.
 - \`*.routes.js\` owns endpoint contracts.
@@ -397,12 +410,15 @@ Keep HTTP edge behavior in \`middleware/\`, not in rules. Keep app-wide clients
 and cross-domain helpers in \`services/\`, not in one random domain.
 Keep source payload weirdness in \`*.normalizers.js\`, not scattered through
 services and routes.
+Keep create/update/search/import input contracts in \`*.validations.js\`, not on
+the model. Routes still import validations explicitly; Cricket does not
+auto-wire schemas by name.
 If code affects product behavior, design it into a domain, app service, worker,
 middleware, or migration. Keep \`dev/\` local-only.
 `,
   '.codex/skills/cricket-api/SKILL.md': `---
 name: cricket-api
-description: Work in a Cricket Node API app with predictable domain files, normalizers, app middleware/services/workers/migrations, Zod contracts, Koa adapters, Knex services, and OpenAPI generation.
+description: Work in a Cricket Node API app with predictable domain files, validations, normalizers, serializers, app middleware/services/workers/migrations, Zod contracts, Koa adapters, Knex services, and OpenAPI generation.
 ---
 
 # Cricket API Skill
@@ -425,12 +441,14 @@ Start with \`pnpm cricket inspect api/index.js\`, then read \`api/index.js\` and
 ## Change Flow
 
 1. Update the schema at the boundary that changed.
-2. Normalize third-party/source payloads in \`*.normalizers.js\`.
-3. Keep data work in services.
-4. Put auth, existence, and ownership checks in rules.
-5. Keep endpoint handlers focused on composition.
-6. Generate OpenAPI and check the contract diff.
-7. Add or update the domain-local \`*.test.js\` and test through HTTP for endpoint behavior.
+2. Put request/source input schemas in \`*.validations.js\` and import them explicitly.
+3. Normalize third-party/source payloads in \`*.normalizers.js\`.
+4. Shape API output in \`*.serializers.js\`.
+5. Keep data work in services.
+6. Put auth, existence, and ownership checks in rules.
+7. Keep endpoint handlers focused on composition.
+8. Generate OpenAPI and check the contract diff.
+9. Add or update the domain-local \`*.test.js\` and test through HTTP for endpoint behavior.
 
 ## Commands
 

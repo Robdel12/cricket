@@ -1,9 +1,7 @@
 import { createKnexRepository } from '../../../../../src/index.js';
 
-import {
-  Build,
-  BuildInsert
-} from './build.model.js';
+import { Build } from './build.model.js';
+import { BuildInsert } from './build.validations.js';
 
 export function createBuildService({ db, ids, logger }) {
   let builds = createKnexRepository({

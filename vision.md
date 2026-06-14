@@ -4,8 +4,9 @@ Cricket is a tiny Node API framework for sturdy contracts in Koa + Knex apps.
 
 The bet is that backend code stays easier to grow when every domain has the
 same plain structure: models define contracts, serializers shape outgoing API
-data, normalizers translate outside data, services do product work, rules guard
-requests, and routes compose the pieces without becoming a junk drawer.
+data, validations protect input shape, normalizers translate outside data,
+services do product work, rules guard requests, and routes compose the pieces
+without becoming a junk drawer.
 
 ## Core Shape
 
@@ -17,6 +18,7 @@ api/
   domains/
     project/
       project.model.js
+      project.validations.js
       project.normalizers.js
       project.serializers.js
       project.service.js
@@ -32,7 +34,9 @@ api/
 
 Those files are the framework's expected shape:
 
-- `model` defines durable Zod contracts and reusable schemas.
+- `model` defines durable row contracts and public/private visibility.
+- `validations` defines reusable Zod schemas for request, source, and service
+  input contracts.
 - `normalizers` defines pure source-boundary projections for third-party,
   legacy, webhook, queue, or import payloads.
 - `serializers` defines pure outgoing API projections.
@@ -84,35 +88,52 @@ keep it out of production runtime.
 
 ### `*.model.js`
 
-Models own durable data contracts and reusable boundary schemas.
+Models own durable data contracts and visibility.
 
-Put Zod schemas here for row shape, create input, update input, IDs, enums,
-params, query shapes, and reusable domain primitives. Use `defineModel(...)` for
-persisted rows so bad data is caught when it enters or leaves storage.
+Put persisted row fields here. Use `field.public(...)` for fields that can
+leave through the default public contract, and `field.private(...)` for fields
+that require an explicit named view and serializer.
 
-Some domains do not own persisted data. They may still have a `*.model.js` with
-request/response primitives and no `defineModel(...)` export. Do not create fake
-tables or fake model contracts just to satisfy the framework.
+`defineModel(...)` should derive strict `row`, `public`, and named view schemas.
+Models should not own request lifecycle contracts like create/update. Those
+belong in validations.
+
+Some domains do not own persisted data. They may skip `*.model.js` entirely or
+keep shared schema primitives there without a `defineModel(...)` export. Do not
+create fake tables or fake model contracts just to satisfy the framework.
+
+### `*.validations.js`
+
+Validations own input shape.
+
+Put Zod schemas here for request bodies, params, queries, source payloads,
+service inputs, and persistence inserts/updates when a named contract helps.
+Routes, rules, services, and normalizers import the schemas they use.
+
+Cricket may scaffold and inspect this file, but it should not create a hidden
+validation registry or auto-wire schemas by name.
 
 ### `*.normalizers.js`
 
 Normalizers own source-boundary translation.
 
-Put pure functions here when data comes from a third-party API, CSV, webhook,
-queue payload, legacy system, or import feed. A normalizer turns source-shaped
-data into an app-owned object before services persist or reason over it.
+Put pure `defineNormalizer(...)` functions here when data comes from a
+third-party API, CSV, webhook, queue payload, legacy system, or import feed. A
+normalizer turns source-shaped data into an app-owned object before services
+persist or reason over it.
 
 Normalizers should not fetch, write to the database, enqueue work, check auth,
-or know about Koa. Services and workers own those side effects.
+or know about Koa. Cricket validates source and output schemas when the
+normalizer runs. Services and workers own side effects.
 
 ### `*.serializers.js`
 
 Serializers own outgoing API shape.
 
-Put response schemas and pure projection functions here. They should accept
-plain objects and return plain objects. This is where snake_case rows can become
-camelCase API data, private fields can be dropped, and endpoint-specific public
-shapes can be named.
+Put `defineSerializer(...)` projections here. They should accept plain objects
+and return plain objects. This is where private fields are dropped and
+endpoint-specific public shapes can be named. Cricket validates serializer
+output so leaks fail close to the source.
 
 ### `*.service.js`
 
@@ -168,7 +189,7 @@ Routes stay thin because the other files have real jobs.
 ```text
 source client or worker
   -> normalizer
-  -> model/schema validation
+  -> validation contract
   -> service
   -> database, queue, or app-owned side effect
 ```
@@ -212,8 +233,8 @@ hidden mutation, decorators, or ORM-style lifecycles.
 explicit inputs and outputs. Avoid magic containers and class hierarchies.
 
 **Strong contracts at real boundaries.** Validate request input, durable row
-shape, normalized source data, and outgoing API responses. Do not add schemas
-for theater.
+shape, normalized source data, serializer output, and outgoing API responses.
+Do not add schemas for theater.
 
 **First-class does not mean hidden ownership.** Cricket can scaffold
 `normalizers`, `middleware/`, `services/`, `workers/`, `migrations/`, `dev/`,

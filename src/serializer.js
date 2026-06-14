@@ -1,3 +1,42 @@
+import { serializerContractFailed } from './errors.js';
+import { parseZod } from './schema.js';
+
+function parseOutput(schema, value) {
+  return parseZod(schema, value, serializerContractFailed);
+}
+
+/**
+ * Define a serializer as a pure projection with an enforced output contract.
+ *
+ * The returned value is still a plain function. Cricket only adds boundary
+ * parsing so leaks and missing fields fail where output is shaped.
+ *
+ * @param {object} config
+ * @param {string} config.name
+ * @param {import('zod').ZodTypeAny} config.output
+ * @param {(value: any, ctx?: any) => any} config.serialize
+ * @returns {Function & { serializerName: string, output: import('zod').ZodTypeAny }}
+ */
+export function defineSerializer({
+  name,
+  output,
+  serialize
+}) {
+  if (!name) throw new Error('Serializer name is required');
+  if (!output) throw new Error(`Serializer ${name} needs an output schema`);
+  if (typeof serialize !== 'function')
+    throw new Error(`Serializer ${name} needs a serialize function`);
+
+  let serializer = (value, ctx) => parseOutput(output, serialize(value, ctx));
+
+  Object.defineProperties(serializer, {
+    serializerName: { value: name },
+    output: { value: output }
+  });
+
+  return Object.freeze(serializer);
+}
+
 /**
  * Compose multiple serializers into one shallow merged projection.
  *

@@ -118,11 +118,16 @@ function responsesForEndpoint(endpoint) {
 }
 
 function schemaEntriesForModel(model) {
-  return [
-    [`${model.name}Row`, model.row],
-    [`${model.name}Create`, model.create],
-    [`${model.name}Update`, model.update]
-  ].filter(([, schema]) => schema);
+  let entries = [
+    [`${model.name}Public`, model.public]
+  ];
+
+  for (let [viewName, schema] of Object.entries(model.views ?? {})) {
+    let schemaName = `${model.name}${viewName.charAt(0).toUpperCase()}${viewName.slice(1)}`;
+    entries.push([schemaName, schema]);
+  }
+
+  return entries.filter(([, schema]) => schema);
 }
 
 function componentSchemas(models) {

@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export let domainFileTypes = [
   'model',
+  'validations',
   'normalizers',
   'serializers',
   'service',
@@ -175,7 +176,9 @@ async function loadDomainFolder(domainPath) {
     fileStem,
     models,
     endpoints,
+    validations: modules.validations ?? {},
     normalizers: modules.normalizers ?? {},
+    serializers: modules.serializers ?? {},
     services
   };
 }

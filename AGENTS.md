@@ -4,10 +4,11 @@
 
 Cricket is a tiny Node API framework for sturdy contracts in Koa + Knex apps.
 
-The core pattern is intentionally simple: services do data work, rules handle
-auth/existence/business guards, schemas protect boundaries, normalizers shape
-outside data entering the app, serializers shape API data leaving the app, and
-routes stay thin. Keep that architecture obvious in every change.
+The core pattern is intentionally simple: models define durable row visibility,
+validations protect input shape, normalizers shape outside data entering the app,
+serializers shape API data leaving the app, services do data work, rules handle
+auth/existence/business guards, and routes stay thin. Keep that architecture
+obvious in every change.
 
 ## Package Manager
 
@@ -28,12 +29,17 @@ routes stay thin. Keep that architecture obvious in every change.
 
 ## Architecture
 
-- `defineModel` owns durable row/create/update schema contracts.
+- `defineModel` owns durable row contracts, public/private visibility, and named
+  views. It does not own request lifecycle contracts like create/update.
+- `*.validations.js` owns reusable body, params, query, source, and service input
+  schemas. Routes import those schemas explicitly through `body`, `params`,
+  `query`, and `response`; Cricket must not auto-wire validations by name.
 - Normalizers are pure source-boundary functions for third-party APIs, CSVs,
   webhooks, queue payloads, imports, and legacy data. They do not fetch, write,
   enqueue, authorize, or know about HTTP.
 - Serializers are pure domain functions for outgoing API projections. Keep them
-  near routes, not buried in model instances.
+  near routes, not buried in model instances. Use `defineSerializer` when the
+  output should be actively parsed.
 - `defineEndpoint` owns request validation, auth enforcement, rules, handler
   execution, response validation, and docs metadata.
 - `defineRule` owns named guards such as auth, ownership, existence, billing,
@@ -43,9 +49,9 @@ routes stay thin. Keep that architecture obvious in every change.
 - First-class app folders mean scaffolded, documented, inspectable, and
   agent-readable. They do not mean Cricket secretly owns runtime behavior.
 - Domain folders are the framework contract. Cricket auto-loads standard
-  `*.model.js`, `*.normalizers.js`, `*.serializers.js`, `*.service.js`,
-  `*.rules.js`, and `*.routes.js` files when they exist. Do not bring back
-  `*.domain.js` manifest files or make optional files mandatory.
+  `*.model.js`, `*.validations.js`, `*.normalizers.js`, `*.serializers.js`,
+  `*.service.js`, `*.rules.js`, and `*.routes.js` files when they exist. Do not
+  bring back `*.domain.js` manifest files or make optional files mandatory.
 - `api/middleware/` is for HTTP edge behavior. `api/services/` is for shared
   app capabilities. `api/workers/` is for background entrypoints.
   `api/migrations/` is app-owned database change history. `api/dev/` is

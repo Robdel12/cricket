@@ -6,7 +6,6 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import knex from 'knex';
 import request from 'supertest';
-import { z } from 'zod';
 
 import {
   camelCaseKeys,
@@ -21,7 +20,10 @@ import {
   defineCricketApp,
   defineEndpoint,
   defineModel,
+  defineNormalizer,
   defineRule,
+  defineSerializer,
+  field,
   forbidden,
   fromKoaService,
   generateOpenApi,
@@ -31,7 +33,8 @@ import {
   ok,
   pickFields,
   renameFields,
-  startCricketApp
+  startCricketApp,
+  z
 } from '../src/index.js';
 
 async function tempRoot() {
@@ -43,18 +46,15 @@ describe('Cricket', () => {
     let Build = defineModel({
       name: 'Build',
       table: 'build',
-      row: z.object({
-        id: z.uuid(),
-        user_id: z.uuid(),
-        name: z.string(),
-        public: z.boolean().default(false)
-      }),
-      create: z.object({
-        name: z.string().min(1)
-      }),
-      update: z.object({
-        name: z.string().min(1).optional()
-      })
+      row: {
+        id: field.public(z.uuid()),
+        user_id: field.private(z.uuid()),
+        name: field.public(z.string()),
+        public: field.public(z.boolean().default(false))
+      }
+    });
+    let BuildCreateInput = z.object({
+      name: z.string().min(1)
     });
     let serializeBuild = composeSerializers(
       pickFields(['id', 'name', 'public']),
@@ -68,7 +68,7 @@ describe('Cricket', () => {
     let endpoint = defineEndpoint({
       method: 'post',
       path: '/builds',
-      body: Build.create,
+      body: BuildCreateInput,
       rules: [isAuthenticated],
       async handler({ input, user }) {
         let row = Build.parseRow({
@@ -107,22 +107,76 @@ describe('Cricket', () => {
     });
   });
 
+  it('derives public and named model views from field visibility', () => {
+    let Account = defineModel({
+      name: 'Account',
+      table: 'account',
+      row: {
+        id: field.public(z.uuid()),
+        owner_id: field.private(z.uuid()),
+        email: field.public(z.email())
+      },
+      views: {
+        owner: ['id', 'owner_id', 'email']
+      }
+    });
+
+    assert.deepEqual(Account.parsePublic({
+      id: '018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0',
+      email: 'driver@example.com'
+    }), {
+      id: '018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0',
+      email: 'driver@example.com'
+    });
+
+    assert.throws(() => Account.parsePublic({
+      id: '018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0',
+      owner_id: '018f5f7e-9b5f-7d9a-8f69-3f6c3df71af1',
+      email: 'driver@example.com'
+    }), error => error.code === 'VALIDATION_FAILED');
+
+    assert.deepEqual(Account.parseOwner({
+      id: '018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0',
+      owner_id: '018f5f7e-9b5f-7d9a-8f69-3f6c3df71af1',
+      email: 'driver@example.com'
+    }), {
+      id: '018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0',
+      owner_id: '018f5f7e-9b5f-7d9a-8f69-3f6c3df71af1',
+      email: 'driver@example.com'
+    });
+
+    let docs = generateOpenApi({
+      title: 'Accounts API',
+      version: '1.0.0',
+      models: [Account]
+    });
+
+    assert.equal(docs.components.schemas.AccountPublic.properties.owner_id, undefined);
+    assert.equal(docs.components.schemas.AccountOwner.properties.owner_id.format, 'uuid');
+
+    assert.throws(() => defineModel({
+      name: 'Profile',
+      table: 'profile',
+      row: {
+        id: field.public(z.uuid())
+      },
+      views: {
+        'owner-view': ['id'],
+        owner_view: ['id']
+      }
+    }), /duplicate helper parseOwnerView/);
+  });
+
   it('generates OpenAPI docs from endpoint and model contracts', () => {
     let Build = defineModel({
       name: 'Build',
       table: 'build',
-      row: z.object({
-        id: z.uuid(),
-        user_id: z.uuid(),
-        name: z.string(),
-        public: z.boolean()
-      }),
-      create: z.object({
-        name: z.string().min(1)
-      }),
-      update: z.object({
-        name: z.string().min(1).optional()
-      })
+      row: {
+        id: field.public(z.uuid()),
+        user_id: field.private(z.uuid()),
+        name: field.public(z.string()),
+        public: field.public(z.boolean())
+      }
     });
     let BuildPublic = z.object({
       id: z.uuid(),
@@ -182,8 +236,8 @@ describe('Cricket', () => {
     assert.equal(includeStoriesParameter.required, false);
     assert.equal(operation.responses[200].description, 'Build found');
     assert.equal(operation.responses[200].content['application/json'].schema.properties.build.properties.userId.format, 'uuid');
-    assert.equal(docs.components.schemas.BuildCreate.properties.name.minLength, 1);
-    assert.equal(docs.components.schemas.BuildRow.properties.public.type, 'boolean');
+    assert.equal(docs.components.schemas.BuildPublic.properties.public.type, 'boolean');
+    assert.equal(docs.components.schemas.BuildPublic.properties.user_id, undefined);
     assert.equal(docs.components.securitySchemes.bearerAuth.scheme, 'bearer');
 
     let prefixedDocs = generateOpenApi({
@@ -251,13 +305,193 @@ describe('Cricket', () => {
     assert.equal(events[1].metadata.error.message, 'Nope');
   });
 
+  it('rejects private field leaks at the serializer boundary through HTTP', async () => {
+    let User = defineModel({
+      name: 'User',
+      table: 'user',
+      row: {
+        id: field.public(z.uuid()),
+        email: field.private(z.email()),
+        name: field.public(z.string())
+      }
+    });
+    let serializeUser = defineSerializer({
+      name: 'user.public',
+      output: User.public,
+      serialize(row) {
+        return {
+          id: row.id,
+          email: row.email,
+          name: row.name
+        };
+      }
+    });
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/users/me',
+      response: z.object({
+        user: User.public
+      }),
+      async handler() {
+        return ok({
+          user: serializeUser({
+            id: '018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0',
+            email: 'driver@example.com',
+            name: 'Driver'
+          })
+        });
+      }
+    });
+    let app = createKoaApp({
+      endpoints: [endpoint]
+    });
+    app.on('error', () => {});
+
+    let response = await request(app.callback())
+      .get('/users/me');
+
+    assert.equal(response.status, 500);
+    assert.equal(response.body.error.code, 'SERIALIZER_CONTRACT_FAILED');
+  });
+
+  it('rejects missing required serializer output through HTTP', async () => {
+    let User = defineModel({
+      name: 'User',
+      table: 'user',
+      row: {
+        id: field.public(z.uuid()),
+        name: field.public(z.string())
+      }
+    });
+    let serializeUser = defineSerializer({
+      name: 'user.public',
+      output: User.public,
+      serialize(row) {
+        return {
+          id: row.id
+        };
+      }
+    });
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/users/me',
+      response: z.object({
+        user: User.public
+      }),
+      async handler() {
+        return ok({
+          user: serializeUser({
+            id: '018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0',
+            name: 'Driver'
+          })
+        });
+      }
+    });
+    let app = createKoaApp({
+      endpoints: [endpoint]
+    });
+    app.on('error', () => {});
+
+    let response = await request(app.callback())
+      .get('/users/me');
+
+    assert.equal(response.status, 500);
+    assert.equal(response.body.error.code, 'SERIALIZER_CONTRACT_FAILED');
+  });
+
+  it('rejects private field leaks at the endpoint response boundary', async () => {
+    let User = defineModel({
+      name: 'User',
+      table: 'user',
+      row: {
+        id: field.public(z.uuid()),
+        email: field.private(z.email()),
+        name: field.public(z.string())
+      }
+    });
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/users/me',
+      response: z.object({
+        user: User.public
+      }),
+      async handler() {
+        return ok({
+          user: {
+            id: '018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0',
+            email: 'driver@example.com',
+            name: 'Driver'
+          }
+        });
+      }
+    });
+    let app = createKoaApp({
+      endpoints: [endpoint]
+    });
+    app.on('error', () => {});
+
+    let response = await request(app.callback())
+      .get('/users/me');
+
+    assert.equal(response.status, 500);
+    assert.equal(response.body.error.code, 'RESPONSE_CONTRACT_FAILED');
+  });
+
+  it('normalizes source payloads into validated app input', () => {
+    let CreateUserInput = z.object({
+      email: z.email(),
+      name: z.string().min(1)
+    });
+    let normalizeUser = defineNormalizer({
+      name: 'user.import',
+      source: z.object({
+        EMAIL: z.string(),
+        NAME: z.string()
+      }).passthrough(),
+      output: CreateUserInput,
+      normalize(row) {
+        if (row.NAME === 'skip')
+          return null;
+
+        return {
+          email: row.EMAIL,
+          name: row.NAME
+        };
+      }
+    });
+
+    assert.deepEqual(normalizeUser({
+      EMAIL: 'driver@example.com',
+      NAME: 'Driver',
+      EXTRA: true
+    }), {
+      email: 'driver@example.com',
+      name: 'Driver'
+    });
+    assert.equal(normalizeUser({
+      EMAIL: 'driver@example.com',
+      NAME: 'skip'
+    }), null);
+    assert.throws(() => normalizeUser({
+      EMAIL: 'not-an-email',
+      NAME: 'Driver'
+    }), {
+      code: 'NORMALIZER_CONTRACT_FAILED'
+    });
+    assert.throws(() => normalizeUser({
+      EMAIL: 'driver@example.com'
+    }), {
+      code: 'VALIDATION_FAILED'
+    });
+  });
+
   it('collects plain domain modules into app wiring inputs', () => {
     let Project = defineModel({
       name: 'Project',
       table: 'project',
-      row: z.object({
-        id: z.uuid()
-      })
+      row: {
+        id: field.public(z.uuid())
+      }
     });
     let endpoint = defineEndpoint({
       method: 'get',
@@ -1093,7 +1327,6 @@ describe('Cricket', () => {
         success: true,
         build: {
           id: '018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0',
-          userId: '018f5f7e-9b5f-7d9a-8f69-3f6c3df71af1',
           name: 'The Whip',
           public: false
         }
@@ -1213,10 +1446,10 @@ describe('Cricket', () => {
       let Build = defineModel({
         name: 'Build',
         table: 'build',
-        row: z.object({
-          id: z.uuid(),
-          name: z.string()
-        })
+        row: {
+          id: field.public(z.uuid()),
+          name: field.public(z.string())
+        }
       });
 
       let repository = createKnexRepository({
