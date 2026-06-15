@@ -24,22 +24,25 @@ external clients, workers, and deployment.
 
 ## Core Concepts
 
-| Level | Concept | Owns |
-| --- | --- | --- |
-| App | App | Runtime wiring: domains, setup, services, middleware, context, fallback, startup, shutdown. |
-| App | Middleware | HTTP edge work through `use`: request IDs, CORS, rate limits, auth extraction, raw webhook preflight. |
-| App | Fallback | Route misses such as static files, SEO HTML, redirects, and frontend shells. |
-| Domain | Model | Durable row contracts, public/private visibility, and named views. |
-| Domain | Validation | Reusable schemas for request, source, and service input. |
-| Domain | Normalizer | Pure source-boundary projections for third-party APIs, CSVs, webhooks, queues, imports, and legacy payloads. |
-| Domain | Serializer | Pure outgoing API projections and response-shape validation. |
-| Domain | Service | Product and data operations without HTTP assumptions. |
-| Endpoint | Route | HTTP contract: method, path, input schemas, rules, handler, response schema, OpenAPI metadata. |
-| Endpoint | Rule | Guards after request validation: auth requirements, ownership, existence, billing, feature limits. |
+```text
+app
+  setup/services/context/startup/shutdown
+  middleware      HTTP edge work before endpoint parsing
+  fallback        app-owned route misses
+  domains/
+    model         durable row contracts and visibility
+    validation    reusable request, source, and service input schemas
+    normalizer    pure outside-source projections
+    serializer    pure outgoing API projections
+    service       product and data operations
+    routes
+      endpoint    method, path, input, rules, handler, response
+      rule        guards after validation
+```
 
-Request flow is intentionally small: middleware runs at the app edge, routes
+The request flow stays small: middleware runs at the app edge, endpoints
 validate input, rules guard the request, handlers call services, and serializers
-shape the response.
+shape output.
 
 ## Domain Shape
 
