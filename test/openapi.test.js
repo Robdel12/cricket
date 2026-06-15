@@ -67,7 +67,9 @@ describe('Cricket OpenAPI', () => {
     assert.equal(docs.openapi, '3.1.0');
     assert.equal(docs.info.title, 'Example API');
     assert.equal(operation.summary, 'Fetch a build');
+    assert.equal(operation.operationId, 'getBuildsBuildId');
     assert.deepEqual(operation.tags, ['Builds']);
+    assert.equal(operation.rules, undefined);
     assert.ok(buildIdParameter);
     assert.ok(includeStoriesParameter);
     assert.equal(buildIdParameter.in, 'path');

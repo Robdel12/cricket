@@ -178,6 +178,7 @@ async function loadDomainFolder(domainPath) {
     endpoints,
     validations: modules.validations ?? {},
     normalizers: modules.normalizers ?? {},
+    rules: modules.rules ?? {},
     serializers: modules.serializers ?? {},
     services
   };

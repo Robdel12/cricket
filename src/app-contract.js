@@ -6,6 +6,7 @@ import {
   collectEndpoints,
   collectModels
 } from './domain.js';
+import { routeIdentityFor } from './http/router.js';
 import { resolveCricketApp } from './app.js';
 import { generateOpenApi } from './openapi.js';
 import { isZodSchema } from './schema.js';
@@ -39,6 +40,12 @@ function schemaKeysFor(module) {
     .map(([name]) => name);
 }
 
+function ruleKeysFor(module) {
+  return Object.entries(module ?? {})
+    .filter(([, value]) => typeof value === 'function')
+    .map(([name, value]) => value.ruleName ?? name);
+}
+
 function modelSummaryFor(model) {
   return {
     name: model.name,
@@ -50,6 +57,24 @@ function modelSummaryFor(model) {
     publicFields: model.publicFields ?? [],
     privateFields: model.privateFields ?? [],
     views: model.viewNames ?? []
+  };
+}
+
+function ruleNamesFor(endpoint) {
+  return toArray(endpoint.rules).map(rule =>
+    rule.ruleName ?? rule.name ?? 'anonymous'
+  );
+}
+
+function observabilitySummaryFor(contract) {
+  let config = contract.observability;
+  let hasObserver = typeof config === 'function' || toArray(config?.observe).length > 0;
+  let hasRequestId = typeof config?.requestId === 'function';
+
+  return {
+    lifecycle: hasObserver ? 'enabled' : 'disabled',
+    replay: hasObserver ? 'terminal events' : 'disabled',
+    requestIds: hasRequestId ? 'custom' : 'default'
   };
 }
 
@@ -93,6 +118,7 @@ async function appContractFromModule(module, {
     version: resolvedApp.version,
     description: resolvedApp.description,
     prefix: resolvedApp.prefix,
+    observability: resolvedApp.observability,
     domains: resolvedApp.domains ?? [],
     endpoints: resolvedApp.endpoints ?? [],
     models: resolvedApp.models ?? []
@@ -123,11 +149,13 @@ export async function loadAppContract(modulePath) {
 export function createAppMap(contract) {
   return {
     name: contract.name,
+    observability: observabilitySummaryFor(contract),
     domains: contract.domains.map((domain, index) => ({
       name: domainNameFor(domain, index),
       models: toArray(domain.models ?? domain.model).map(modelSummaryFor),
       validations: schemaKeysFor(domain.validations),
       normalizers: functionKeysFor(domain.normalizers),
+      rules: ruleKeysFor(domain.rules),
       serializers: functionKeysFor(domain.serializers),
       endpoints: toArray(domain.endpoints ?? domain.endpoint).length,
       services: serviceKeysFor(domain)
@@ -137,8 +165,9 @@ export function createAppMap(contract) {
       table: model.table
     })),
     routes: contract.endpoints.map(endpoint => ({
-      method: endpoint.method,
+      ...routeIdentityFor(endpoint),
       path: withPathPrefix(endpoint.path, contract.prefix),
+      rules: ruleNamesFor(endpoint),
       summary: endpoint.summary,
       tags: endpoint.tags
     }))
@@ -156,6 +185,8 @@ export function formatAppMap(appMap) {
     appMap.name ? `Cricket app: ${appMap.name}` : 'Cricket app'
   ];
 
+  lines.push(`Observability: request IDs ${appMap.observability.requestIds}, lifecycle ${appMap.observability.lifecycle}, replay ${appMap.observability.replay}`);
+
   lines.push('', 'Domains');
   for (let domain of appMap.domains) {
     lines.push(`  ${domain.name}`);
@@ -170,14 +201,17 @@ export function formatAppMap(appMap) {
     }
     lines.push(`    validations: ${domain.validations.join(', ') || 'none'}`);
     lines.push(`    normalizers: ${domain.normalizers.join(', ') || 'none'}`);
+    lines.push(`    rules: ${domain.rules.join(', ') || 'none'}`);
     lines.push(`    serializers: ${domain.serializers.join(', ') || 'none'}`);
     lines.push(`    endpoints: ${domain.endpoints}`);
     lines.push(`    services: ${domain.services.join(', ') || 'none'}`);
   }
 
   lines.push('', 'Routes');
-  for (let route of appMap.routes)
-    lines.push(`  ${operationLine(route)}`);
+  for (let route of appMap.routes) {
+    lines.push(`  ${operationLine(route)} (${route.operationId})`);
+    lines.push(`    rules: ${route.rules.join(', ') || 'none'}`);
+  }
 
   lines.push('', 'Models');
   for (let model of appMap.models)
