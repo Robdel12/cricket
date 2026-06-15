@@ -24,18 +24,22 @@ external clients, workers, and deployment.
 
 ## Core Concepts
 
-| Concept | Owns |
-| --- | --- |
-| App | Runtime wiring: domains, setup, services, middleware, context, fallback, startup, shutdown. |
-| Middleware | App-level HTTP edge work through `use`: request IDs, CORS, rate limits, auth extraction, raw webhook preflight. |
-| Model | Durable row contracts, public/private visibility, and named views. |
-| Validation | Reusable schemas for request, source, and service input. |
-| Normalizer | Pure source-boundary projections for third-party APIs, CSVs, webhooks, queues, imports, and legacy payloads. |
-| Serializer | Pure outgoing API projections and response-shape validation. |
-| Service | Product and data operations without HTTP assumptions. |
-| Rule | Endpoint-level guards after request validation: auth requirements, ownership, existence, billing, feature limits. |
-| Route | Endpoint contracts: method, path, input schemas, rules, handler, response schema, OpenAPI metadata. |
-| Fallback | App-owned route misses such as static files, SEO HTML, redirects, and frontend shells. |
+| Level | Concept | Owns |
+| --- | --- | --- |
+| App | App | Runtime wiring: domains, setup, services, middleware, context, fallback, startup, shutdown. |
+| App | Middleware | HTTP edge work through `use`: request IDs, CORS, rate limits, auth extraction, raw webhook preflight. |
+| App | Fallback | Route misses such as static files, SEO HTML, redirects, and frontend shells. |
+| Domain | Model | Durable row contracts, public/private visibility, and named views. |
+| Domain | Validation | Reusable schemas for request, source, and service input. |
+| Domain | Normalizer | Pure source-boundary projections for third-party APIs, CSVs, webhooks, queues, imports, and legacy payloads. |
+| Domain | Serializer | Pure outgoing API projections and response-shape validation. |
+| Domain | Service | Product and data operations without HTTP assumptions. |
+| Endpoint | Route | HTTP contract: method, path, input schemas, rules, handler, response schema, OpenAPI metadata. |
+| Endpoint | Rule | Guards after request validation: auth requirements, ownership, existence, billing, feature limits. |
+
+Request flow is intentionally small: middleware runs at the app edge, routes
+validate input, rules guard the request, handlers call services, and serializers
+shape the response.
 
 ## Domain Shape
 
