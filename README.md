@@ -161,6 +161,14 @@ export function requestId() {
 
 Use middleware for cross-cutting HTTP work.
 
+Middleware lives at the app HTTP edge through `use`. It sees the request before
+Cricket parses an endpoint body, so it is the right place for request IDs, CORS,
+rate limits, auth extraction, raw webhook preflight, and frontend fallbacks.
+
+Rules live inside an endpoint after Cricket has matched the route and validated
+`params`, `query`, and `body`. They are the right place for auth requirements,
+ownership, existence, billing, feature limits, and other business preconditions.
+
 ## Model
 
 Models define durable row contracts and public/private visibility.

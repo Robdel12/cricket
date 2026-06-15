@@ -19,6 +19,23 @@ export let supportedEndpointMethods = Object.freeze([
 ]);
 
 let supportedEndpointMethodSet = new Set(supportedEndpointMethods);
+let endpointOptionKeys = new Set([
+  'method',
+  'path',
+  'summary',
+  'description',
+  'tags',
+  'operationId',
+  'maxBodyBytes',
+  'rawBody',
+  'body',
+  'params',
+  'query',
+  'response',
+  'responses',
+  'rules',
+  'handler'
+]);
 
 export function normalizeEndpointMethod(method) {
   let normalized = String(method).toUpperCase();
@@ -75,6 +92,16 @@ function parseResponse(schema, value) {
   if (!isZodSchema(schema)) return value;
 
   return parseZod(schema, value, responseContractFailed);
+}
+
+function assertKnownEndpointOptions(config) {
+  if (!config || typeof config !== 'object')
+    throw new Error('Endpoint config is required');
+
+  for (let key of Object.keys(config)) {
+    if (!endpointOptionKeys.has(key))
+      throw new Error(`Unsupported endpoint option ${key}`);
+  }
 }
 
 /**
@@ -137,23 +164,27 @@ export function defaultStatusForMethod(method) {
  *   }>
  * }}
  */
-export function defineEndpoint({
-  method,
-  path,
-  summary,
-  description,
-  tags = [],
-  operationId,
-  maxBodyBytes,
-  rawBody = false,
-  body,
-  params,
-  query,
-  response,
-  responses,
-  rules = [],
-  handler
-}) {
+export function defineEndpoint(config) {
+  assertKnownEndpointOptions(config);
+
+  let {
+    method,
+    path,
+    summary,
+    description,
+    tags = [],
+    operationId,
+    maxBodyBytes,
+    rawBody = false,
+    body,
+    params,
+    query,
+    response,
+    responses,
+    rules = [],
+    handler
+  } = config;
+
   if (!method) throw new Error('Endpoint method is required');
   if (!path) throw new Error('Endpoint path is required');
   let normalizedMethod = normalizeEndpointMethod(method);

@@ -521,4 +521,20 @@ describe('Cricket HTTP routing', () => {
       /Duplicate route GET \/health/
     );
   });
+
+  it('rejects unsupported endpoint options at definition time', () => {
+    assert.throws(() => defineEndpoint({
+      method: 'get',
+      path: '/session',
+      auth: true,
+      handler: () => ok({ success: true })
+    }), /Unsupported endpoint option auth/);
+
+    assert.throws(() => defineEndpoint({
+      method: 'post',
+      path: '/uploads',
+      middleware: [],
+      handler: () => ok({ success: true })
+    }), /Unsupported endpoint option middleware/);
+  });
 });
