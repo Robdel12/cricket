@@ -22,6 +22,21 @@ contracts, runs rules, writes responses, and handles startup and shutdown.
 Your app still owns its database schema, migrations, auth policy, queues,
 external clients, workers, and deployment.
 
+## Core Concepts
+
+| Concept | Owns |
+| --- | --- |
+| App | Runtime wiring: domains, setup, services, middleware, context, fallback, startup, shutdown. |
+| Middleware | App-level HTTP edge work through `use`: request IDs, CORS, rate limits, auth extraction, raw webhook preflight. |
+| Model | Durable row contracts, public/private visibility, and named views. |
+| Validation | Reusable schemas for request, source, and service input. |
+| Normalizer | Pure source-boundary projections for third-party APIs, CSVs, webhooks, queues, imports, and legacy payloads. |
+| Serializer | Pure outgoing API projections and response-shape validation. |
+| Service | Product and data operations without HTTP assumptions. |
+| Rule | Endpoint-level guards after request validation: auth requirements, ownership, existence, billing, feature limits. |
+| Route | Endpoint contracts: method, path, input schemas, rules, handler, response schema, OpenAPI metadata. |
+| Fallback | App-owned route misses such as static files, SEO HTML, redirects, and frontend shells. |
+
 ## Domain Shape
 
 Use one folder per domain.
@@ -159,15 +174,8 @@ export function requestId() {
 }
 ```
 
-Use middleware for cross-cutting HTTP work.
-
-Middleware lives at the app HTTP edge through `use`. It sees the request before
-Cricket parses an endpoint body, so it is the right place for request IDs, CORS,
-rate limits, auth extraction, raw webhook preflight, and frontend fallbacks.
-
-Rules live inside an endpoint after Cricket has matched the route and validated
-`params`, `query`, and `body`. They are the right place for auth requirements,
-ownership, existence, billing, feature limits, and other business preconditions.
+Use middleware for cross-cutting HTTP work before Cricket parses an endpoint
+body.
 
 ## Model
 
