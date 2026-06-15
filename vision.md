@@ -204,6 +204,16 @@ Default observability must be conservative: no raw auth headers, cookies, query
 values, request bodies, response bodies, `Set-Cookie` values, or raw error
 objects.
 
+## Inspect vs OpenAPI
+
+OpenAPI is the public HTTP spec: paths, parameters, request bodies, responses,
+schemas, and operation IDs.
+
+`cricket inspect` is the framework topology map: domains, models,
+sensitive-field markers, rules, services, routes, operation IDs, and
+observability posture. Keep these separate so clients get a clean spec and
+humans/agents get the framework shape.
+
 ## Design Principles
 
 **Plain functions win.** Keep models, serializers, rules, services, endpoints,

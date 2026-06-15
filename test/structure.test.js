@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -235,14 +236,65 @@ describe('Cricket CLI', () => {
     ]);
 
     assert.match(result.stdout, /Cricket app/);
+    assert.match(result.stdout, /Observability: request IDs default, lifecycle disabled, replay disabled/);
     assert.match(result.stdout, /Domains/);
     assert.match(result.stdout, /build/);
     assert.match(result.stdout, /validations: BuildCreateInput/);
     assert.match(result.stdout, /normalizers: normalizeBuildImport/);
+    assert.match(result.stdout, /rules: isNamedBuild, requireUser/);
     assert.match(result.stdout, /serializers: serializeBuildPublic/);
     assert.match(result.stdout, /Build fields: id public\/safe, user_id private\/sensitive/);
-    assert.match(result.stdout, /POST\s+\/api\/builds/);
+    assert.match(result.stdout, /POST\s+\/api\/builds \(postBuilds\)/);
+    assert.match(result.stdout, /rules: requireUser, isNamedBuild/);
+    assert.match(result.stdout, /GET\s+\/api\/builds\/:buildId \(getBuildsBuildId\)/);
     assert.match(result.stdout, /Build -> build/);
+  });
+
+  it('inspects app observability posture', async () => {
+    let root = await tempRoot();
+    let appPath = path.join(root, 'app.js');
+    let disabledAppPath = path.join(root, 'disabled-app.js');
+    let cricketUrl = pathToFileURL(path.resolve('src/index.js')).href;
+
+    await fs.writeFile(appPath, `
+      import { defineCricketApp } from '${cricketUrl}';
+
+      export let app = defineCricketApp({
+        observability: {
+          requestId() {
+            return 'req_test';
+          },
+          observe() {}
+        },
+        endpoints: [],
+        models: []
+      });
+    `);
+    await fs.writeFile(disabledAppPath, `
+      import { defineCricketApp } from '${cricketUrl}';
+
+      export let app = defineCricketApp({
+        observability: {
+          observe: []
+        },
+        endpoints: [],
+        models: []
+      });
+    `);
+
+    let result = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'inspect',
+      appPath
+    ]);
+    let disabled = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'inspect',
+      disabledAppPath
+    ]);
+
+    assert.match(result.stdout, /Observability: request IDs custom, lifecycle enabled, replay terminal events/);
+    assert.match(disabled.stdout, /Observability: request IDs default, lifecycle disabled, replay disabled/);
   });
 
   it('writes OpenAPI docs for a real Cricket app module', async () => {

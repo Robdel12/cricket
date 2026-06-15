@@ -446,8 +446,8 @@ pnpm cricket init agents .
 `new domain` creates the standard files and skips existing files unless
 `--force` is passed.
 
-`inspect` prints the loaded domains, services, routes, and models for an app
-module.
+`inspect` prints the loaded domains, model sensitive-field markers, rules,
+services, route operation IDs, and observability posture for an app module.
 
 `docs` writes OpenAPI from the same app module your server runs.
 
