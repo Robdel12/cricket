@@ -52,15 +52,15 @@ obvious in every change.
   `*.model.js`, `*.validations.js`, `*.normalizers.js`, `*.serializers.js`,
   `*.service.js`, `*.rules.js`, and `*.routes.js` files when they exist. Do not
   bring back `*.domain.js` manifest files or make optional files mandatory.
-- `api/middleware/` is for Cricket exchange hooks. `api/services/` is for
-  shared app capabilities. `api/workers/` is for background entrypoints.
+- `api/middleware/` is for request middleware. `api/services/` is for shared
+  app capabilities. `api/workers/` is for background entrypoints.
   `api/migrations/` is app-owned database change history. `api/dev/` is
   local-only support.
 - If code affects product behavior, design it into a domain, app service,
   worker, middleware, or migration. Do not create generic junk drawers.
 - Logging is framework-owned. Apps may configure or extend the logger, but the
   runtime should pass one Cricket logger shape through setup, services, rules,
-  handlers, exchange hooks, startup, shutdown, and errors.
+  handlers, middleware, startup, shutdown, and errors.
 - HTTP runtime files live in `src/http/` and must stay Cricket-owned.
   Persistence helpers live in `src/persistence/`.
 - The Knex helper is not an ORM. Keep table design, migrations, mapping, and
