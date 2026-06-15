@@ -37,6 +37,15 @@ let endpointOptionKeys = new Set([
   'handler'
 ]);
 
+/**
+ * Normalize an HTTP method string to uppercase.
+ *
+ * Throws if the method is not one of Cricket's supported methods.
+ *
+ * @param {string} method - HTTP method string.
+ * @returns {string} Uppercase method name.
+ * @throws {Error} When the method is not supported.
+ */
 export function normalizeEndpointMethod(method) {
   let normalized = String(method).toUpperCase();
 

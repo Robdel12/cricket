@@ -242,6 +242,38 @@ function paramsFromSearchParams(searchParams) {
   return params;
 }
 
+/**
+ * Create a Cricket request object from a Node HTTP request.
+ *
+ * This normalizes the HTTP request into Cricket's plain-object shape with parsed
+ * cookies, headers, host, and other metadata needed by endpoints and rules.
+ *
+ * @param {object} req - Node HTTP request object.
+ * @param {object} req.headers - Request headers.
+ * @param {string[]} [req.rawHeaders] - Raw header names and values.
+ * @param {string} [req.method] - HTTP method.
+ * @param {string} [req.url] - Request URL.
+ * @param {object} req.socket - Socket object for protocol detection.
+ * @param {boolean} [options.trustProxy=false] - Whether to trust X-Forwarded-* headers.
+ * @returns {{
+ *   body: undefined,
+ *   cookies: object,
+ *   file: undefined,
+ *   files: Array,
+ *   headers: object,
+ *   host: string,
+ *   method: string,
+ *   origin: string,
+ *   params: object,
+ *   path: string,
+ *   protocol: string,
+ *   query: object,
+ *   rawBody: undefined,
+ *   rawHeaders: Array,
+ *   secure: boolean,
+ *   url: string
+ * }}
+ */
 export function createBaseRequest(req, {
   trustProxy = false
 } = {}) {
@@ -286,6 +318,16 @@ function hostAllowedBy(allowedHost, host, request) {
   return String(allowedHost).toLowerCase() === host.toLowerCase();
 }
 
+/**
+ * Assert that the request host is in the allowed hosts list.
+ *
+ * Host validation helps prevent host header injection attacks. Allowed hosts can be
+ * strings, RegExp patterns, or functions that evaluate the host dynamically.
+ *
+ * @param {object} request - Cricket request object with a `host` property.
+ * @param {string|RegExp|Function|string[]|undefined} allowedHosts - Host allowlist.
+ * @throws {Error} When the host is not in the allowed list.
+ */
 export function assertAllowedHost(request, allowedHosts) {
   if (!allowedHosts)
     return;
@@ -363,6 +405,18 @@ function assertContentLength(request, maxBytes) {
     });
 }
 
+/**
+ * Read the request body from a Node HTTP request stream.
+ *
+ * This buffers the request body up to the maximum allowed size and returns it as a
+ * Buffer. It handles request abort/cleanup events and enforces size limits.
+ *
+ * @param {object} req - Node HTTP request with 'data', 'end', 'aborted', 'close', 'error' events.
+ * @param {object} [options]
+ * @param {number} [options.maxBytes=10MB] - Maximum body size in bytes.
+ * @returns {Promise<Buffer>} The request body as a Buffer.
+ * @throws {Error} When the body exceeds maxBytes, request is aborted, or connection closes.
+ */
 export function readRequestBody(req, {
   maxBytes = defaultMaxBodyBytes
 } = {}) {
@@ -460,6 +514,19 @@ function parseForm(buffer, headers) {
   return paramsFromSearchParams(params);
 }
 
+/**
+ * Parse and attach the request body to a Cricket request object.
+ *
+ * Handles JSON, form-urlencoded, and raw body parsing based on the endpoint's
+ * `rawBody` configuration. GET and HEAD requests skip body parsing.
+ *
+ * @param {object} req - Node HTTP request stream.
+ * @param {object} request - Cricket request object from createBaseRequest.
+ * @param {object} [endpoint] - Endpoint config with optional `rawBody` and `maxBodyBytes`.
+ * @param {boolean|object} [endpoint.rawBody] - When truthy, returns raw body instead of parsing.
+ * @param {number} [endpoint.maxBodyBytes] - Override for maximum body size.
+ * @returns {Promise<object>} Request object with body/rawBody populated.
+ */
 export async function completeRequestBody(req, request, endpoint) {
   if (!endpoint?.rawBody && ['GET', 'HEAD'].includes(request.method.toUpperCase()))
     return request;

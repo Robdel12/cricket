@@ -33,10 +33,22 @@ export let field = Object.freeze({
   }
 });
 
+/**
+ * Extract the visibility marking from a field schema.
+ *
+ * @param {any} schema - Zod schema with optional Cricket visibility metadata.
+ * @returns {'public'|'private'|undefined} The visibility setting.
+ */
 export function fieldVisibility(schema) {
   return schema?.meta?.()?.cricket?.visibility;
 }
 
+/**
+ * Check whether a schema is a Cricket field schema with visibility metadata.
+ *
+ * @param {any} schema - Schema to check.
+ * @returns {boolean} True when the schema has public or private visibility.
+ */
 export function isFieldSchema(schema) {
   return isZodSchema(schema) && visibilityValues.has(fieldVisibility(schema));
 }
