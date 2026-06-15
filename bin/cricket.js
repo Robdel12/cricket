@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 
-import { pathToFileURL } from 'node:url';
+import { realpathSync } from 'node:fs';
+import {
+  fileURLToPath,
+  pathToFileURL
+} from 'node:url';
 
 import {
   createAppMap,
@@ -175,10 +179,18 @@ export async function runCli(argv = process.argv.slice(2)) {
   process.exitCode = command ? 1 : 0;
 }
 
-let isDirectRun = process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href;
+function isDirectRun() {
+  if (!process.argv[1])
+    return false;
 
-if (isDirectRun) {
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]);
+  } catch {
+    return import.meta.url === pathToFileURL(process.argv[1]).href;
+  }
+}
+
+if (isDirectRun()) {
   try {
     await runCli();
   } catch (error) {

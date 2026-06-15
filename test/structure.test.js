@@ -250,6 +250,21 @@ describe('Cricket CLI', () => {
     assert.match(result.stdout, /Build -> build/);
   });
 
+  it('runs through a symlinked package bin', async () => {
+    let root = await tempRoot();
+    let binLink = path.join(root, 'cricket');
+
+    await fs.symlink(path.resolve('bin/cricket.js'), binLink);
+
+    let result = await execFileAsync(process.execPath, [
+      binLink,
+      'inspect',
+      'fixtures/folder-app/src/app.js'
+    ]);
+
+    assert.match(result.stdout, /Cricket app: Folder Build API/);
+  });
+
   it('inspects app observability posture', async () => {
     let root = await tempRoot();
     let appPath = path.join(root, 'app.js');
