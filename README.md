@@ -24,25 +24,27 @@ external clients, workers, and deployment.
 
 ## Core Concepts
 
+Cricket treats an API as a request-to-response transform, with side effects kept
+at explicit boundaries.
+
 ```text
 app
-  setup/services/context/startup/shutdown
-  middleware      HTTP edge work before endpoint parsing
-  fallback        app-owned route misses
-  domains/
-    model         durable row contracts and visibility
-    validation    reusable request, source, and service input schemas
-    normalizer    pure outside-source projections
-    serializer    pure outgoing API projections
-    service       product and data operations
-    routes
-      endpoint    method, path, input, rules, handler, response
-      rule        guards after validation
-```
+  request
+    -> middleware            HTTP edge before endpoint parsing
+    -> domains.routes        endpoint match
+    -> domains.validations   trusted input shape
+    -> domains.rules         request permission and loaded facts
+    -> domains.handlers      endpoint composition
+    -> domains.services      product/data side effects
+    -> domains.serializers   API output shape
+    -> response
 
-The request flow stays small: middleware runs at the app edge, endpoints
-validate input, rules guard the request, handlers call services, and serializers
-shape output.
+  outside-source data
+    -> domains.normalizers   third-party, CSV, webhook, queue, import, legacy projections
+
+  app misses
+    -> fallback              static files, SEO HTML, redirects, frontend shell
+```
 
 ## Domain Shape
 
