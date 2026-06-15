@@ -9,7 +9,7 @@ export let Build = defineModel({
   table: 'build',
   row: {
     id: field.public(z.uuid()),
-    user_id: field.private(z.uuid()),
+    user_id: field.private(z.uuid(), { sensitive: true }),
     name: field.public(z.string()),
     public: field.public(z.coerce.boolean())
   }

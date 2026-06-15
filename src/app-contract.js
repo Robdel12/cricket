@@ -42,6 +42,11 @@ function schemaKeysFor(module) {
 function modelSummaryFor(model) {
   return {
     name: model.name,
+    fields: Object.entries(model.fieldMetadata ?? {}).map(([fieldName, metadata]) => ({
+      name: fieldName,
+      visibility: metadata.visibility,
+      sensitive: metadata.sensitive
+    })),
     publicFields: model.publicFields ?? [],
     privateFields: model.privateFields ?? [],
     views: model.viewNames ?? []
@@ -156,6 +161,9 @@ export function formatAppMap(appMap) {
     lines.push(`  ${domain.name}`);
     lines.push(`    models: ${domain.models.map(model => model.name).join(', ') || 'none'}`);
     for (let model of domain.models) {
+      lines.push(`      ${model.name} fields: ${model.fields.map(field =>
+        `${field.name} ${field.visibility}/${field.sensitive ? 'sensitive' : 'safe'}`
+      ).join(', ') || 'none'}`);
       lines.push(`      ${model.name} public: ${model.publicFields.join(', ') || 'none'}`);
       lines.push(`      ${model.name} private: ${model.privateFields.join(', ') || 'none'}`);
       lines.push(`      ${model.name} views: ${model.views.join(', ') || 'none'}`);

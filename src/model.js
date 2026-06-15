@@ -1,5 +1,5 @@
 import { validationFailed } from './errors.js';
-import { fieldVisibility, isFieldSchema } from './field.js';
+import { fieldMetadata, fieldSensitive, fieldVisibility, isFieldSchema } from './field.js';
 import { parseZod } from './schema.js';
 import { z } from 'zod';
 
@@ -15,6 +15,7 @@ let reservedModelKeys = new Set([
   'public',
   'views',
   'viewNames',
+  'fieldMetadata',
   'publicFields',
   'privateFields',
   'parseRow',
@@ -40,6 +41,15 @@ function schemaFromFields(fields, fieldNames) {
   )).strict();
 }
 
+function metadataFromFields(fields, fieldNames) {
+  return Object.freeze(Object.fromEntries(
+    fieldNames.map(fieldName => [
+      fieldName,
+      Object.freeze(fieldMetadata(fields[fieldName]))
+    ])
+  ));
+}
+
 function assertFieldMap(name, fields) {
   if (!fields || typeof fields !== 'object' || Array.isArray(fields))
     throw new Error(`Model ${name} needs a row field map`);
@@ -47,6 +57,9 @@ function assertFieldMap(name, fields) {
   for (let [fieldName, schema] of Object.entries(fields)) {
     if (!isFieldSchema(schema))
       throw new Error(`Model ${name} field ${fieldName} needs field.public(...) or field.private(...)`);
+
+    if (fieldSensitive(schema) === undefined)
+      throw new Error(`Model ${name} field ${fieldName} needs sensitive true or false`);
   }
 }
 
@@ -79,8 +92,8 @@ function assertParseHelperName(name, viewNames, helperNames, viewName) {
  * Define a model contract for a table row and its output views.
  *
  * The model stays framework-agnostic: it owns durable row parsing plus
- * public/private visibility metadata, while persistence and serialization stay
- * with the caller.
+ * public/private visibility and sensitive-field metadata, while persistence and
+ * serialization stay with the caller.
  *
  * @param {object} config
  * @param {string} config.name
@@ -94,6 +107,7 @@ function assertParseHelperName(name, viewNames, helperNames, viewName) {
  *   row: import('zod').ZodTypeAny,
  *   public: import('zod').ZodTypeAny,
  *   views: Record<string, import('zod').ZodTypeAny>,
+ *   fieldMetadata: Record<string, { visibility: string, sensitive: boolean }>,
  *   parseRow(value: any): any,
  *   parsePublic(value: any): any,
  *   parseView(name: string, value: any): any
@@ -119,6 +133,7 @@ export function defineModel({
   );
   let rowSchema = schemaFromFields(fields, fieldNames);
   let publicSchema = schemaFromFields(fields, publicFields);
+  let modelFieldMetadata = metadataFromFields(fields, fieldNames);
   let viewSchemas = {};
   let viewNames = new Set(Object.keys(views));
   let viewHelperNames = new Map();
@@ -150,6 +165,7 @@ export function defineModel({
     public: publicSchema,
     views: viewSchemas,
     viewNames: Object.keys(viewSchemas),
+    fieldMetadata: modelFieldMetadata,
     publicFields,
     privateFields,
 

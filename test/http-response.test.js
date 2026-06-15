@@ -27,7 +27,7 @@ describe('Cricket HTTP responses', () => {
       table: 'user',
       row: {
         id: field.public(z.uuid()),
-        email: field.private(z.email()),
+        email: field.private(z.email(), { sensitive: true }),
         name: field.public(z.string())
       }
     });

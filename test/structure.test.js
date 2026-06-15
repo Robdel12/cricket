@@ -73,6 +73,7 @@ describe('Cricket CLI', () => {
 
     assert.match(model, /table: 'project_board'/);
     assert.match(model, /field\.public/);
+    assert.doesNotMatch(model, /sensitive: false/);
 
     let validations = await fs.readFile(
       path.join(root, 'project-board', 'project-board.validations.js'),
@@ -239,6 +240,7 @@ describe('Cricket CLI', () => {
     assert.match(result.stdout, /validations: BuildCreateInput/);
     assert.match(result.stdout, /normalizers: normalizeBuildImport/);
     assert.match(result.stdout, /serializers: serializeBuildPublic/);
+    assert.match(result.stdout, /Build fields: id public\/safe, user_id private\/sensitive/);
     assert.match(result.stdout, /POST\s+\/api\/builds/);
     assert.match(result.stdout, /Build -> build/);
   });
@@ -265,5 +267,6 @@ describe('Cricket CLI', () => {
     assert.ok(document.components.schemas.BuildPublic);
     assert.equal(document.components.schemas.BuildPublic.properties.user_id, undefined);
     assert.equal(document.components.schemas.BuildPublic.properties.id.cricket, undefined);
+    assert.equal(document.components.schemas.BuildPublic.properties.id.sensitive, undefined);
   });
 });

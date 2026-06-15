@@ -2,9 +2,12 @@ import { isZodSchema } from './schema.js';
 
 let visibilityValues = new Set(['public', 'private']);
 
-function withVisibility(schema, visibility) {
+function withFieldMetadata(schema, visibility, options = {}) {
   if (!isZodSchema(schema))
     throw new Error(`Cricket ${visibility} field needs a Zod schema`);
+
+  if (options.sensitive !== undefined && typeof options.sensitive !== 'boolean')
+    throw new Error(`Cricket ${visibility} field needs sensitive true or false`);
 
   let metadata = schema.meta();
 
@@ -12,24 +15,25 @@ function withVisibility(schema, visibility) {
     ...metadata,
     cricket: {
       ...metadata?.cricket,
-      visibility
+      visibility,
+      sensitive: options.sensitive ?? false
     }
   });
 }
 
 /**
- * Field helpers mark model row fields as safe or unsafe for public output.
+ * Field helpers mark model row fields with visibility and sensitive handling.
  *
  * They return normal Zod schemas with Cricket metadata attached, so parsed
  * values stay plain and row contracts remain composable.
  */
 export let field = Object.freeze({
-  public(schema) {
-    return withVisibility(schema, 'public');
+  public(schema, options) {
+    return withFieldMetadata(schema, 'public', options);
   },
 
-  private(schema) {
-    return withVisibility(schema, 'private');
+  private(schema, options) {
+    return withFieldMetadata(schema, 'private', options);
   }
 });
 
@@ -41,6 +45,29 @@ export let field = Object.freeze({
  */
 export function fieldVisibility(schema) {
   return schema?.meta?.()?.cricket?.visibility;
+}
+
+/**
+ * Extract whether a field schema is marked sensitive.
+ *
+ * @param {any} schema - Zod schema with optional Cricket sensitive metadata.
+ * @returns {boolean|undefined} The sensitive setting.
+ */
+export function fieldSensitive(schema) {
+  return schema?.meta?.()?.cricket?.sensitive;
+}
+
+/**
+ * Extract the complete Cricket field metadata from a field schema.
+ *
+ * @param {any} schema - Zod schema with optional Cricket field metadata.
+ * @returns {{visibility: string|undefined, sensitive: boolean|undefined}}
+ */
+export function fieldMetadata(schema) {
+  return {
+    visibility: fieldVisibility(schema),
+    sensitive: fieldSensitive(schema)
+  };
 }
 
 /**

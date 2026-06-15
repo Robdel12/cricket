@@ -16,7 +16,7 @@ describe('Cricket OpenAPI', () => {
       table: 'build',
       row: {
         id: field.public(z.uuid()),
-        user_id: field.private(z.uuid()),
+        user_id: field.private(z.uuid(), { sensitive: true }),
         name: field.public(z.string()),
         public: field.public(z.boolean())
       }
@@ -79,6 +79,8 @@ describe('Cricket OpenAPI', () => {
     assert.equal(operation.responses[200].content['application/json'].schema.properties.build.properties.userId.format, 'uuid');
     assert.equal(docs.components.schemas.BuildPublic.properties.public.type, 'boolean');
     assert.equal(docs.components.schemas.BuildPublic.properties.user_id, undefined);
+    assert.equal(docs.components.schemas.BuildPublic.properties.id.cricket, undefined);
+    assert.equal(docs.components.schemas.BuildPublic.properties.id.sensitive, undefined);
 
     let prefixedDocs = generateOpenApi({
       title: 'Example API',

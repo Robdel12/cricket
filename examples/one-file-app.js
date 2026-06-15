@@ -21,7 +21,7 @@ let Project = defineModel({
   table: 'project',
   row: {
     id: field.public(z.uuid()),
-    owner_id: field.private(z.uuid()),
+    owner_id: field.private(z.uuid(), { sensitive: true }),
     slug: field.public(z.string()),
     name: field.public(z.string())
   }
