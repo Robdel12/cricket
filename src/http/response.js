@@ -471,6 +471,62 @@ function prepareResponse(response) {
   };
 }
 
+function responseCookieNames(response = {}) {
+  return (response.cookies ?? [])
+    .map(cookie => cookie.name)
+    .filter(Boolean)
+    .sort();
+}
+
+function responseBodyKind(response = {}, {
+  method
+} = {}) {
+  let status = statusFor(response);
+
+  if (
+    method?.toUpperCase?.() === 'HEAD' ||
+    response.redirect ||
+    status === 204 ||
+    status === 205 ||
+    status === 304 ||
+    response.body === undefined ||
+    response.body === null
+  )
+    return 'empty';
+
+  if (isReadable(response.body))
+    return 'stream';
+
+  if (isBinary(response.body))
+    return 'buffer';
+
+  if (typeof response.body === 'string')
+    return 'text';
+
+  return 'json';
+}
+
+/**
+ * Return a redacted response snapshot for logs, events, and replay artifacts.
+ *
+ * The snapshot keeps response shape and status visible without exposing body
+ * content or cookie/header values.
+ *
+ * @param {object} response - Cricket response object.
+ * @param {object} [options]
+ * @param {string} [options.method] - Request method for wire-level body rules.
+ * @returns {object} Safe response summary.
+ */
+export function safeResponseSnapshot(response = {}, options = {}) {
+  return {
+    status: statusFor(response),
+    headers: Object.keys(response.headers ?? {}).map(name => name.toLowerCase()).sort(),
+    cookies: responseCookieNames(response),
+    redirected: Boolean(response.redirect),
+    body: responseBodyKind(response, options)
+  };
+}
+
 /**
  * Write a Cricket response object to a Node HTTP response.
  *

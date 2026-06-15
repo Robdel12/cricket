@@ -405,6 +405,30 @@ Handlers receive Cricket input plus the context your app returns. Knex `db`,
 transactions, logger, services, auth facts, request IDs, and loaded resources
 remain available when you pass them through `context(...)`, `use`, or rules.
 
+## Observability
+
+Cricket emits safe lifecycle events from the HTTP runtime when an app provides
+`observability.observe`.
+
+```js
+export let app = defineCricketApp({
+  observability: {
+    observe(event) {
+      console.log(event.type, event.requestId);
+    }
+  }
+});
+```
+
+Events include `request.started`, `route.matched`, `request.failed`,
+`response.finished`, and `response.closed`. Request snapshots include method,
+path, host, protocol, and the names of headers, cookies, query keys, and params.
+They do not include raw auth headers, cookie values, query values, request
+bodies, response bodies, or `Set-Cookie` values.
+
+The terminal response event includes a replay list for that request. Replay is a
+plain lifecycle artifact, not a second logging system.
+
 ## CLI
 
 ```sh
