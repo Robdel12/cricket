@@ -90,4 +90,53 @@ describe('Cricket OpenAPI', () => {
     assert.ok(prefixedDocs.paths['/api/builds/{buildId}'].get);
   });
 
+  it('represents date fields as date-time strings in generated docs', () => {
+    let Event = defineModel({
+      name: 'Event',
+      table: 'event',
+      row: {
+        id: field.public(z.uuid()),
+        happened_at: field.public(z.date())
+      }
+    });
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/events/:eventId',
+      params: z.object({
+        eventId: z.uuid()
+      }),
+      responses: {
+        200: {
+          schema: z.object({
+            event: z.object({
+              happenedAt: z.date()
+            })
+          })
+        }
+      },
+      async handler() {
+        return {};
+      }
+    });
+
+    let docs = generateOpenApi({
+      title: 'Example API',
+      version: '1.0.0',
+      endpoints: [endpoint],
+      models: [Event]
+    });
+
+    let responseSchema = docs.paths['/events/{eventId}'].get
+      .responses[200].content['application/json'].schema;
+
+    assert.deepEqual(responseSchema.properties.event.properties.happenedAt, {
+      type: 'string',
+      format: 'date-time'
+    });
+    assert.deepEqual(docs.components.schemas.EventPublic.properties.happened_at, {
+      type: 'string',
+      format: 'date-time'
+    });
+  });
+
 });

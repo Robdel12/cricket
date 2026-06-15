@@ -57,6 +57,20 @@ function withoutSchemaDialect(schema) {
   );
 }
 
+function cricketJsonSchemaOptions() {
+  return {
+    io: 'input',
+    unrepresentable: 'any',
+    override({ zodSchema, jsonSchema }) {
+      if (zodSchema?._zod?.def?.type !== 'date')
+        return;
+
+      jsonSchema.type = 'string';
+      jsonSchema.format = 'date-time';
+    }
+  };
+}
+
 /**
  * Convert a Zod schema or plain JSON Schema into a JSON Schema-like object.
  *
@@ -67,7 +81,7 @@ export function toJsonSchema(schema) {
   if (!schema) return undefined;
 
   if (isZodSchema(schema))
-    return withoutSchemaDialect(z.toJSONSchema(schema, { io: 'input' }));
+    return withoutSchemaDialect(z.toJSONSchema(schema, cricketJsonSchemaOptions()));
 
   return schema;
 }

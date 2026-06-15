@@ -271,6 +271,14 @@ architecture humans use: domains by folder, schemas at boundaries, services for
 data work, rules for guards, serializers for outgoing API shape, middleware
 for HTTP edge work, and tests through the HTTP API.
 
+Cricket should also make endpoint coverage inspectable. Since the app contract
+already knows every route, Cricket can compare the route surface against real
+HTTP tests and show what is missing. A future command should make it boring to
+ask, "which endpoints exist without at least one boundary test?" and should
+help scaffold a small smoke test without pretending generated tests prove the
+product. The contract is simple: if an endpoint exists, there should be at
+least one request-level test that proves the consumed boundary works.
+
 ## Product Feel
 
 Cricket should make API architecture feel obvious.
