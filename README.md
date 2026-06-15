@@ -186,7 +186,8 @@ body.
 
 ## Model
 
-Models define durable row contracts and public/private visibility.
+Models define durable row contracts, public/private visibility, and sensitive
+fields.
 
 ```js
 import { defineModel, field, z } from '@robdel12/cricket';
@@ -196,7 +197,7 @@ export let Project = defineModel({
   table: 'project',
   row: {
     id: field.public(z.uuid()),
-    owner_id: field.private(z.uuid()),
+    owner_id: field.private(z.uuid(), { sensitive: true }),
     slug: field.public(z.string()),
     name: field.public(z.string())
   },
@@ -216,6 +217,12 @@ Project.owner     // explicit named view
 
 Use `Project.row` at the database boundary. Request and source input contracts
 belong in `*.validations.js`, not as model lifecycle keys.
+
+Visibility and sensitive handling are separate on purpose. Visibility controls
+the default output contract. Fields default to `sensitive: false`; add
+`sensitive: true` when a field needs careful handling in logging, inspection,
+and observability work. Cricket does not define PII or internal-data categories
+for you; compose those product-specific policies from this marker in app code.
 
 ## Validation
 

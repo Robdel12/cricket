@@ -91,11 +91,18 @@ keep it out of production runtime.
 
 ### `*.model.js`
 
-Models own durable data contracts and visibility.
+Models own durable data contracts, visibility, and sensitive-field markers.
 
-Put persisted row fields here. Use `field.public(...)` for fields that can
-leave through the default public contract, and `field.private(...)` for fields
-that require an explicit named view and serializer.
+Put persisted row fields here. Use `field.public(schema)` for fields that can
+leave through the default public contract, and `field.private(schema)` for
+fields that require an explicit named view and serializer. Fields default to
+`sensitive: false`; add `{ sensitive: true }` when logging and observability
+need to treat the field carefully.
+
+The sensitive marker exists because logging and observability should start from
+the same durable row contract instead of scattered redaction rules. Cricket only
+records whether a field needs handling; product-specific categories belong in
+app policy.
 
 `defineModel(...)` should derive strict `row`, `public`, and named view schemas.
 Models should not own request lifecycle contracts like create/update. Those

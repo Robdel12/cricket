@@ -22,6 +22,7 @@ import {
   defineRule,
   defineSerializer,
   field,
+  fieldSensitive,
   forbidden,
   generateOpenApi,
   loadDomains,
@@ -47,8 +48,8 @@ describe('Cricket core', () => {
       table: 'account',
       row: {
         id: field.public(z.uuid()),
-        owner_id: field.private(z.uuid()),
-        email: field.public(z.email())
+        owner_id: field.private(z.uuid(), { sensitive: true }),
+        email: field.public(z.email(), { sensitive: true })
       },
       views: {
         owner: ['id', 'owner_id', 'email']
@@ -87,6 +88,23 @@ describe('Cricket core', () => {
 
     assert.equal(docs.components.schemas.AccountPublic.properties.owner_id, undefined);
     assert.equal(docs.components.schemas.AccountOwner.properties.owner_id.format, 'uuid');
+    assert.deepEqual(Account.fieldMetadata, {
+      id: {
+        visibility: 'public',
+        sensitive: false
+      },
+      owner_id: {
+        visibility: 'private',
+        sensitive: true
+      },
+      email: {
+        visibility: 'public',
+        sensitive: true
+      }
+    });
+    assert.equal(Object.isFrozen(Account.fieldMetadata), true);
+    assert.equal(Object.isFrozen(Account.fieldMetadata.email), true);
+    assert.equal(fieldSensitive(Account.fields.email), true);
 
     assert.throws(() => defineModel({
       name: 'Profile',
@@ -99,6 +117,13 @@ describe('Cricket core', () => {
         owner_view: ['id']
       }
     }), /duplicate helper parseOwnerView/);
+  });
+
+
+  it('defaults model fields to not sensitive unless declared', () => {
+    assert.equal(fieldSensitive(field.public(z.string())), false);
+    assert.equal(fieldSensitive(field.private(z.string())), false);
+    assert.throws(() => field.private(z.string(), { sensitive: 'credential' }), /needs sensitive true or false/);
   });
 
 
@@ -135,7 +160,7 @@ describe('Cricket core', () => {
       table: 'user',
       row: {
         id: field.public(z.uuid()),
-        email: field.private(z.email()),
+        email: field.private(z.email(), { sensitive: true }),
         name: field.public(z.string())
       }
     });
@@ -804,7 +829,7 @@ describe('Cricket core', () => {
       table: 'build',
       row: {
         id: field.public(z.uuid()),
-        user_id: field.private(z.uuid()),
+        user_id: field.private(z.uuid(), { sensitive: true }),
         name: field.public(z.string()),
         public: field.public(z.boolean().default(false))
       }

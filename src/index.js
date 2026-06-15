@@ -32,7 +32,8 @@ export {
 } from './model.js';
 
 export {
-  field
+  field,
+  fieldSensitive
 } from './field.js';
 
 export {
