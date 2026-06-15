@@ -6,6 +6,7 @@ import {
   collectModels,
   loadDomains
 } from './domain.js';
+import { flattenRoutes } from './http/router.js';
 
 function hasLoadedDomains(domains) {
   return Array.isArray(domains) && domains.every(domain =>
@@ -23,26 +24,28 @@ function hasLoadedDomains(domains) {
 export function defineCricketApp(options) {
   let domains = options.domains ?? [];
   let loadedDomains = hasLoadedDomains(domains);
-  let endpoints = options.endpoints ?? (
-    loadedDomains ? collectEndpoints(domains) : []
-  );
-  let models = options.models ?? (
-    loadedDomains ? collectModels(domains) : []
-  );
+  let hasExplicitEndpoints = Object.hasOwn(options, 'endpoints');
+  let hasExplicitModels = Object.hasOwn(options, 'models');
+  let endpoints = hasExplicitEndpoints
+    ? options.endpoints
+    : (loadedDomains ? collectEndpoints(domains) : undefined);
+  let models = hasExplicitModels
+    ? options.models
+    : (loadedDomains ? collectModels(domains) : undefined);
+  let allowedHosts = options.allowedHosts;
   let prefix = options.prefix ?? '';
-  let openApi = options.openApi ?? true;
-  let middleware = options.middleware ?? [];
-  let afterRoutes = options.afterRoutes ?? [];
+  let trustProxy = options.trustProxy ?? false;
+  let use = options.use ?? [];
 
   return {
     ...options,
     domains,
-    endpoints,
-    models,
+    allowedHosts,
     prefix,
-    openApi,
-    middleware,
-    afterRoutes
+    trustProxy,
+    use,
+    ...(endpoints === undefined ? {} : { endpoints }),
+    ...(models === undefined ? {} : { models })
   };
 }
 
@@ -64,8 +67,10 @@ export async function resolveCricketApp(app, {
   return {
     ...app,
     domains,
-    endpoints: app.endpoints?.length ? app.endpoints : collectEndpoints(domains),
-    models: app.models?.length ? app.models : collectModels(domains)
+    endpoints: flattenRoutes(
+      Object.hasOwn(app, 'endpoints') ? app.endpoints : collectEndpoints(domains)
+    ),
+    models: Object.hasOwn(app, 'models') ? app.models : collectModels(domains)
   };
 }
 

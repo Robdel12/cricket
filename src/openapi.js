@@ -25,13 +25,20 @@ function toOperationId(method, path) {
   return `${method.toLowerCase()}${pathName.charAt(0).toUpperCase()}${pathName.slice(1)}`;
 }
 
-function schemaProperties(schema) {
+function schemaProperties(schema, source) {
   let jsonSchema = toJsonSchema(schema);
 
   if (!jsonSchema) return [];
 
-  if (jsonSchema.type !== 'object' || !jsonSchema.properties)
+  if (jsonSchema.type !== 'object')
     throw new Error('OpenAPI params and query schemas must describe objects');
+
+  if (!jsonSchema.properties) {
+    if (source === 'query')
+      return [];
+
+    throw new Error('OpenAPI params and query schemas must describe objects');
+  }
 
   let required = new Set(jsonSchema.required ?? []);
 
@@ -51,7 +58,7 @@ function jsonContent(schema) {
 }
 
 function parametersFromSchema(source, schema) {
-  return schemaProperties(schema).map(parameter => ({
+  return schemaProperties(schema, source).map(parameter => ({
     name: parameter.name,
     in: source,
     required: source === 'path' ? true : parameter.required,
@@ -153,7 +160,6 @@ function endpointOperation(endpoint) {
     ...(endpoint.description ? { description: endpoint.description } : {}),
     ...(endpoint.tags?.length ? { tags: endpoint.tags } : {}),
     operationId: endpoint.operationId ?? toOperationId(endpoint.method, endpoint.path),
-    ...(endpoint.auth ? { security: [{ bearerAuth: [] }] } : {}),
     ...(parameters.length ? { parameters } : {}),
     ...(requestBody ? { requestBody } : {}),
     responses: responsesForEndpoint(endpoint)
@@ -165,7 +171,7 @@ function endpointOperation(endpoint) {
  *
  * The generator is intentionally narrow: it translates the framework's own
  * endpoint/model shapes into an OpenAPI document without knowing anything
- * about Koa, Knex, or a specific app layout.
+ * about a specific app layout.
  *
  * @param {object} [options]
  * @param {string} [options.title='Cricket API'] - OpenAPI info title.
@@ -188,6 +194,9 @@ export function generateOpenApi({
 } = {}) {
   let paths = {};
   let schemas = componentSchemas(models);
+  let components = {
+    ...(Object.keys(schemas).length ? { schemas } : {})
+  };
 
   for (let endpoint of endpoints) {
     let openApiPath = toOpenApiPath(withPathPrefix(endpoint.path, pathPrefix));
@@ -204,14 +213,6 @@ export function generateOpenApi({
     },
     ...(servers.length ? { servers } : {}),
     paths,
-    components: {
-      ...(Object.keys(schemas).length ? { schemas } : {}),
-      securitySchemes: {
-        bearerAuth: {
-          type: 'http',
-          scheme: 'bearer'
-        }
-      }
-    }
+    ...(Object.keys(components).length ? { components } : {})
   };
 }

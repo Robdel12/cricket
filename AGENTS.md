@@ -2,7 +2,7 @@
 
 ## Product Direction
 
-Cricket is a tiny Node API framework for sturdy contracts in Koa + Knex apps.
+Cricket is a tiny Node API framework for sturdy contracts.
 
 The core pattern is intentionally simple: models define durable row visibility,
 validations protect input shape, normalizers shape outside data entering the app,
@@ -23,8 +23,8 @@ obvious in every change.
 - Prefer plain functions and explicit inputs/outputs over classes.
 - Preserve Cricket's functional data style: plain objects in, plain objects out,
   no model instances, no hidden mutation, no ORM-ish object lifecycle.
-- Keep adapters at the edges. Core endpoint/model/rule contracts should not
-  depend on Koa, Knex, or any specific app framework.
+- Cricket owns its HTTP runtime. Do not wrap another web framework or add
+  transport-shaped escape hatches.
 - Avoid `setTimeout`, polling waits, and timing-dependent behavior.
 
 ## Architecture
@@ -40,8 +40,8 @@ obvious in every change.
 - Serializers are pure domain functions for outgoing API projections. Keep them
   near routes, not buried in model instances. Use `defineSerializer` when the
   output should be actively parsed.
-- `defineEndpoint` owns request validation, auth enforcement, rules, handler
-  execution, response validation, and docs metadata.
+- `defineEndpoint` owns request validation, rule execution, handler execution,
+  response validation, and docs metadata.
 - `defineRule` owns named guards such as auth, ownership, existence, billing,
   and business constraints.
 - Services are first-class app code. Keep them boring, explicit, and HTTP-
@@ -52,7 +52,7 @@ obvious in every change.
   `*.model.js`, `*.validations.js`, `*.normalizers.js`, `*.serializers.js`,
   `*.service.js`, `*.rules.js`, and `*.routes.js` files when they exist. Do not
   bring back `*.domain.js` manifest files or make optional files mandatory.
-- `api/middleware/` is for HTTP edge behavior. `api/services/` is for shared
+- `api/middleware/` is for request middleware. `api/services/` is for shared
   app capabilities. `api/workers/` is for background entrypoints.
   `api/migrations/` is app-owned database change history. `api/dev/` is
   local-only support.
@@ -60,12 +60,9 @@ obvious in every change.
   worker, middleware, or migration. Do not create generic junk drawers.
 - Logging is framework-owned. Apps may configure or extend the logger, but the
   runtime should pass one Cricket logger shape through setup, services, rules,
-  handlers, adapters, startup, and errors.
-- Koa and Knex are first-class adapters, but the design should remain pluggable
-  for other HTTP/database tools.
-- Keep adapter files grouped by Cricket role: HTTP in `src/http/`, persistence
-  in `src/persistence/`. Give an adapter its own folder only once it has real
-  internal files to hold.
+  handlers, middleware, startup, shutdown, and errors.
+- HTTP runtime files live in `src/http/` and must stay Cricket-owned.
+  Persistence helpers live in `src/persistence/`.
 - The Knex helper is not an ORM. Keep table design, migrations, mapping, and
   product logic in the app.
 - The CLI scaffolds the preferred domain shape. Keep it thin: structure,
@@ -79,7 +76,7 @@ obvious in every change.
 Use `$testing-philosophy`.
 
 - Test API behavior through HTTP, the boundary a user/client consumes.
-- Use real Koa middleware and a real database boundary when testing adapters.
+- Use the real Cricket runtime and a real database boundary for HTTP tests.
 - Do not mock Cricket's own code.
 - Mock only external services, time, or randomness.
 - Assert user-visible outcomes: status codes, response shape, validation

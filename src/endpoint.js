@@ -1,7 +1,6 @@
 import { applyRules } from './rule.js';
 import {
   responseContractFailed,
-  unauthenticated,
   validationFailed
 } from './errors.js';
 import {
@@ -9,10 +8,52 @@ import {
   parseZod
 } from './schema.js';
 
+export let supportedEndpointMethods = Object.freeze([
+  'DELETE',
+  'GET',
+  'HEAD',
+  'OPTIONS',
+  'PATCH',
+  'POST',
+  'PUT'
+]);
+
+let supportedEndpointMethodSet = new Set(supportedEndpointMethods);
+let endpointOptionKeys = new Set([
+  'method',
+  'path',
+  'summary',
+  'description',
+  'tags',
+  'operationId',
+  'maxBodyBytes',
+  'rawBody',
+  'body',
+  'params',
+  'query',
+  'response',
+  'responses',
+  'rules',
+  'handler'
+]);
+
+export function normalizeEndpointMethod(method) {
+  let normalized = String(method).toUpperCase();
+
+  if (!supportedEndpointMethodSet.has(normalized))
+    throw new Error(`Unsupported endpoint method ${normalized}`);
+
+  return normalized;
+}
+
 function parseRequestSchema(schema, value) {
   if (!schema) return value;
 
-  return parseZod(schema, value ?? {}, validationFailed);
+  return parseZod(schema, value, validationFailed);
+}
+
+function parseRequestObjectSchema(schema, value) {
+  return parseRequestSchema(schema, value ?? {});
 }
 
 function responseDefinitionFor(endpoint, status) {
@@ -33,6 +74,13 @@ function normalizeResponse(endpoint, response) {
   if (response && typeof response === 'object' && 'status' in response)
     return response;
 
+  if (response && typeof response === 'object' && response.redirect) {
+    return {
+      status: 303,
+      ...response
+    };
+  }
+
   return {
     status: defaultStatusForMethod(endpoint.method),
     body: response
@@ -46,9 +94,14 @@ function parseResponse(schema, value) {
   return parseZod(schema, value, responseContractFailed);
 }
 
-function requireAuthenticatedContext(context) {
-  if (!context.user && !context.userId)
-    throw unauthenticated();
+function assertKnownEndpointOptions(config) {
+  if (!config || typeof config !== 'object')
+    throw new Error('Endpoint config is required');
+
+  for (let key of Object.keys(config)) {
+    if (!endpointOptionKeys.has(key))
+      throw new Error(`Unsupported endpoint option ${key}`);
+  }
 }
 
 /**
@@ -67,19 +120,18 @@ export function defaultStatusForMethod(method) {
 /**
  * Define a request/response contract around a handler.
  *
- * This keeps validation, auth, rule execution, and response parsing in one
- * place so routes can stay thin and app-specific logic can stay in the handler.
+ * This keeps validation, rule execution, and response parsing in one place so
+ * routes can stay thin and app-specific logic can stay in the handler.
  *
  * @param {object} config
  * @param {string} config.method
  * @param {string} config.path
- * @param {boolean} [config.auth=false]
  * @param {string} [config.summary]
  * @param {string} [config.description]
  * @param {string[]} [config.tags=[]]
  * @param {string} [config.operationId]
- * @param {Array<Function>} [config.middleware=[]] - Adapter middleware mounted before the Cricket handler.
- * @param {boolean|object} [config.rawBody=false] - Koa adapter option for endpoints that need the unparsed request body.
+ * @param {number} [config.maxBodyBytes] - Maximum buffered request body size for this endpoint.
+ * @param {boolean|object} [config.rawBody=false] - Endpoint option for requests that need the unparsed request body.
  * @param {import('zod').ZodTypeAny} [config.body]
  * @param {import('zod').ZodTypeAny} [config.params]
  * @param {import('zod').ZodTypeAny} [config.query]
@@ -90,12 +142,11 @@ export function defaultStatusForMethod(method) {
  * @returns {{
  *   method: string,
  *   path: string,
- *   auth: boolean,
  *   summary?: string,
  *   description?: string,
  *   tags: string[],
  *   operationId?: string,
- *   middleware: Array<Function>,
+ *   maxBodyBytes?: number,
  *   rawBody?: boolean|object,
  *   body?: any,
  *   params?: any,
@@ -113,38 +164,42 @@ export function defaultStatusForMethod(method) {
  *   }>
  * }}
  */
-export function defineEndpoint({
-  method,
-  path,
-  auth = false,
-  summary,
-  description,
-  tags = [],
-  operationId,
-  middleware = [],
-  rawBody = false,
-  body,
-  params,
-  query,
-  response,
-  responses,
-  rules = [],
-  handler
-}) {
+export function defineEndpoint(config) {
+  assertKnownEndpointOptions(config);
+
+  let {
+    method,
+    path,
+    summary,
+    description,
+    tags = [],
+    operationId,
+    maxBodyBytes,
+    rawBody = false,
+    body,
+    params,
+    query,
+    response,
+    responses,
+    rules = [],
+    handler
+  } = config;
+
   if (!method) throw new Error('Endpoint method is required');
   if (!path) throw new Error('Endpoint path is required');
+  let normalizedMethod = normalizeEndpointMethod(method);
+
   if (typeof handler !== 'function')
-    throw new Error(`${method} ${path} needs a handler`);
+    throw new Error(`${normalizedMethod} ${path} needs a handler`);
 
   let endpoint = {
-    method: method.toUpperCase(),
+    method: normalizedMethod,
     path,
-    auth,
     summary,
     description,
     tags,
     operationId,
-    middleware,
+    maxBodyBytes,
     rawBody,
     body,
     params,
@@ -156,8 +211,8 @@ export function defineEndpoint({
     async handle(request, context = {}) {
       let input = {
         body: parseRequestSchema(body, request.body),
-        params: parseRequestSchema(params, request.params),
-        query: parseRequestSchema(query, request.query)
+        params: parseRequestObjectSchema(params, request.params),
+        query: parseRequestObjectSchema(query, request.query)
       };
 
       let endpointContext = {
@@ -166,15 +221,9 @@ export function defineEndpoint({
         input
       };
 
-      if (auth)
-        requireAuthenticatedContext(endpointContext);
+      let handlerContext = await applyRules(rules, endpointContext);
 
-      let ruleResponse = await applyRules(rules, endpointContext);
-
-      if (ruleResponse)
-        return parseEndpointResponse(endpoint, ruleResponse);
-
-      return parseEndpointResponse(endpoint, await handler(endpointContext));
+      return parseEndpointResponse(endpoint, await handler(handlerContext));
     }
   };
 
@@ -183,6 +232,10 @@ export function defineEndpoint({
 
 function parseEndpointResponse(endpoint, result) {
   let response = normalizeResponse(endpoint, result);
+
+  if (response.redirect)
+    return response;
+
   let schema = responseSchemaFrom(
     responseDefinitionFor(endpoint, response.status)
   );

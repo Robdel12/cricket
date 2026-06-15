@@ -22,7 +22,7 @@ function parseOutput(schema, value) {
  * @param {string} config.name
  * @param {import('zod').ZodTypeAny} config.source
  * @param {import('zod').ZodTypeAny} config.output
- * @param {(value: any, ctx?: any) => any} config.normalize
+ * @param {(value: any, context?: any) => any} config.normalize
  * @returns {Function & { normalizerName: string, source: import('zod').ZodTypeAny, output: import('zod').ZodTypeAny }}
  */
 export function defineNormalizer({
@@ -37,8 +37,8 @@ export function defineNormalizer({
   if (typeof normalize !== 'function')
     throw new Error(`Normalizer ${name} needs a normalize function`);
 
-  let normalizer = (value, ctx) => {
-    let normalized = normalize(parseSource(source, value), ctx);
+  let normalizer = (value, context) => {
+    let normalized = normalize(parseSource(source, value), context);
 
     if (normalized === null || normalized === undefined)
       return normalized;

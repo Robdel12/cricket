@@ -35,8 +35,8 @@ export let app = defineCricketApp({
       }
     };
   },
-  context({ ctx, dependencies, logger, services }) {
-    let token = ctx.get('authorization').replace('Bearer ', '');
+  context({ request, dependencies, logger, services }) {
+    let token = String(request.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
 
     return {
       ...dependencies,

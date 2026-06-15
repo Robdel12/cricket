@@ -2,9 +2,9 @@
 
 Tiny contracts for sturdy Node APIs.
 
-Cricket gives Koa + Knex apps the backend shape that stays pleasant as the API
-grows: Zod models, pure normalizers, pure serializers, boring services, named
-rules, thin routes, OpenAPI generation, and a normal Node entrypoint.
+Cricket gives Node APIs the backend shape that stays pleasant as the API grows:
+Zod models, pure normalizers, pure serializers, boring services, named rules,
+thin routes, OpenAPI generation, and a normal Node entrypoint.
 
 It is intentionally plain JavaScript. No model instances, no hidden mutation, no
 ORM lifecycle. Your app passes POJOs around, composes functions, and keeps side
@@ -16,10 +16,33 @@ effects at the edges.
 pnpm add @robdel12/cricket
 ```
 
-Cricket includes first-class Koa and Knex adapters. "First-class" means
-scaffolded, documented, inspectable, and easy for agents to follow. Your app
-still owns its database schema, migrations, auth middleware, queues, external
-clients, and deployment.
+Cricket owns the HTTP runtime. It routes requests, parses bodies, validates
+contracts, runs rules, writes responses, and handles startup and shutdown.
+
+Your app still owns its database schema, migrations, auth policy, queues,
+external clients, workers, and deployment.
+
+## Core Concepts
+
+Cricket treats an API as a request-to-response transform, with side effects kept
+at explicit boundaries.
+
+```text
+app
+  request
+    -> middleware before     HTTP edge transforms requestContext
+      -> domains.routes      match endpoint or fallback
+        -> validations       trusted input shape
+        -> rules             request permission + loaded facts
+        -> handler/services  app work + side effects
+        -> serializers       API output shape
+      -> response draft
+    <- middleware after      response headers, cookies, logging, timing
+  response
+
+  outside-source data
+    -> domains.normalizers   third-party, CSV, webhook, queue, import, legacy projections
+```
 
 ## Domain Shape
 
@@ -47,14 +70,11 @@ map.
 
 ## App Shape
 
-Real apps need a few homes outside the domain folder. Cricket gives those jobs
-names so they don't become a junk drawer.
-
 ```text
 api/
   index.js      app entrypoint and Cricket wiring
   domains/      product API domains
-  middleware/   HTTP edge behavior
+  middleware/   request middleware
   services/     app-wide services
   workers/      background workers
   migrations/   app-owned database migrations
@@ -63,8 +83,8 @@ api/
 
 | Folder | Use it for | Keep out |
 | --- | --- | --- |
-| `domains/` | Product API behavior. | App-wide clients and edge middleware. |
-| `middleware/` | HTTP edge work: auth extraction, uploads, raw webhooks, CORS, rate limits, frontend fallbacks. | Domain authorization; put that in `*.rules.js`. |
+| `domains/` | Product API behavior. | App-wide clients and app-level middleware. |
+| `middleware/` | Request middleware: auth extraction, request IDs, CORS, rate limits, raw webhooks, frontend fallbacks. | Domain authorization; put that in `*.rules.js`. |
 | `services/` | Shared app capabilities: email, media storage, payment clients, caches, cross-domain summaries. | Domain-specific product logic. |
 | `workers/` | Background entrypoints that call services. | A second product layer. |
 | `migrations/` | App-owned Knex migrations. | Hidden Cricket database behavior. |
@@ -80,6 +100,23 @@ Put the app contract in your normal Node entrypoint, usually `api/index.js`.
 ```js
 import knex from 'knex';
 import { defineCricketApp, startCricketApp } from '@robdel12/cricket';
+
+function readSession() {
+  return async (requestContext, next) => {
+    let authorization = String(requestContext.request.headers.authorization ?? '');
+    let user = authorization
+      ? await requestContext.services.sessions.verifyBearerToken(authorization)
+      : undefined;
+
+    return await next({
+      ...requestContext,
+      context: {
+        ...requestContext.context,
+        user
+      }
+    });
+  };
+}
 
 export let app = defineCricketApp({
   name: 'Project API',
@@ -98,29 +135,54 @@ export let app = defineCricketApp({
     return {
       dependencies: { db },
       services: {
-        mailer: createMailer()
+        mailer: createMailer(),
+        sessions: createSessionService({ db })
       },
       cleanup() {
         return db.destroy();
       }
     };
   },
-  context({ ctx, dependencies, logger, services }) {
+  use: [readSession()],
+  context({ dependencies, logger, services }) {
     // Shape the per-request context your handlers and rules receive.
     return {
       ...dependencies,
       logger,
-      services,
-      user: ctx.state.user
+      services
     };
   }
 });
 
 if (process.env.NODE_ENV !== 'test')
-  await startCricketApp(app, { port: process.env.PORT || 3000 });
+  await startCricketApp(app, {
+    port: process.env.PORT || 3000,
+    main: import.meta.url
+  });
 ```
 
-OpenAPI is served at `/openapi.json` by default.
+## Middleware
+
+Cricket middleware receives a plain request context and returns a response or
+passes the next request context forward. Treat it as immutable: copy what you
+change.
+
+```js
+export function requestId() {
+  return async (requestContext, next) => {
+    return await next({
+      ...requestContext,
+      context: {
+        ...requestContext.context,
+        requestId: crypto.randomUUID()
+      }
+    });
+  };
+}
+```
+
+Use middleware for cross-cutting HTTP work before Cricket parses an endpoint
+body.
 
 ## Model
 
@@ -269,22 +331,24 @@ Rules answer whether the request can continue.
 ```js
 import { defineRule, forbidden } from '@robdel12/cricket';
 
-export let ownsProject = defineRule({
-  name: 'project.ownsProject',
-  async check({ input, services, user, state }) {
+export let ownsProject = defineRule(
+  'project.ownsProject',
+  async ({ input, services, user }) => {
     let project = await services.project.findBySlug(input.params.slug);
 
     if (!project || project.owner_id !== user.id)
       throw forbidden('Project access denied');
 
-    state.project = project;
+    return {
+      project
+    };
   }
-});
+);
 ```
 
 Rules are the right place for auth, ownership, existence, billing, feature
-limits, and business preconditions. They may load request-scoped `state` for the
-handler.
+limits, and business preconditions. When a rule loads request-local facts, return
+them as a plain object so the next rule and handler receive them directly.
 
 ## Route
 
@@ -295,14 +359,19 @@ import { created, defineEndpoint, z } from '@robdel12/cricket';
 import { Project } from './project.model.js';
 import { serializeProjectPublic } from './project.serializers.js';
 import { ProjectCreateInput } from './project.validations.js';
-import { slugAvailable } from './project.rules.js';
+import {
+  requireUser,
+  slugAvailable
+} from './project.rules.js';
 
 export let createProject = defineEndpoint({
   method: 'post',
   path: '/projects',
-  auth: true,
   body: ProjectCreateInput,
-  rules: [slugAvailable],
+  rules: [
+    requireUser,
+    slugAvailable
+  ],
   response: z.object({
     success: z.literal(true),
     project: Project.public
@@ -325,18 +394,18 @@ export let projectEndpoints = [
 ];
 ```
 
-Handlers receive Cricket input plus the adapter context your app returns. Koa
-`ctx`, Knex `db`, transactions, logger, services, and other dependencies remain
-available when you pass them through `context(...)`.
+Handlers receive Cricket input plus the context your app returns. Knex `db`,
+transactions, logger, services, auth facts, request IDs, and loaded resources
+remain available when you pass them through `context(...)`, `use`, or rules.
 
 ## CLI
 
 ```sh
-cricket init app .
-cricket new domain project api/domains
-cricket inspect api/index.js
-cricket docs api/index.js --out openapi.json
-cricket init agents .
+pnpm cricket init app .
+pnpm cricket new domain project api/domains
+pnpm cricket inspect api/index.js
+pnpm cricket docs api/index.js --out openapi.json
+pnpm cricket init agents .
 ```
 
 `init app` creates the small app shell: `api/index.js`, `api/domains/`,
@@ -360,6 +429,7 @@ Cricket app.
 import {
   defineCricketApp,
   startCricketApp,
+  createCricketRuntime,
   defineEndpoint,
   defineModel,
   defineRule,
@@ -374,7 +444,10 @@ import {
 Public subpaths are also available:
 
 ```js
-import { createKoaApp } from '@robdel12/cricket/koa';
 import { createKnexRepository } from '@robdel12/cricket/knex';
 import { generateOpenApi } from '@robdel12/cricket/openapi';
+import { defineCricketApp } from '@robdel12/cricket/app';
+import { loadDomains } from '@robdel12/cricket/domain';
+import { normalizeLogger } from '@robdel12/cricket/logger';
+import { defineSerializer } from '@robdel12/cricket/serializer';
 ```

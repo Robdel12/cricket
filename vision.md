@@ -1,12 +1,15 @@
 # Cricket Vision
 
-Cricket is a tiny Node API framework for sturdy contracts in Koa + Knex apps.
+Cricket is a tiny Node API framework for sturdy contracts.
 
 The bet is that backend code stays easier to grow when every domain has the
-same plain structure: models define contracts, serializers shape outgoing API
-data, validations protect input shape, normalizers translate outside data,
-services do product work, rules guard requests, and routes compose the pieces
-without becoming a junk drawer.
+same plain structure, and when the HTTP runtime speaks the same language as the
+domain contracts. Models define durable data shape, validations protect input,
+normalizers translate outside data, serializers shape outgoing API data,
+services do product work, rules guard requests, and routes compose the pieces.
+
+Cricket owns HTTP directly. It does not wrap another web framework or keep a
+generic runtime boundary around just in case.
 
 ## Core Shape
 
@@ -32,7 +35,7 @@ api/
   dev/
 ```
 
-Those files are the framework's expected shape:
+Those files are the expected shape:
 
 - `model` defines durable row contracts and public/private visibility.
 - `validations` defines reusable Zod schemas for request, source, and service
@@ -44,7 +47,7 @@ Those files are the framework's expected shape:
 - `rules` defines named guards for auth, existence, ownership, billing,
   visibility, and business constraints.
 - `routes` defines endpoints by composing schemas, rules, services,
-  serializers, and response contracts.
+  serializers, response contracts, and HTTP metadata.
 - `test` proves endpoint behavior through the HTTP boundary.
 
 Apps can use only the files a domain earns. Cricket's happy path should keep
@@ -54,17 +57,17 @@ domain loading.
 
 ## App Structure
 
-Cricket's core contract is the domain folder, but real apps have a few other
-recurring responsibilities. The recommended app shape gives those jobs a home
-without turning them into hidden framework behavior.
+Cricket's core contract is the domain folder, but real apps have recurring
+responsibilities outside one domain. The recommended app shape gives those jobs
+a home without turning them into hidden framework behavior.
 
 First-class means scaffolded, documented, inspectable, and agent-readable. It
-does not mean Cricket secretly owns runtime behavior:
+does not mean Cricket secretly owns product policy:
 
 - `api/index.js` is the normal Node entrypoint and visible Cricket app wiring.
 - `api/domains/` contains product API domains.
-- `api/middleware/` contains HTTP edge behavior such as auth extraction, CORS,
-  uploads, rate limits, raw webhooks, and frontend fallbacks.
+- `api/middleware/` contains request middleware such as auth extraction,
+  request IDs, CORS, rate limits, raw webhooks, and frontend fallbacks.
 - `api/services/` contains app-wide services that are not owned by one domain,
   such as email, media storage, payment clients, caches, and cross-domain
   summaries.
@@ -110,8 +113,8 @@ Put Zod schemas here for request bodies, params, queries, source payloads,
 service inputs, and persistence inserts/updates when a named contract helps.
 Routes, rules, services, and normalizers import the schemas they use.
 
-Cricket may scaffold and inspect this file, but it should not create a hidden
-validation registry or auto-wire schemas by name.
+Cricket should not create a hidden validation registry or auto-wire schemas by
+name.
 
 ### `*.normalizers.js`
 
@@ -123,7 +126,7 @@ normalizer turns source-shaped data into an app-owned object before services
 persist or reason over it.
 
 Normalizers should not fetch, write to the database, enqueue work, check auth,
-or know about Koa. Cricket validates source and output schemas when the
+or know about HTTP. Cricket validates source and output schemas when the
 normalizer runs. Services and workers own side effects.
 
 ### `*.serializers.js`
@@ -144,16 +147,17 @@ integration calls here. Services should accept explicit dependencies such as
 `db`, `trx`, `logger`, clients, ID generators, and config. They should return
 plain data, usually parsed through model schemas.
 
-Services should not depend on HTTP by default. If a service needs Koa `ctx`,
-pass it explicitly and treat that as edge work.
+Services should not depend on HTTP by default. If a service needs request data,
+pass the specific value it needs.
 
 ### `*.rules.js`
 
 Rules own guards and preconditions.
 
 Put auth checks, existence checks, ownership checks, visibility checks, billing
-gates, feature limits, and business constraints here. Rules may load state for
-the handler when loading it is part of the guard.
+gates, feature limits, and business constraints here. Rules may return
+request-local facts for later rules and handlers when loading them is part of
+the guard.
 
 A rule should answer "can this request continue?" If it starts doing the actual
 product operation, move that work into the service.
@@ -162,27 +166,10 @@ product operation, move that work into the service.
 
 Routes own HTTP composition.
 
-Put endpoint definitions here: method, path, params, query, body, auth, rules,
-handler, response schema, OpenAPI metadata, and edge middleware. Routes should
-read like a concise product flow: validate input, run rules, call services,
-serialize output.
-
-## Request Flow
-
-```text
-HTTP adapter
-  -> request context and logger
-  -> input validation
-  -> auth requirement
-  -> rules
-  -> handler
-  -> services
-  -> serializers
-  -> response validation
-  -> HTTP response
-```
-
-Routes stay thin because the other files have real jobs.
+Put endpoint definitions here: method, path, params, query, body, rules,
+handler, response schema, and OpenAPI metadata. Routes should read like a
+concise product flow: validate input, run rules, call services, serialize
+output.
 
 ## Source Ingest Flow
 
@@ -197,21 +184,6 @@ source client or worker
 Normalizers keep outside-system weirdness at the boundary. Services still own
 fetching, transactions, persistence, retries, and downstream work.
 
-## Runtime Reality
-
-Koa and Knex are first-class, but Cricket should keep adapters at the edges.
-The framework should never make real work harder by hiding the runtime:
-
-- handlers can access request context;
-- rules can access services, logger, params, query, body, and state;
-- services can use `db`, `trx`, or app-owned dependencies;
-- Koa `ctx` remains available when an endpoint needs edge behavior;
-- Knex transactions remain available instead of being wrapped in a fake database
-  API.
-
-The goal is better organization, not a fantasy backend where hard cases do not
-exist.
-
 ## Logging
 
 Cricket should provide one logging story.
@@ -219,12 +191,12 @@ Cricket should provide one logging story.
 Apps configure and extend the logger: levels, redaction, transports, request
 IDs, user IDs, domain metadata, and environment behavior. Cricket should then
 pass that logger through app setup, request context, rules, handlers, services,
-adapters, and error handling.
+middleware, startup, shutdown, and error handling.
 
 ## Design Principles
 
-**Plain functions win.** Keep models, serializers, rules, services, and
-endpoints as functions and POJOs.
+**Plain functions win.** Keep models, serializers, rules, services, endpoints,
+and middleware as functions and POJOs.
 
 **Plain objects stay plain.** Cricket should not introduce model instances,
 hidden mutation, decorators, or ORM-style lifecycles.
@@ -238,15 +210,16 @@ Do not add schemas for theater.
 
 **First-class does not mean hidden ownership.** Cricket can scaffold
 `normalizers`, `middleware/`, `services/`, `workers/`, `migrations/`, `dev/`,
-and domain tests without taking over auth, imports, migrations, queues, local
-tooling, or deployment.
+and domain tests without taking over auth policy, imports, migrations, queues,
+local tooling, or deployment.
 
 **Folder structure is the convention and the enforcement.** The framework should
 auto-load the expected domain files and make missing pieces obvious during
 scaffold, inspect, docs, or startup work.
 
-**Escape hatches stay honest.** Koa `ctx`, Knex `db`, and Knex `trx` are real
-tools. Keep them reachable.
+**Escape hatches stay Cricket-shaped.** Request data, response primitives,
+streams, cookies, files, and close hooks are real tools. Keep them explicit in
+Cricket contracts instead of exposing a foreign transport object.
 
 **Agents are first-class users.** Predictable files, predictable exports, small
 functions, explicit dependencies, OpenAPI output, and HTTP-boundary tests make
@@ -265,24 +238,23 @@ Cricket is not a generic backend platform. It is opinionated about API
 architecture, but it should stay small and plain.
 
 Cricket is not a validation-only helper. Zod is the contract layer, but the
-bigger win is the whole route/service/rule/serializer/model shape.
+bigger win is the whole route/service/rule/serializer/model/runtime shape.
 
 Cricket is not a codegen-heavy CLI. The CLI should create structure and
 orientation, not write product behavior.
 
-Cricket is not trying to hide Koa or Knex. It should make the common path
-cleaner and still let the app reach the underlying tools.
+Cricket is not a web-framework wrapper. It owns its HTTP runtime.
 
 ## CLI And Agents
 
 The CLI should make the right shape the easiest path:
 
 ```sh
-cricket init app .
-cricket new domain project api/domains
-cricket inspect api/index.js
-cricket docs api/index.js --out openapi.json
-cricket init agents .
+pnpm cricket init app .
+pnpm cricket new domain project api/domains
+pnpm cricket inspect api/index.js
+pnpm cricket docs api/index.js --out openapi.json
+pnpm cricket init agents .
 ```
 
 `cricket new domain` should scaffold the standard files. Command output should
@@ -296,8 +268,16 @@ abstraction.
 
 `cricket init agents` should ship project guidance that teaches the same
 architecture humans use: domains by folder, schemas at boundaries, services for
-data work, rules for guards, serializers for outgoing API shape, and tests
-through the HTTP API.
+data work, rules for guards, serializers for outgoing API shape, middleware
+for HTTP edge work, and tests through the HTTP API.
+
+Cricket should also make endpoint coverage inspectable. Since the app contract
+already knows every route, Cricket can compare the route surface against real
+HTTP tests and show what is missing. A future command should make it boring to
+ask, "which endpoints exist without at least one boundary test?" and should
+help scaffold a small smoke test without pretending generated tests prove the
+product. The contract is simple: if an endpoint exists, there should be at
+least one request-level test that proves the consumed boundary works.
 
 ## Product Feel
 

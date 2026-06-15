@@ -88,7 +88,6 @@ async function appContractFromModule(module, {
     version: resolvedApp.version,
     description: resolvedApp.description,
     prefix: resolvedApp.prefix,
-    openApi: resolvedApp.openApi,
     domains: resolvedApp.domains ?? [],
     endpoints: resolvedApp.endpoints ?? [],
     models: resolvedApp.models ?? []
@@ -135,7 +134,6 @@ export function createAppMap(contract) {
     routes: contract.endpoints.map(endpoint => ({
       method: endpoint.method,
       path: withPathPrefix(endpoint.path, contract.prefix),
-      auth: endpoint.auth,
       summary: endpoint.summary,
       tags: endpoint.tags
     }))
@@ -171,7 +169,7 @@ export function formatAppMap(appMap) {
 
   lines.push('', 'Routes');
   for (let route of appMap.routes)
-    lines.push(`  ${operationLine(route)}${route.auth ? ' auth' : ''}`);
+    lines.push(`  ${operationLine(route)}`);
 
   lines.push('', 'Models');
   for (let model of appMap.models)

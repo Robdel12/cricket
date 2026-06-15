@@ -2,7 +2,8 @@
  * Define a named guard that can be run against an endpoint context.
  *
  * Rules stay tiny and composable: they receive the request context and either
- * resolve cleanly or return/throw an error that stops the request flow.
+ * return plain facts for the next rule/handler or return/throw an error that
+ * stops the request flow.
  *
  * @param {string} name
  * @param {(context: any) => any|Promise<any>} check
@@ -19,20 +20,49 @@ export function defineRule(name, check) {
 }
 
 /**
- * Run rules in order and stop on the first returned error.
+ * Run rules in order, threading returned facts into the next rule context.
  *
  * @param {Array<Function>} rules
  * @param {any} context
- * @returns {Promise<any|undefined>}
+ * @returns {Promise<any>}
  */
 export async function applyRules(rules, context) {
+  let currentContext = context;
+
   for (let rule of rules ?? []) {
-    let result = await rule(context);
+    let result = await rule(currentContext);
 
     if (result instanceof Error)
       throw result;
 
-    if (result)
-      return result;
+    if (!result)
+      continue;
+
+    if (isPlainObject(result)) {
+      currentContext = mergeRuleFacts(currentContext, result, rule);
+      continue;
+    }
+
+    throw new Error(`Rule ${rule.ruleName ?? 'unknown'} must return a plain object or Error`);
   }
+
+  return currentContext;
+}
+
+function isPlainObject(value) {
+  return value &&
+    typeof value === 'object' &&
+    Object.getPrototypeOf(value) === Object.prototype;
+}
+
+function mergeRuleFacts(context, facts, rule) {
+  for (let key of Object.keys(facts)) {
+    if (Object.hasOwn(context, key))
+      throw new Error(`Rule ${rule.ruleName ?? 'unknown'} cannot replace context.${key}`);
+  }
+
+  return {
+    ...context,
+    ...facts
+  };
 }
