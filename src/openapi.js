@@ -1,8 +1,9 @@
+import { defaultStatusForMethod } from './endpoint.js';
+import { operationIdFor } from './http/router.js';
 import {
   isZodSchema,
   toJsonSchema
 } from './schema.js';
-import { defaultStatusForMethod } from './endpoint.js';
 
 let JSON_CONTENT_TYPE = 'application/json';
 
@@ -14,15 +15,6 @@ function withPathPrefix(path, prefix) {
   if (!prefix) return path;
 
   return `${prefix.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
-}
-
-function toOperationId(method, path) {
-  let pathName = path
-    .replace(/[^A-Za-z0-9]+/g, ' ')
-    .trim()
-    .replace(/\s+([A-Za-z0-9])/g, (_, letter) => letter.toUpperCase());
-
-  return `${method.toLowerCase()}${pathName.charAt(0).toUpperCase()}${pathName.slice(1)}`;
 }
 
 function schemaProperties(schema, source) {
@@ -159,7 +151,7 @@ function endpointOperation(endpoint) {
     ...(endpoint.summary ? { summary: endpoint.summary } : {}),
     ...(endpoint.description ? { description: endpoint.description } : {}),
     ...(endpoint.tags?.length ? { tags: endpoint.tags } : {}),
-    operationId: endpoint.operationId ?? toOperationId(endpoint.method, endpoint.path),
+    operationId: operationIdFor(endpoint),
     ...(parameters.length ? { parameters } : {}),
     ...(requestBody ? { requestBody } : {}),
     responses: responsesForEndpoint(endpoint)

@@ -191,14 +191,18 @@ source client or worker
 Normalizers keep outside-system weirdness at the boundary. Services still own
 fetching, transactions, persistence, retries, and downstream work.
 
-## Logging
+## Observability
 
-Cricket should provide one logging story.
+Cricket should provide one observability story.
 
-Apps configure and extend the logger: levels, redaction, transports, request
-IDs, user IDs, domain metadata, and environment behavior. Cricket should then
-pass that logger through app setup, request context, rules, handlers, services,
-middleware, startup, shutdown, and error handling.
+Apps configure and extend the logger, but the HTTP runtime owns lifecycle
+events, request IDs, safe snapshots, and replay artifacts. Cricket should pass a
+request-scoped logger through setup, middleware, context, rules, handlers,
+services, startup, shutdown, and error handling.
+
+Default observability must be conservative: no raw auth headers, cookies, query
+values, request bodies, response bodies, `Set-Cookie` values, or raw error
+objects.
 
 ## Design Principles
 

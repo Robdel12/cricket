@@ -14,19 +14,25 @@ import {
   toHttpError
 } from '../errors.js';
 import { normalizeLogger } from '../logger.js';
+import { normalizeObservability } from '../observability.js';
 import {
   assertAllowedHost,
   completeRequestBody,
-  createBaseRequest
+  createBaseRequest,
+  safeRequestSnapshot
 } from './request.js';
 import {
   allowedMethodsForPath,
   endpointWithPrefix,
   joinPaths,
   matchRoute,
-  prepareRoutes
+  prepareRoutes,
+  routeIdentityFor
 } from './router.js';
-import { writeHttpResponse } from './response.js';
+import {
+  safeResponseSnapshot,
+  writeHttpResponse
+} from './response.js';
 
 function toArray(value) {
   if (!value)
@@ -248,6 +254,91 @@ async function runEndpoint(requestContext, endpoint) {
   return await endpoint.handle(requestContext.request, requestContext.context);
 }
 
+function safeErrorSnapshot(error) {
+  return {
+    code: error?.code,
+    name: error?.name
+  };
+}
+
+function observeResponse({
+  replay,
+  request,
+  requestId,
+  response,
+  route
+}) {
+  let event = {
+    requestId,
+    request: safeRequestSnapshot(request),
+    response: safeResponseSnapshot(response, {
+      method: request.method
+    }),
+    route,
+    terminal: true
+  };
+  let finished = false;
+
+  return {
+    onFinish() {
+      finished = true;
+      void replay.emit({
+        ...event,
+        type: 'response.finished'
+      });
+    },
+
+    onClose() {
+      if (finished)
+        return;
+
+      void replay.emit({
+        ...event,
+        type: 'response.closed'
+      });
+    }
+  };
+}
+
+function writeObservedResponse(req, res, response, {
+  observability,
+  replay,
+  request,
+  requestId,
+  route
+}) {
+  if (!observability.enabled) {
+    writeHttpResponse(req, res, response);
+    return;
+  }
+
+  let observer = observeResponse({
+    replay,
+    request,
+    requestId,
+    response,
+    route
+  });
+
+  res.once('finish', observer.onFinish);
+  res.once('close', observer.onClose);
+
+  try {
+    writeHttpResponse(req, res, response);
+  } catch (error) {
+    res.off('finish', observer.onFinish);
+    res.off('close', observer.onClose);
+    throw error;
+  }
+}
+
+async function emitObserved(observability, replay, createEvent) {
+  if (!observability.enabled)
+    return;
+
+  await replay.emit(createEvent());
+}
+
 async function reportRequestError(appContract, {
   baseRequest,
   error,
@@ -289,6 +380,7 @@ async function reportRequestError(appContract, {
 function createRuntimeHandler({
   appContract,
   logger,
+  observability,
   routes,
   setup,
   services,
@@ -299,6 +391,11 @@ function createRuntimeHandler({
   } = {}) {
     let baseRequest;
     let continued = false;
+    let replay = observability.createReplay();
+    let requestId;
+    let requestLogger = logger;
+    let observedRequest;
+    let route;
 
     function writeContinue() {
       if (!expectContinue || continued || res.headersSent)
@@ -312,39 +409,76 @@ function createRuntimeHandler({
       baseRequest = createBaseRequest(req, {
         trustProxy: appContract.trustProxy
       });
+      requestId = observability.requestId({
+        app: appContract,
+        request: baseRequest
+      });
+      baseRequest = {
+        ...baseRequest,
+        id: requestId
+      };
+      observedRequest = baseRequest;
+      requestLogger = logger.child({
+        requestId
+      });
+      await emitObserved(observability, replay, () => ({
+        type: 'request.started',
+        requestId,
+        request: safeRequestSnapshot(baseRequest)
+      }));
       assertAllowedHost(baseRequest, appContract.allowedHosts);
 
       if (!supportedEndpointMethods.includes(baseRequest.method.toUpperCase())) {
-        writeHttpResponse(
+        writeObservedResponse(
           req,
           res,
-          methodNotAllowed(baseRequest, supportedEndpointMethods)
+          methodNotAllowed(baseRequest, supportedEndpointMethods),
+          {
+            observability,
+            replay,
+            request: baseRequest,
+            requestId
+          }
         );
         return;
       }
 
       if (baseRequest.method.toUpperCase() === 'OPTIONS' && baseRequest.path === '*') {
-        writeHttpResponse(req, res, optionsResponse(supportedEndpointMethods));
+        writeObservedResponse(req, res, optionsResponse(supportedEndpointMethods), {
+          observability,
+          replay,
+          request: baseRequest,
+          requestId
+        });
         return;
       }
 
       let context = baseContextFor({
-        logger,
+        logger: requestLogger,
         services,
         setup
       });
       let requestContext = {
         app: appContract,
         context,
-        logger,
+        logger: requestLogger,
         request: baseRequest,
         services
       };
       let finalHandler = async nextRequestContext => {
+        observedRequest = nextRequestContext.request;
         let match = matchRoute(routes, nextRequestContext.request);
 
         if (match) {
           let matchedRequest = withMatchedParams(nextRequestContext.request, match);
+          observedRequest = matchedRequest;
+          route = routeIdentityFor(match.endpoint);
+          await emitObserved(observability, replay, () => ({
+            type: 'route.matched',
+            requestId,
+            request: safeRequestSnapshot(matchedRequest),
+            route
+          }));
           let requestContextForMatchedRequest = await resolveRequestContext(appContract, nextRequestContext, {
             request: matchedRequest,
             setup
@@ -375,6 +509,7 @@ function createRuntimeHandler({
         let requestContextForRequest = await resolveRequestContext(appContract, nextRequestContext, {
           setup
         });
+        observedRequest = requestContextForRequest.request;
 
         if (appContract.fallback)
           return await appContract.fallback(requestContextForRequest);
@@ -383,18 +518,40 @@ function createRuntimeHandler({
       };
       let response = await composeMiddleware(use, finalHandler)(requestContext);
 
-      writeHttpResponse(req, res, response);
+      writeObservedResponse(req, res, response, {
+        observability,
+        replay,
+        request: observedRequest,
+        requestId,
+        route
+      });
     } catch (error) {
       let response = toHttpError(error);
 
       await reportRequestError(appContract, {
         baseRequest,
         error,
-        logger,
+        logger: requestLogger,
         response
       });
 
-      writeHttpResponse(req, res, response);
+      if (baseRequest) {
+        await emitObserved(observability, replay, () => ({
+          type: 'request.failed',
+          error: safeErrorSnapshot(error),
+          requestId,
+          request: safeRequestSnapshot(observedRequest ?? baseRequest),
+          route
+        }));
+      }
+
+      writeObservedResponse(req, res, response, {
+        observability,
+        replay,
+        request: observedRequest ?? baseRequest ?? {},
+        requestId,
+        route
+      });
     }
   };
 }
@@ -433,6 +590,7 @@ function closeServer(server, {
  *   dependencies: object,
  *   handle: Function,
  *   logger: object,
+ *   observability: object,
  *   services: object,
  *   cleanup: Function|undefined
  * }>} Runtime object with handler and context.
@@ -445,6 +603,9 @@ export async function createCricketRuntime(cricketApp, {
     baseUrl
   });
   let logger = normalizeLogger(runtimeLogger ?? appContract.logger ?? console);
+  let observability = normalizeObservability(appContract.observability, {
+    logger
+  });
   let setup = normalizeSetupResult(
     appContract.setup ? await appContract.setup({
       app: appContract,
@@ -488,6 +649,7 @@ export async function createCricketRuntime(cricketApp, {
   let handle = createRuntimeHandler({
     appContract,
     logger,
+    observability,
     routes,
     setup,
     services,
@@ -507,6 +669,7 @@ export async function createCricketRuntime(cricketApp, {
     dependencies: setup.dependencies,
     handle,
     logger,
+    observability,
     services,
     cleanup: setup.cleanup
   };

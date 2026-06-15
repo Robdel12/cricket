@@ -242,6 +242,10 @@ function paramsFromSearchParams(searchParams) {
   return params;
 }
 
+function sortedKeys(value) {
+  return Object.keys(value ?? {}).sort();
+}
+
 /**
  * Create a Cricket request object from a Node HTTP request.
  *
@@ -301,6 +305,33 @@ export function createBaseRequest(req, {
     rawHeaders: req.rawHeaders ?? [],
     secure: protocol === 'https',
     url: requestTarget.raw
+  };
+}
+
+/**
+ * Return a redacted request snapshot for logs, events, and replay artifacts.
+ *
+ * Values that commonly carry secrets or user input are represented by names or
+ * booleans only: headers, cookies, query values, body, and raw body.
+ *
+ * @param {object} request - Cricket request object.
+ * @returns {object} Safe request summary.
+ */
+export function safeRequestSnapshot(request = {}) {
+  return {
+    id: request.id,
+    method: request.method,
+    path: request.path,
+    protocol: request.protocol,
+    host: request.host,
+    origin: request.origin,
+    secure: request.secure,
+    headers: sortedKeys(request.headers),
+    cookies: sortedKeys(request.cookies),
+    query: sortedKeys(request.query),
+    params: sortedKeys(request.params),
+    hasBody: request.body !== undefined,
+    hasRawBody: request.rawBody !== undefined
   };
 }
 
