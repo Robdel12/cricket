@@ -30,20 +30,18 @@ at explicit boundaries.
 ```text
 app
   request
-    -> middleware            HTTP edge before endpoint parsing
-    -> domains.routes        endpoint match
-    -> domains.validations   trusted input shape
-    -> domains.rules         request permission and loaded facts
-    -> domains.handlers      endpoint composition
-    -> domains.services      product/data side effects
-    -> domains.serializers   API output shape
-    -> response
+    -> middleware before     HTTP edge transforms requestContext
+      -> domains.routes      match endpoint or fallback
+        -> validations       trusted input shape
+        -> rules             request permission + loaded facts
+        -> handler/services  app work + side effects
+        -> serializers       API output shape
+      -> response draft
+    <- middleware after      response headers, cookies, logging, timing
+  response
 
   outside-source data
     -> domains.normalizers   third-party, CSV, webhook, queue, import, legacy projections
-
-  app misses
-    -> fallback              static files, SEO HTML, redirects, frontend shell
 ```
 
 ## Domain Shape
