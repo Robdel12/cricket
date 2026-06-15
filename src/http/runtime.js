@@ -417,6 +417,26 @@ function closeServer(server, {
   });
 }
 
+/**
+ * Create a Cricket runtime from an app contract.
+ *
+ * Resolves domains, sets up services, compiles middleware and routes, and returns
+ * a ready-to-use HTTP handler. This is where all app config becomes concrete.
+ *
+ * @param {object} cricketApp - App contract from defineCricketApp().
+ * @param {object} [options]
+ * @param {string|URL} [options.baseUrl] - Module URL for resolving relative domain paths.
+ * @param {object} [options.logger] - App logger for the runtime.
+ * @returns {Promise<{
+ *   app: Function,
+ *   contract: object,
+ *   dependencies: object,
+ *   handle: Function,
+ *   logger: object,
+ *   services: object,
+ *   cleanup: Function|undefined
+ * }>} Runtime object with handler and context.
+ */
 export async function createCricketRuntime(cricketApp, {
   baseUrl,
   logger: runtimeLogger
@@ -492,6 +512,30 @@ export async function createCricketRuntime(cricketApp, {
   };
 }
 
+/**
+ * Start a Cricket app as a standalone HTTP server.
+ *
+ * Creates the runtime and starts listening on the specified port. Only runs when
+ * the module is the main entrypoint (checked via `main` parameter).
+ *
+ * @param {object} cricketApp - App contract from defineCricketApp().
+ * @param {object} [options]
+ * @param {number} [options.port=3000] - Port to listen on.
+ * @param {string} [options.host] - Host to bind to (defaults to all interfaces).
+ * @param {string|URL} [options.main] - Module URL to check if this is the main module.
+ * @param {object} [options.logger] - App logger for the runtime.
+ * @returns {Promise<{
+ *   app: Function,
+ *   contract: object,
+ *   dependencies: object,
+ *   handle: Function,
+ *   logger: object,
+ *   server: object,
+ *   services: object,
+ *   cleanup: Function|undefined,
+ *   stop: Function
+ * }|undefined>} Running app or undefined if not main module.
+ */
 export async function startCricketApp(cricketApp, {
   port = 3000,
   host,

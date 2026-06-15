@@ -471,6 +471,22 @@ function prepareResponse(response) {
   };
 }
 
+/**
+ * Write a Cricket response object to a Node HTTP response.
+ *
+ * Handles JSON serialization, streaming responses, cookie serialization, redirects,
+ * and cleanup callbacks. Validates headers and status codes before writing.
+ *
+ * @param {object} req - Node HTTP request for cleanup event handling.
+ * @param {object} res - Node HTTP response object.
+ * @param {object} [response] - Cricket response object.
+ * @param {number} [response.status=200] - HTTP status code.
+ * @param {any} [response.body] - Response body (object, string, Buffer, or stream).
+ * @param {object} [response.headers] - Response headers.
+ * @param {Array<{name: string, value: string, options?: object}>} [response.cookies] - Cookies to set.
+ * @param {string} [response.redirect] - Redirect URL for 3xx responses.
+ * @param {Function} [response.onClose] - Cleanup callback after response completes.
+ */
 export function writeHttpResponse(req, res, response) {
   let cleanup = applyResponseCleanup(req, res, response ?? {});
   let prepared;
