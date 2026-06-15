@@ -25,13 +25,20 @@ function toOperationId(method, path) {
   return `${method.toLowerCase()}${pathName.charAt(0).toUpperCase()}${pathName.slice(1)}`;
 }
 
-function schemaProperties(schema) {
+function schemaProperties(schema, source) {
   let jsonSchema = toJsonSchema(schema);
 
   if (!jsonSchema) return [];
 
-  if (jsonSchema.type !== 'object' || !jsonSchema.properties)
+  if (jsonSchema.type !== 'object')
     throw new Error('OpenAPI params and query schemas must describe objects');
+
+  if (!jsonSchema.properties) {
+    if (source === 'query')
+      return [];
+
+    throw new Error('OpenAPI params and query schemas must describe objects');
+  }
 
   let required = new Set(jsonSchema.required ?? []);
 
@@ -51,7 +58,7 @@ function jsonContent(schema) {
 }
 
 function parametersFromSchema(source, schema) {
-  return schemaProperties(schema).map(parameter => ({
+  return schemaProperties(schema, source).map(parameter => ({
     name: parameter.name,
     in: source,
     required: source === 'path' ? true : parameter.required,

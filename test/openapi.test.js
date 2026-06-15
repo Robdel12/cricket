@@ -139,4 +139,28 @@ describe('Cricket OpenAPI', () => {
     });
   });
 
+  it('allows free-form query schemas without named OpenAPI parameters', () => {
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/events',
+      query: z.record(z.string(), z.unknown()).optional(),
+      responses: {
+        200: z.object({
+          events: z.array(z.object({ id: z.uuid() }))
+        })
+      },
+      async handler() {
+        return {};
+      }
+    });
+
+    let docs = generateOpenApi({
+      title: 'Example API',
+      version: '1.0.0',
+      endpoints: [endpoint]
+    });
+
+    assert.equal(docs.paths['/events'].get.parameters, undefined);
+  });
+
 });
