@@ -151,7 +151,7 @@ describe('Cricket HTTP runtime', () => {
         events.push(event);
       }
     }), {
-      logger: {}
+      logger() {}
     });
 
     let response = await request(runtime.app)
@@ -194,7 +194,7 @@ describe('Cricket HTTP runtime', () => {
       }
     });
     let runtime = await createCricketRuntime(cricketApp, {
-      logger: {}
+      logger() {}
     });
     let docs = generateOpenApi({
       title: 'Projects API',
@@ -212,6 +212,75 @@ describe('Cricket HTTP runtime', () => {
       path: '/api/projects/:projectId',
       operationId: docs.paths['/api/projects/{projectId}'].get.operationId
     });
+  });
+
+
+  it('threads structured request logs through the runtime', async () => {
+    let logs = [];
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/projects/:projectId',
+      operationId: 'getProject',
+      handler({ logger, request }) {
+        logger.info('handler.called', {
+          authorization: 'Bearer should-redact'
+        });
+
+        return ok({
+          success: true,
+          id: request.params.projectId
+        });
+      }
+    });
+    let cricketApp = defineCricketApp({
+      name: 'Project API',
+      logger: {
+        format: 'json',
+        write(line) {
+          logs.push(JSON.parse(line));
+        }
+      },
+      endpoints: [endpoint],
+      observability: {
+        requestId() {
+          return 'req_log_1';
+        }
+      }
+    });
+    let runtime = await createCricketRuntime(cricketApp);
+
+    let response = await request(runtime.app)
+      .get('/projects/018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0?token=query-secret')
+      .set('authorization', 'Bearer auth-secret')
+      .set('cookie', 'session=request-secret');
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(logs.map(log => log.event), [
+      'http.request.started',
+      'http.route.matched',
+      'handler.called',
+      'http.response.finished'
+    ]);
+
+    let handlerLog = logs.find(log => log.event === 'handler.called');
+    let responseLog = logs.find(log => log.event === 'http.response.finished');
+
+    assert.equal(handlerLog.service, 'Project API');
+    assert.equal(handlerLog.requestId, 'req_log_1');
+    assert.deepEqual(handlerLog.route, {
+      method: 'GET',
+      path: '/projects/:projectId',
+      operationId: 'getProject'
+    });
+    assert.equal(handlerLog.metadata.authorization, '[Redacted]');
+    assert.equal(responseLog.metadata.response.status, 200);
+
+    let serializedLogs = JSON.stringify(logs);
+
+    assert.equal(serializedLogs.includes('auth-secret'), false);
+    assert.equal(serializedLogs.includes('request-secret'), false);
+    assert.equal(serializedLogs.includes('query-secret'), false);
+    assert.equal(serializedLogs.includes('should-redact'), false);
   });
 
 
@@ -245,7 +314,7 @@ describe('Cricket HTTP runtime', () => {
       }
     }), {
       port: 0,
-      logger: {}
+      logger() {}
     });
     let { port } = runtime.server.address();
     let clientClosedPromise = new Promise((resolve, reject) => {
@@ -458,7 +527,7 @@ describe('Cricket HTTP runtime', () => {
     });
     let runtime = await startCricketApp(cricketApp, {
       port: 0,
-      logger: {}
+      logger() {}
     });
 
     await runtime.stop('SIGTERM');
@@ -495,7 +564,7 @@ describe('Cricket HTTP runtime', () => {
     });
     let runtime = await startCricketApp(cricketApp, {
       port: 0,
-      logger: {}
+      logger() {}
     });
 
     await assert.rejects(runtime.stop('SIGTERM'), /shutdown failed/);
@@ -545,7 +614,7 @@ describe('Cricket HTTP runtime', () => {
     });
     let runtime = await startCricketApp(cricketApp, {
       port: 0,
-      logger: {}
+      logger() {}
     });
     let { port } = runtime.server.address();
     let responsePromise = new Promise((resolve, reject) => {

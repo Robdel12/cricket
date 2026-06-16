@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 
 let execFileAsync = promisify(execFile);
@@ -183,6 +183,8 @@ describe('Cricket CLI', () => {
     let appEntry = await fs.readFile(path.join(root, 'api', 'index.js'), 'utf8');
 
     assert.match(appEntry, /defineCricketApp/);
+    assert.match(appEntry, /logger: \{/);
+    assert.match(appEntry, /service: 'cricket-api'/);
     assert.match(appEntry, /domains: '\.\/domains'/);
     await assertDirectoryExists(path.join(root, 'api', 'domains'));
     await assertDirectoryExists(path.join(root, 'api', 'middleware'));
@@ -335,5 +337,57 @@ describe('Cricket CLI', () => {
     assert.equal(document.components.schemas.BuildPublic.properties.user_id, undefined);
     assert.equal(document.components.schemas.BuildPublic.properties.id.cricket, undefined);
     assert.equal(document.components.schemas.BuildPublic.properties.id.sensitive, undefined);
+  });
+
+  it('traces one request from Cricket JSON logs on stdin', async () => {
+    let input = [
+      'not json',
+      JSON.stringify({
+        time: '2026-06-15T10:00:00.000Z',
+        level: 'info',
+        event: 'http.request.started',
+        requestId: 'req_keep',
+        metadata: {
+          request: {
+            method: 'GET',
+            path: '/api/builds'
+          }
+        }
+      }),
+      JSON.stringify({
+        time: '2026-06-15T10:00:00.010Z',
+        level: 'info',
+        event: 'http.route.matched',
+        requestId: 'req_skip'
+      }),
+      JSON.stringify({
+        time: '2026-06-15T10:00:00.020Z',
+        level: 'info',
+        event: 'http.response.finished',
+        requestId: 'req_keep',
+        route: {
+          operationId: 'getBuilds'
+        },
+        metadata: {
+          response: {
+            status: 200
+          }
+        }
+      })
+    ].join('\n');
+
+    let stdout = execFileSync(process.execPath, [
+      'bin/cricket.js',
+      'trace',
+      'req_keep'
+    ], {
+      encoding: 'utf8',
+      input
+    });
+
+    assert.match(stdout, /Trace req_keep/);
+    assert.match(stdout, /http\.request\.started GET \/api\/builds/);
+    assert.match(stdout, /http\.response\.finished getBuilds status=200/);
+    assert.doesNotMatch(stdout, /req_skip/);
   });
 });

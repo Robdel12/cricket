@@ -273,6 +273,10 @@ function appIndexTemplate() {
 export let app = defineCricketApp({
   name: 'Cricket API',
   version: '1.0.0',
+  logger: {
+    service: 'cricket-api',
+    level: process.env.LOG_LEVEL ?? 'info'
+  },
   domains: './domains'
 });
 

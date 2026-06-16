@@ -14,6 +14,7 @@ import {
   created,
   createCricketRuntime,
   createKnexRepository,
+  createCricketLogger,
   createServices,
   defineCricketApp,
   defineEndpoint,
@@ -31,6 +32,7 @@ import {
   ok,
   pickFields,
   renameFields,
+  resolveLogger,
   z
 } from '../src/index.js';
 import {
@@ -151,6 +153,100 @@ describe('Cricket core', () => {
     assert.equal(events[1].event, 'server.failed');
     assert.equal(events[1].metadata.component, 'api');
     assert.equal(events[1].metadata.error.message, 'Nope');
+  });
+
+
+  it('creates structured Cricket log lines with child metadata and redaction', () => {
+    let lines = [];
+    let logger = createCricketLogger({
+      service: 'build-api',
+      level: 'debug',
+      write(line) {
+        lines.push(line);
+      }
+    }).child({
+      requestId: 'req_123',
+      route: {
+        operationId: 'getBuild'
+      }
+    });
+
+    logger.info('http.response.finished', {
+      status: 200,
+      authorization: 'Bearer nope',
+      error: new Error('Example')
+    });
+
+    let log = JSON.parse(lines[0]);
+
+    assert.equal(log.level, 'info');
+    assert.equal(log.event, 'http.response.finished');
+    assert.equal(log.service, 'build-api');
+    assert.equal(log.requestId, 'req_123');
+    assert.deepEqual(log.route, { operationId: 'getBuild' });
+    assert.equal(log.metadata.status, 200);
+    assert.equal(log.metadata.authorization, '[Redacted]');
+    assert.deepEqual(log.metadata.error, {
+      name: 'Error',
+      message: 'Example'
+    });
+  });
+
+
+  it('filters levels and supports pretty Cricket log lines', () => {
+    let lines = [];
+    let logger = createCricketLogger({
+      service: 'build-api',
+      level: 'warn',
+      format: 'pretty',
+      write(line) {
+        lines.push(line);
+      }
+    });
+
+    logger.info('ignored');
+    logger.error('server.failed', {
+      requestId: 'req_456'
+    });
+
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /ERROR build-api req_456 server\.failed/);
+  });
+
+
+  it('resolves omitted and configured loggers into Cricket structured loggers', () => {
+    let lines = [];
+    let defaultLogger = resolveLogger(undefined, {
+      service: 'default-api',
+      write(line) {
+        lines.push(JSON.parse(line));
+      }
+    });
+    let configuredLogger = resolveLogger({
+      level: 'error',
+      service: 'configured-api',
+      write(line) {
+        lines.push(JSON.parse(line));
+      }
+    });
+
+    defaultLogger.info('server.started');
+    configuredLogger.info('ignored');
+    configuredLogger.error('server.failed');
+
+    assert.deepEqual(lines.map(log => log.event), [
+      'server.started',
+      'server.failed'
+    ]);
+    assert.equal(lines[0].service, 'default-api');
+    assert.equal(lines[1].service, 'configured-api');
+    assert.throws(() => resolveLogger({
+      leveL: 'debug'
+    }), /Logger config needs at least one known logger option/);
+    assert.throws(() => resolveLogger({
+      level: 'debug',
+      transport: 'file'
+    }), /Unknown logger option transport/);
   });
 
 
@@ -545,7 +641,9 @@ describe('Cricket core', () => {
         };
       }
     });
-    let runtime = await createCricketRuntime(cricketApp);
+    let runtime = await createCricketRuntime(cricketApp, {
+      logger() {}
+    });
 
     let response = await request(runtime.app)
       .post('/projects')

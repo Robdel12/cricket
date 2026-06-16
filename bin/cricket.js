@@ -14,6 +14,10 @@ import {
   outputOpenApi
 } from '../src/app-contract.js';
 import {
+  formatTrace,
+  traceLogs
+} from '../src/log-trace.js';
+import {
   formatAppScaffoldResult,
   formatAgentScaffoldResult,
   formatScaffoldResult,
@@ -46,6 +50,7 @@ function usage() {
   cricket init agents [root] [--force]
   cricket inspect <appModule>
   cricket docs <appModule> [--out openapi.json]
+  cricket trace <requestId>
 
 Examples:
   cricket init app .
@@ -151,6 +156,33 @@ async function runDocs(args) {
   console.log(output);
 }
 
+async function readStdin() {
+  let chunks = [];
+
+  for await (let chunk of process.stdin)
+    chunks.push(chunk);
+
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+/**
+ * Run the `cricket trace` command and reconstruct one request from JSON logs.
+ *
+ * @param {string[]} args - Raw CLI arguments after `cricket`.
+ * @returns {Promise<void>} Resolves after trace output is written.
+ */
+async function runTrace(args) {
+  let [, requestId] = args;
+
+  if (!requestId)
+    throw new Error('Request id is required');
+
+  let input = await readStdin();
+  let logs = traceLogs(input, requestId);
+
+  console.log(formatTrace(logs, requestId));
+}
+
 /**
  * Dispatch the Cricket CLI entrypoint from argv.
  *
@@ -174,6 +206,9 @@ export async function runCli(argv = process.argv.slice(2)) {
 
   if (command === 'docs')
     return await runDocs(argv);
+
+  if (command === 'trace')
+    return await runTrace(argv);
 
   console.log(usage());
   process.exitCode = command ? 1 : 0;

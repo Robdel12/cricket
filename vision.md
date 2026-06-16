@@ -195,10 +195,15 @@ fetching, transactions, persistence, retries, and downstream work.
 
 Cricket should provide one observability story.
 
-Apps configure and extend the logger, but the HTTP runtime owns lifecycle
-events, request IDs, safe snapshots, and replay artifacts. Cricket should pass a
-request-scoped logger through setup, middleware, context, rules, handlers,
-services, startup, shutdown, and error handling.
+The default logger is framework-owned, structured, and stdout-first. Apps can
+configure it or provide a compatible logger, but Cricket should still pass one
+logger shape through setup, middleware, context, rules, handlers, services,
+startup, shutdown, and error handling.
+
+The HTTP runtime owns request IDs, safe snapshots, route identity, and replay
+artifacts. Request logs should carry those facts when Cricket already knows
+them, and CLI tools can read the emitted log lines to trace one request by
+`requestId`. Cricket should not become the storage backend.
 
 Default observability must be conservative: no raw auth headers, cookies, query
 values, request bodies, response bodies, `Set-Cookie` values, or raw error
