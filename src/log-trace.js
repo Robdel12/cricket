@@ -112,6 +112,15 @@ function spanSummary(log, span) {
   return parts.filter(Boolean).join(' ');
 }
 
+/**
+ * Build a lightweight parent/child tree from span log records.
+ *
+ * Logs may arrive as flat newline-delimited JSON, so the CLI reconstructs span
+ * nesting from ids at render time instead of requiring a richer storage format.
+ *
+ * @param {object[]} logs
+ * @returns {object[]}
+ */
 function createTimelineNodes(logs) {
   let nodes = [];
 
@@ -166,6 +175,17 @@ function createTimelineNodes(logs) {
   return roots;
 }
 
+/**
+ * Render one trace node while guarding against malformed span cycles.
+ *
+ * Span ids come from logs, not trusted in-memory objects, so the `seen` set keeps
+ * a bad or duplicated parent id from making terminal rendering loop forever.
+ *
+ * @param {object} node
+ * @param {number} depth
+ * @param {Set<string>} seen
+ * @returns {string[]}
+ */
 function renderTimelineNode(node, depth, seen) {
   let indent = '  '.repeat(depth);
 

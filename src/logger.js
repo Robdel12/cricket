@@ -42,6 +42,16 @@ function serializeError(error) {
   };
 }
 
+/**
+ * Serialize log metadata without leaking obvious secrets or crashing on cycles.
+ *
+ * Cricket logs are meant to be safe by default for stdout/docker collection, so
+ * nested app metadata is copied into a redacted envelope before it is written.
+ *
+ * @param {any} value
+ * @param {WeakSet<object>} [seen]
+ * @returns {any}
+ */
 function safeMetadata(value, seen = new WeakSet()) {
   if (value instanceof Error)
     return serializeError(value);

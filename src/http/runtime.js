@@ -112,6 +112,18 @@ function optionsResponse(allowedMethods) {
   };
 }
 
+/**
+ * Compose request middleware while counting only each middleware's own work.
+ *
+ * Middleware wraps the rest of the request, so naive duration tracking would
+ * double-count downstream route/handler time. The wrapped `next()` subtracts
+ * downstream time and keeps the middleware bucket useful.
+ *
+ * @param {Function[]} middleware
+ * @param {Function} finalHandler
+ * @param {object} [timing]
+ * @returns {Function}
+ */
 function composeMiddleware(middleware, finalHandler, timing) {
   return middleware.reduceRight(
     (next, use) => async requestContext => {
@@ -144,6 +156,14 @@ function roundMs(value) {
   return Math.round(value * 1000) / 1000;
 }
 
+/**
+ * Record small request lifecycle timings with a monotonic clock.
+ *
+ * These numbers are intentionally sparse. They explain where time went without
+ * becoming a profiler, storage backend, or source of request/body data.
+ *
+ * @returns {{add: Function, startedAt: number, snapshot: Function, time: Function}}
+ */
 function createTimingRecorder() {
   let startedAt = performance.now();
   let phases = {};
@@ -343,6 +363,16 @@ function safeErrorSnapshot(error) {
   };
 }
 
+/**
+ * Attach terminal response logging after Cricket has a concrete response.
+ *
+ * Finish and close are observed at the Node response boundary so traces can
+ * distinguish completed responses from client disconnects without changing how
+ * handlers return response objects.
+ *
+ * @param {object} options
+ * @returns {{onFinish: Function, onClose: Function}}
+ */
 function observeResponse({
   logger,
   replay,

@@ -24,6 +24,16 @@ function safeError(error) {
   };
 }
 
+/**
+ * Keep span metadata intentionally boring.
+ *
+ * Trace metadata is production debugging surface area, so Cricket accepts only
+ * scalar values and redacts sensitive-looking keys instead of trying to deeply
+ * serialize arbitrary app objects.
+ *
+ * @param {object} metadata
+ * @returns {object|undefined}
+ */
 function safeAttributes(metadata) {
   if (!metadata || typeof metadata !== 'object')
     return undefined;
@@ -77,6 +87,15 @@ export function createTrace({
   parentId,
   context = {}
 } = {}) {
+  /**
+   * Carry safe request context into nested spans.
+   *
+   * Children inherit the original request clock so every span can be placed on
+   * one timeline, even when product code creates nested traces.
+   *
+   * @param {object} [metadata={}]
+   * @returns {{child: Function, span: Function}}
+   */
   function child(metadata = {}) {
     return createTrace({
       logger,
@@ -92,6 +111,15 @@ export function createTrace({
     });
   }
 
+  /**
+   * Publish span data without letting observability become the failure mode.
+   *
+   * A broken log sink or replay observer should never replace the handler
+   * result, and should never mask the original product error.
+   *
+   * @param {object} span
+   * @returns {Promise<void>}
+   */
   async function emitSpan(span) {
     try {
       logger?.info?.('trace.span.finished', {
@@ -115,6 +143,17 @@ export function createTrace({
     }
   }
 
+  /**
+   * Measure one explicit product or framework operation.
+   *
+   * The callback result and thrown error are preserved exactly; the span is a
+   * side-channel for debugging, not control flow.
+   *
+   * @param {string} name
+   * @param {object|Function} metadata
+   * @param {Function} [fn]
+   * @returns {Promise<any>}
+   */
   async function span(name, metadata, fn) {
     let callback = typeof metadata === 'function' ? metadata : fn;
     let attributes = typeof metadata === 'function' ? undefined : safeAttributes(metadata);

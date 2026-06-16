@@ -26,6 +26,18 @@ function spanMetadata(table, metadata = {}) {
   };
 }
 
+/**
+ * Time repository helpers only when a request trace is explicitly provided.
+ *
+ * Cricket does not globally patch Knex or log SQL. Repository spans stay at the
+ * app-controlled persistence boundary and carry only small, safe metadata.
+ *
+ * @param {object} trace
+ * @param {string} name
+ * @param {object} metadata
+ * @param {Function} handler
+ * @returns {Promise<any>|any}
+ */
 function runSpan(trace, name, metadata, handler) {
   if (typeof trace?.span !== 'function')
     return handler();
