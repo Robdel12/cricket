@@ -536,5 +536,12 @@ describe('Cricket HTTP routing', () => {
       middleware: [],
       handler: () => ok({ success: true })
     }), /Unsupported endpoint option middleware/);
+
+    assert.throws(() => defineEndpoint({
+      method: 'get',
+      path: '/ok',
+      traceName: true,
+      handler: () => ok({ success: true })
+    }), /GET \/ok traceName must be a string/);
   });
 });

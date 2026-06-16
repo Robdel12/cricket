@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { performance } from 'node:perf_hooks';
 import {
   setImmediate as nextTick
 } from 'node:timers/promises';
@@ -15,6 +16,10 @@ import {
 } from '../errors.js';
 import { resolveLogger } from '../logger.js';
 import { normalizeObservability } from '../observability.js';
+import {
+  createNoopTrace,
+  createTrace
+} from '../trace.js';
 import {
   assertAllowedHost,
   completeRequestBody,
@@ -107,11 +112,101 @@ function optionsResponse(allowedMethods) {
   };
 }
 
-function composeMiddleware(middleware, finalHandler) {
+/**
+ * Compose request middleware while counting only each middleware's own work.
+ *
+ * Middleware wraps the rest of the request, so naive duration tracking would
+ * double-count downstream route/handler time. The wrapped `next()` subtracts
+ * downstream time and keeps the middleware bucket useful.
+ *
+ * @param {Function[]} middleware
+ * @param {Function} finalHandler
+ * @param {object} [timing]
+ * @returns {Function}
+ */
+function composeMiddleware(middleware, finalHandler, timing) {
   return middleware.reduceRight(
-    (next, use) => requestContext => use(requestContext, next),
+    (next, use) => async requestContext => {
+      if (!timing)
+        return await use(requestContext, next);
+
+      let downstreamMs = 0;
+      let wrappedNext = async nextRequestContext => {
+        let start = performance.now();
+
+        try {
+          return await next(nextRequestContext);
+        } finally {
+          downstreamMs += performance.now() - start;
+        }
+      };
+      let start = performance.now();
+
+      try {
+        return await use(requestContext, wrappedNext);
+      } finally {
+        timing.add('middlewareMs', Math.max(0, performance.now() - start - downstreamMs));
+      }
+    },
     finalHandler
   );
+}
+
+function roundMs(value) {
+  return Math.round(value * 1000) / 1000;
+}
+
+/**
+ * Record small request lifecycle timings with a monotonic clock.
+ *
+ * These numbers are intentionally sparse. They explain where time went without
+ * becoming a profiler, storage backend, or source of request/body data.
+ *
+ * @returns {{add: Function, startedAt: number, snapshot: Function, time: Function}}
+ */
+function createTimingRecorder() {
+  let startedAt = performance.now();
+  let phases = {};
+
+  function add(name, value) {
+    phases[name] = roundMs((phases[name] ?? 0) + value);
+  }
+
+  function time(name, action) {
+    let start = performance.now();
+
+    try {
+      let result = action();
+
+      if (result?.then)
+        return result.finally(() => add(name, performance.now() - start));
+
+      add(name, performance.now() - start);
+      return result;
+    } catch (error) {
+      add(name, performance.now() - start);
+      throw error;
+    }
+  }
+
+  function snapshot(terminalName) {
+    let totalMs = roundMs(performance.now() - startedAt);
+
+    return {
+      ...phases,
+      ...(terminalName ? {
+        [terminalName]: totalMs
+      } : {}),
+      totalMs
+    };
+  }
+
+  return {
+    add,
+    startedAt,
+    snapshot,
+    time
+  };
 }
 
 function closeClientErrorSocket(error, socket, logger) {
@@ -203,12 +298,14 @@ function logRuntimeEvent(logger, level, event, metadata) {
 function baseContextFor({
   logger,
   services,
-  setup
+  setup,
+  trace
 }) {
   return {
     ...setup.dependencies,
     logger,
-    services
+    services,
+    trace
   };
 }
 
@@ -225,7 +322,8 @@ async function resolveContext(appContract, {
     request,
     dependencies: setup.dependencies,
     logger: baseContext.logger,
-    services: baseContext.services
+    services: baseContext.services,
+    trace: baseContext.trace
   }) ?? {};
 
   return {
@@ -258,10 +356,6 @@ function withMatchedParams(request, match) {
   };
 }
 
-async function runEndpoint(requestContext, endpoint) {
-  return await endpoint.handle(requestContext.request, requestContext.context);
-}
-
 function safeErrorSnapshot(error) {
   return {
     code: error?.code,
@@ -269,28 +363,45 @@ function safeErrorSnapshot(error) {
   };
 }
 
+/**
+ * Attach terminal response logging after Cricket has a concrete response.
+ *
+ * Finish and close are observed at the Node response boundary so traces can
+ * distinguish completed responses from client disconnects without changing how
+ * handlers return response objects.
+ *
+ * @param {object} options
+ * @returns {{onFinish: Function, onClose: Function}}
+ */
 function observeResponse({
   logger,
   replay,
   request,
   requestId,
   response,
-  route
+  route,
+  timing
 }) {
-  let event = {
-    requestId,
-    request: safeRequestSnapshot(request),
-    response: safeResponseSnapshot(response, {
-      method: request.method
-    }),
-    route,
-    terminal: true
-  };
   let finished = false;
+
+  function eventFor(terminalName) {
+    return {
+      requestId,
+      request: safeRequestSnapshot(request),
+      response: safeResponseSnapshot(response, {
+        method: request.method
+      }),
+      route,
+      terminal: true,
+      timings: timing?.snapshot(terminalName)
+    };
+  }
 
   return {
     onFinish() {
       finished = true;
+      let event = eventFor('finishMs');
+
       logRuntimeEvent(logger, 'info', 'http.response.finished', event);
 
       if (!replay)
@@ -305,6 +416,8 @@ function observeResponse({
     onClose() {
       if (finished)
         return;
+
+      let event = eventFor('closeMs');
 
       logRuntimeEvent(logger, 'warn', 'http.response.closed', event);
 
@@ -321,11 +434,11 @@ function observeResponse({
 
 function writeObservedResponse(req, res, response, {
   logger,
-  observability,
   replay,
   request,
   requestId,
-  route
+  route,
+  timing
 }) {
   let observer = observeResponse({
     logger,
@@ -333,14 +446,20 @@ function writeObservedResponse(req, res, response, {
     request,
     requestId,
     response,
-    route
+    route,
+    timing
   });
 
   res.once('finish', observer.onFinish);
   res.once('close', observer.onClose);
 
   try {
-    writeHttpResponse(req, res, response);
+    let write = () => writeHttpResponse(req, res, response);
+
+    if (timing)
+      timing.time('responseMs', write);
+    else
+      write();
   } catch (error) {
     res.off('finish', observer.onFinish);
     res.off('close', observer.onClose);
@@ -408,8 +527,10 @@ function createRuntimeHandler({
     let baseRequest;
     let continued = false;
     let replay = observability.createReplay();
+    let timing = createTimingRecorder();
     let requestId;
     let requestLogger = logger;
+    let trace = createNoopTrace();
     let observedRequest;
     let route;
 
@@ -453,10 +574,10 @@ function createRuntimeHandler({
           res,
           methodNotAllowed(baseRequest, supportedEndpointMethods),
           {
-            observability,
             replay,
             request: baseRequest,
-            requestId
+            requestId,
+            timing
           }
         );
         return;
@@ -464,35 +585,48 @@ function createRuntimeHandler({
 
       if (baseRequest.method.toUpperCase() === 'OPTIONS' && baseRequest.path === '*') {
         writeObservedResponse(req, res, optionsResponse(supportedEndpointMethods), {
-          observability,
           replay,
           request: baseRequest,
-          requestId
+          requestId,
+          timing
         });
         return;
       }
 
+      trace = createTrace({
+        logger: requestLogger,
+        replay,
+        requestId,
+        startedAt: timing.startedAt
+      });
       let context = baseContextFor({
         logger: requestLogger,
         services,
-        setup
+        setup,
+        trace
       });
       let requestContext = {
         app: appContract,
         context,
         logger: requestLogger,
         request: baseRequest,
-        services
+        services,
+        trace
       };
       let finalHandler = async nextRequestContext => {
         observedRequest = nextRequestContext.request;
-        let match = matchRoute(routes, nextRequestContext.request);
+        let match = await timing.time('routeMatchMs', () =>
+          matchRoute(routes, nextRequestContext.request)
+        );
 
         if (match) {
           let matchedRequest = withMatchedParams(nextRequestContext.request, match);
           observedRequest = matchedRequest;
           route = routeIdentityFor(match.endpoint);
           let routeLogger = requestLogger.child({
+            route
+          });
+          let routeTrace = trace.child({
             route
           });
           requestLogger = routeLogger;
@@ -510,30 +644,38 @@ function createRuntimeHandler({
             ...nextRequestContext,
             context: {
               ...nextRequestContext.context,
-              logger: routeLogger
+              logger: routeLogger,
+              trace: routeTrace
             },
-            logger: routeLogger
+            logger: routeLogger,
+            trace: routeTrace
           };
-          let requestContextForMatchedRequest = await resolveRequestContext(appContract, matchedRequestContext, {
-            request: matchedRequest,
-            setup
-          });
+          let requestContextForMatchedRequest = await timing.time('contextMs', () =>
+            resolveRequestContext(appContract, matchedRequestContext, {
+              request: matchedRequest,
+              setup
+            })
+          );
 
           writeContinue();
 
-          let parsedRequest = await completeRequestBody(
-            req,
-            requestContextForMatchedRequest.request,
-            match.endpoint
+          let parsedRequest = await timing.time(
+            'bodyMs',
+            () => completeRequestBody(
+              req,
+              requestContextForMatchedRequest.request,
+              match.endpoint
+            )
           );
 
-          return await runEndpoint({
-            ...requestContextForMatchedRequest,
-            request: parsedRequest
-          }, match.endpoint);
+          return await match.endpoint.handle(parsedRequest, requestContextForMatchedRequest.context, {
+            timing
+          });
         }
 
-        let allowedMethods = allowedMethodsForPath(routes, nextRequestContext.request);
+        let allowedMethods = await timing.time('routeMatchMs', () =>
+          allowedMethodsForPath(routes, nextRequestContext.request)
+        );
 
         if (allowedMethods.length && nextRequestContext.request.method.toUpperCase() === 'OPTIONS')
           return optionsResponse(allowedMethods);
@@ -541,25 +683,29 @@ function createRuntimeHandler({
         if (allowedMethods.length)
           return methodNotAllowed(nextRequestContext.request, allowedMethods);
 
-        let requestContextForRequest = await resolveRequestContext(appContract, nextRequestContext, {
-          setup
-        });
+        let requestContextForRequest = await timing.time('contextMs', () =>
+          resolveRequestContext(appContract, nextRequestContext, {
+            setup
+          })
+        );
         observedRequest = requestContextForRequest.request;
 
         if (appContract.fallback)
-          return await appContract.fallback(requestContextForRequest);
+          return await timing.time('fallbackMs', () =>
+            appContract.fallback(requestContextForRequest)
+          );
 
         return defaultNotFound(requestContextForRequest.request);
       };
-      let response = await composeMiddleware(use, finalHandler)(requestContext);
+      let response = await composeMiddleware(use, finalHandler, timing)(requestContext);
 
       writeObservedResponse(req, res, response, {
         logger: requestLogger,
-        observability,
         replay,
         request: observedRequest,
         requestId,
-        route
+        route,
+        timing
       });
     } catch (error) {
       let response = toHttpError(error);
@@ -583,11 +729,11 @@ function createRuntimeHandler({
 
       writeObservedResponse(req, res, response, {
         logger: requestLogger,
-        observability,
         replay,
         request: observedRequest ?? baseRequest ?? {},
         requestId,
-        route
+        route,
+        timing
       });
     }
   };
@@ -648,7 +794,8 @@ export async function createCricketRuntime(cricketApp, {
   let setup = normalizeSetupResult(
     appContract.setup ? await appContract.setup({
       app: appContract,
-      logger
+      logger,
+      trace: createNoopTrace()
     }) : undefined
   );
   let domainServices = createServices(appContract.domains, {

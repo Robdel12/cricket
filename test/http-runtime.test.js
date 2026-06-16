@@ -5,6 +5,7 @@ import { PassThrough } from 'node:stream';
 import request from 'supertest';
 
 import {
+  created,
   createCricketRuntime,
   defineCricketApp,
   defineEndpoint,
@@ -284,6 +285,280 @@ describe('Cricket HTTP runtime', () => {
   });
 
 
+  it('records request timings and explicit trace spans through runtime logs and events', async () => {
+    let logs = [];
+    let events = [];
+    let endpoint = defineEndpoint({
+      method: 'post',
+      path: '/projects',
+      body: z.object({
+        name: z.string()
+      }),
+      async handler({ input, trace }) {
+        return await trace.span('projects.create', {
+          count: 1,
+          token: 'span-secret'
+        }, async span => {
+          let project = await span.span('projects.persist', {
+            rows: 1
+          }, async () => ({
+            id: '018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0',
+            name: input.body.name
+          }));
+
+          return created(project);
+        });
+      }
+    });
+    let cricketApp = defineCricketApp({
+      name: 'Project API',
+      logger: {
+        format: 'json',
+        write(line) {
+          logs.push(JSON.parse(line));
+        }
+      },
+      endpoints: [endpoint],
+      observability: {
+        requestId() {
+          return 'req_trace_1';
+        },
+        observe(event) {
+          events.push(event);
+        }
+      }
+    });
+    let runtime = await createCricketRuntime(cricketApp);
+
+    let response = await request(runtime.app)
+      .post('/projects')
+      .send({
+        name: 'Launch Plan'
+      });
+
+    assert.equal(response.status, 201);
+    assert.deepEqual(response.body, {
+      id: '018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0',
+      name: 'Launch Plan'
+    });
+
+    let responseLog = logs.find(log => log.event === 'http.response.finished');
+    let spanLogs = logs.filter(log => log.event === 'trace.span.finished');
+    let innerSpan = spanLogs.find(log => log.span.name === 'projects.persist');
+    let outerSpan = spanLogs.find(log => log.span.name === 'projects.create');
+
+    assert.ok(Number.isFinite(responseLog.metadata.timings.totalMs));
+    assert.ok(Number.isFinite(responseLog.metadata.timings.validationMs));
+    assert.ok(Number.isFinite(responseLog.metadata.timings.handlerMs));
+    assert.equal(spanLogs.length, 2);
+    assert.equal(innerSpan.requestId, 'req_trace_1');
+    assert.equal(outerSpan.requestId, 'req_trace_1');
+    assert.equal(innerSpan.span.parentId, outerSpan.span.id);
+    assert.equal(outerSpan.span.status, 'ok');
+    assert.deepEqual(outerSpan.span.attributes, {
+      count: 1,
+      token: '[Redacted]'
+    });
+    assert.ok(events.some(event => event.type === 'trace.span.finished'));
+
+    let serialized = JSON.stringify({
+      events,
+      logs
+    });
+
+    assert.equal(serialized.includes('span-secret'), false);
+  });
+
+
+  it('wraps endpoint handlers in product spans when traceName is set', async () => {
+    let logs = [];
+    let endpoint = defineEndpoint({
+      method: 'post',
+      path: '/projects',
+      traceName: 'projects.create',
+      body: z.object({
+        name: z.string()
+      }),
+      async handler({ input }) {
+        return created({
+          id: '018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0',
+          name: input.body.name
+        });
+      }
+    });
+    let runtime = await createCricketRuntime(defineCricketApp({
+      logger: {
+        format: 'json',
+        write(line) {
+          logs.push(JSON.parse(line));
+        }
+      },
+      endpoints: [endpoint],
+      observability: {
+        requestId() {
+          return 'req_endpoint_trace_1';
+        }
+      }
+    }));
+
+    let response = await request(runtime.app)
+      .post('/projects')
+      .send({
+        name: 'Launch Plan'
+      });
+
+    let spanLog = logs.find(log => log.event === 'trace.span.finished');
+    let responseLog = logs.find(log => log.event === 'http.response.finished');
+
+    assert.equal(response.status, 201);
+    assert.equal(spanLog.requestId, 'req_endpoint_trace_1');
+    assert.equal(spanLog.span.name, 'projects.create');
+    assert.equal(spanLog.span.status, 'ok');
+    assert.equal(spanLog.route.operationId, responseLog.route.operationId);
+    assert.equal(spanLog.span.attributes, undefined);
+  });
+
+
+  it('records endpoint traceName failures without changing error responses', async () => {
+    let logs = [];
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/projects/:projectId',
+      traceName: 'projects.read',
+      async handler() {
+        throw new Error('database password hunter2');
+      }
+    });
+    let runtime = await createCricketRuntime(defineCricketApp({
+      logger: {
+        format: 'json',
+        write(line) {
+          logs.push(JSON.parse(line));
+        }
+      },
+      endpoints: [endpoint],
+      observability: {
+        requestId() {
+          return 'req_endpoint_trace_error_1';
+        }
+      }
+    }));
+
+    let response = await request(runtime.app)
+      .get('/projects/018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0');
+
+    let spanLog = logs.find(log => log.event === 'trace.span.finished');
+
+    assert.equal(response.status, 500);
+    assert.equal(spanLog.requestId, 'req_endpoint_trace_error_1');
+    assert.equal(spanLog.span.name, 'projects.read');
+    assert.equal(spanLog.span.status, 'error');
+    assert.deepEqual(spanLog.span.error, {
+      name: 'Error'
+    });
+    assert.equal(JSON.stringify(logs).includes('hunter2'), false);
+  });
+
+
+  it('records trace span failures and rethrows the original error path', async () => {
+    let events = [];
+    let logs = [];
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/explode',
+      async handler({ trace }) {
+        return await trace.span('projects.explode', async () => {
+          throw new Error('database password hunter2');
+        });
+      }
+    });
+    let runtime = await createCricketRuntime(defineCricketApp({
+      logger: {
+        format: 'json',
+        write(line) {
+          logs.push(JSON.parse(line));
+        }
+      },
+      endpoints: [endpoint],
+      observability: {
+        requestId() {
+          return 'req_trace_error_1';
+        },
+        observe(event) {
+          events.push(event);
+        }
+      }
+    }));
+
+    let response = await request(runtime.app)
+      .get('/explode');
+
+    let spanLog = logs.find(log => log.event === 'trace.span.finished');
+
+    assert.equal(response.status, 500);
+    assert.equal(spanLog.span.name, 'projects.explode');
+    assert.equal(spanLog.span.status, 'error');
+    assert.deepEqual(spanLog.span.error, {
+      name: 'Error'
+    });
+    assert.ok(events.some(event =>
+      event.type === 'trace.span.finished' &&
+      event.span.name === 'projects.explode' &&
+      event.span.status === 'error'
+    ));
+
+    let serialized = JSON.stringify({
+      events,
+      logs
+    });
+
+    assert.equal(serialized.includes('hunter2'), false);
+  });
+
+
+  it('keeps trace logging failures out of successful responses', async () => {
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/projects',
+      async handler({ trace }) {
+        return await trace.span('projects.list', async () =>
+          ok({
+            success: true
+          })
+        );
+      }
+    });
+    let runtime = await createCricketRuntime(defineCricketApp({
+      endpoints: [endpoint],
+      observability: {
+        requestId() {
+          return 'req_trace_sink_failure_1';
+        }
+      }
+    }), {
+      logger: {
+        child() {
+          return this;
+        },
+        error() {},
+        info(event) {
+          if (event === 'trace.span.finished')
+            throw new Error('trace sink failed');
+        },
+        warn() {}
+      }
+    });
+
+    let response = await request(runtime.app)
+      .get('/projects');
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, {
+      success: true
+    });
+  });
+
+
   it('emits response.closed when a client closes a streaming response early', async () => {
     let events = [];
     let stream = new PassThrough();
@@ -345,6 +620,8 @@ describe('Cricket HTTP runtime', () => {
 
     assert.equal(closedEvent.type, 'response.closed');
     assert.equal(closedEvent.response.body, 'stream');
+    assert.ok(Number.isFinite(closedEvent.timings.totalMs));
+    assert.ok(Number.isFinite(closedEvent.timings.closeMs));
     assert.deepEqual(closedEvent.replay.map(event => event.type), [
       'request.started',
       'route.matched',

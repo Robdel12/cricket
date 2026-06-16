@@ -53,12 +53,15 @@ function createProjectService({ db }) {
 let isKnownProject = defineRule('isKnownProject', async ({
   input,
   services,
+  trace,
   user
 }) => {
-  let project = await services.project.findForUserBySlug({
-    userId: user.id,
-    slug: input.params.slug
-  });
+  let project = await trace.span('project.findForUserBySlug', () =>
+    services.project.findForUserBySlug({
+      userId: user.id,
+      slug: input.params.slug
+    })
+  );
 
   if (!project)
     return notFound('Project not found');
@@ -76,6 +79,7 @@ let requireUser = defineRule('requireUser', ({ user }) => {
 let readProject = defineEndpoint({
   method: 'get',
   path: '/projects/:slug',
+  traceName: 'projects.read',
   params: z.object({
     slug: z.string().min(3)
   }),

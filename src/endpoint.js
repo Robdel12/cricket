@@ -26,6 +26,7 @@ let endpointOptionKeys = new Set([
   'description',
   'tags',
   'operationId',
+  'traceName',
   'maxBodyBytes',
   'rawBody',
   'body',
@@ -53,6 +54,13 @@ export function normalizeEndpointMethod(method) {
     throw new Error(`Unsupported endpoint method ${normalized}`);
 
   return normalized;
+}
+
+function timePhase(timing, name, action) {
+  if (!timing)
+    return action();
+
+  return timing.time(name, action);
 }
 
 function parseRequestSchema(schema, value) {
@@ -139,6 +147,7 @@ export function defaultStatusForMethod(method) {
  * @param {string} [config.description]
  * @param {string[]} [config.tags=[]]
  * @param {string} [config.operationId]
+ * @param {string} [config.traceName] - Optional request trace span name for the handler.
  * @param {number} [config.maxBodyBytes] - Maximum buffered request body size for this endpoint.
  * @param {boolean|object} [config.rawBody=false] - Endpoint option for requests that need the unparsed request body.
  * @param {import('zod').ZodTypeAny} [config.body]
@@ -155,6 +164,7 @@ export function defaultStatusForMethod(method) {
  *   description?: string,
  *   tags: string[],
  *   operationId?: string,
+ *   traceName?: string,
  *   maxBodyBytes?: number,
  *   rawBody?: boolean|object,
  *   body?: any,
@@ -183,6 +193,7 @@ export function defineEndpoint(config) {
     description,
     tags = [],
     operationId,
+    traceName,
     maxBodyBytes,
     rawBody = false,
     body,
@@ -200,6 +211,8 @@ export function defineEndpoint(config) {
 
   if (typeof handler !== 'function')
     throw new Error(`${normalizedMethod} ${path} needs a handler`);
+  if (traceName !== undefined && typeof traceName !== 'string')
+    throw new Error(`${normalizedMethod} ${path} traceName must be a string`);
 
   let endpoint = {
     method: normalizedMethod,
@@ -208,6 +221,7 @@ export function defineEndpoint(config) {
     description,
     tags,
     operationId,
+    traceName,
     maxBodyBytes,
     rawBody,
     body,
@@ -217,12 +231,14 @@ export function defineEndpoint(config) {
     responses,
     rules,
 
-    async handle(request, context = {}) {
-      let input = {
+    async handle(request, context = {}, {
+      timing
+    } = {}) {
+      let input = await timePhase(timing, 'validationMs', () => ({
         body: parseRequestSchema(body, request.body),
         params: parseRequestObjectSchema(params, request.params),
         query: parseRequestObjectSchema(query, request.query)
-      };
+      }));
 
       let endpointContext = {
         ...context,
@@ -230,9 +246,19 @@ export function defineEndpoint(config) {
         input
       };
 
-      let handlerContext = await applyRules(rules, endpointContext);
+      let handlerContext = await timePhase(timing, 'rulesMs', () =>
+        applyRules(rules, endpointContext)
+      );
+      let result = await timePhase(timing, 'handlerMs', () => {
+        if (traceName && typeof handlerContext.trace?.span === 'function')
+          return handlerContext.trace.span(traceName, () => handler(handlerContext));
 
-      return parseEndpointResponse(endpoint, await handler(handlerContext));
+        return handler(handlerContext);
+      });
+
+      return await timePhase(timing, 'responseValidationMs', () =>
+        parseEndpointResponse(endpoint, result)
+      );
     }
   };
 
