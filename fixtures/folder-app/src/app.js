@@ -6,6 +6,10 @@ export let app = defineCricketApp({
   name: 'Folder Build API',
   version: '1.0.0',
   prefix: '/api',
+  logger: {
+    service: 'folder-build-api',
+    level: process.env.LOG_LEVEL ?? 'info'
+  },
   domains: './api',
   async setup() {
     let db = knex({

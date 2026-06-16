@@ -10,7 +10,7 @@ import {
 
 export async function createHttpApp(options) {
   let runtime = await createCricketRuntime(defineCricketApp(options), {
-    logger: {}
+    logger() {}
   });
   return runtime.app;
 }

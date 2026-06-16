@@ -122,6 +122,10 @@ export let app = defineCricketApp({
   name: 'One File API',
   version: '0.0.0',
   prefix: '/api',
+  logger: {
+    service: 'one-file-api',
+    level: process.env.LOG_LEVEL ?? 'info'
+  },
   domains: [
     projectDomain
   ],

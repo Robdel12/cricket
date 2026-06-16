@@ -151,7 +151,7 @@ describe('Cricket HTTP runtime', () => {
         events.push(event);
       }
     }), {
-      logger: {}
+      logger() {}
     });
 
     let response = await request(runtime.app)
@@ -194,7 +194,7 @@ describe('Cricket HTTP runtime', () => {
       }
     });
     let runtime = await createCricketRuntime(cricketApp, {
-      logger: {}
+      logger() {}
     });
     let docs = generateOpenApi({
       title: 'Projects API',
@@ -314,7 +314,7 @@ describe('Cricket HTTP runtime', () => {
       }
     }), {
       port: 0,
-      logger: {}
+      logger() {}
     });
     let { port } = runtime.server.address();
     let clientClosedPromise = new Promise((resolve, reject) => {
@@ -527,7 +527,7 @@ describe('Cricket HTTP runtime', () => {
     });
     let runtime = await startCricketApp(cricketApp, {
       port: 0,
-      logger: {}
+      logger() {}
     });
 
     await runtime.stop('SIGTERM');
@@ -564,7 +564,7 @@ describe('Cricket HTTP runtime', () => {
     });
     let runtime = await startCricketApp(cricketApp, {
       port: 0,
-      logger: {}
+      logger() {}
     });
 
     await assert.rejects(runtime.stop('SIGTERM'), /shutdown failed/);
@@ -614,7 +614,7 @@ describe('Cricket HTTP runtime', () => {
     });
     let runtime = await startCricketApp(cricketApp, {
       port: 0,
-      logger: {}
+      logger() {}
     });
     let { port } = runtime.server.address();
     let responsePromise = new Promise((resolve, reject) => {

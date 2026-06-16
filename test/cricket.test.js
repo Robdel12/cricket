@@ -240,6 +240,13 @@ describe('Cricket core', () => {
     ]);
     assert.equal(lines[0].service, 'default-api');
     assert.equal(lines[1].service, 'configured-api');
+    assert.throws(() => resolveLogger({
+      leveL: 'debug'
+    }), /Logger config needs at least one known logger option/);
+    assert.throws(() => resolveLogger({
+      level: 'debug',
+      transport: 'file'
+    }), /Unknown logger option transport/);
   });
 
 
@@ -635,7 +642,7 @@ describe('Cricket core', () => {
       }
     });
     let runtime = await createCricketRuntime(cricketApp, {
-      logger: {}
+      logger() {}
     });
 
     let response = await request(runtime.app)

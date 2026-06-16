@@ -412,8 +412,9 @@ remain available when you pass them through `context(...)`, `use`, or rules.
 ## Observability
 
 Every Cricket app gets a structured logger. By default it writes
-newline-delimited JSON to stdout with the app name as the service. Configure
-`logger` when you want a different service, level, format, or write target.
+newline-delimited JSON to stdout with the app name as the service, or
+`Cricket app` if unnamed. Configure `logger` when you want a different service,
+level, format, or write target.
 
 ```js
 export let app = defineCricketApp({
@@ -500,8 +501,8 @@ services, route operation IDs, and observability posture for an app module.
 
 `docs` writes OpenAPI from the same app module your server runs.
 
-`trace` reads newline-delimited JSON logs from stdin and prints the events for
-one `requestId`.
+`trace` reads newline-delimited JSON logs from stdin and prints a
+human-readable trace for one `requestId`.
 
 `init agents` writes lightweight guidance for people and agents working inside a
 Cricket app.

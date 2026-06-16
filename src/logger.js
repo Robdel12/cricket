@@ -54,15 +54,21 @@ function safeMetadata(value, seen = new WeakSet()) {
 
   seen.add(value);
 
-  if (Array.isArray(value))
-    return value.map(item => safeMetadata(item, seen));
+  if (Array.isArray(value)) {
+    let safe = value.map(item => safeMetadata(item, seen));
+    seen.delete(value);
+    return safe;
+  }
 
-  return Object.fromEntries(
+  let safe = Object.fromEntries(
     Object.entries(value).map(([key, child]) => [
       key,
       sensitiveKeyPattern.test(key) ? '[Redacted]' : safeMetadata(child, seen)
     ])
   );
+
+  seen.delete(value);
+  return safe;
 }
 
 function logEnvelope({
@@ -104,9 +110,6 @@ function hasLoggerMethod(logger) {
 }
 
 function isCricketLoggerConfig(logger) {
-  if (!logger || typeof logger !== 'object' || hasLoggerMethod(logger))
-    return false;
-
   return Object.keys(logger).some(key => loggerConfigKeys.has(key));
 }
 
@@ -216,7 +219,7 @@ export function createCricketLogger({
       service
     });
 
-    write(formatLine(envelope, format), envelope);
+    write(formatLine(envelope, format));
   }
 
   return {
@@ -237,15 +240,17 @@ export function createCricketLogger({
     },
 
     child(metadata = {}) {
+      let childContext = {
+        ...context,
+        ...metadata
+      };
+
       return createCricketLogger({
         service,
         level,
         format,
         write
-      }, {
-        ...context,
-        ...metadata
-      });
+      }, childContext);
     }
   };
 }
@@ -265,7 +270,10 @@ export function resolveLogger(logger, defaults = {}) {
   if (!logger)
     return createCricketLogger(defaults);
 
-  if (isCricketLoggerConfig(logger)) {
+  if (typeof logger === 'object' && !hasLoggerMethod(logger)) {
+    if (!isCricketLoggerConfig(logger))
+      throw new Error('Logger config needs at least one known logger option');
+
     assertKnownLoggerConfig(logger);
     return createCricketLogger({
       ...defaults,
