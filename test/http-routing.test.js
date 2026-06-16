@@ -93,7 +93,7 @@ describe('Cricket HTTP routing', () => {
     });
     let app = await createHttpApp({
       endpoints: [endpoint],
-      use: [
+      middleware: [
         async requestContext => ({
           status: 401,
           body: {
@@ -131,7 +131,7 @@ describe('Cricket HTTP routing', () => {
           contextSlug: cricketRequest.params.slug
         };
       },
-      use: [
+      middleware: [
         async (requestContext, next) => await next({
           ...requestContext,
           request: {
@@ -209,7 +209,7 @@ describe('Cricket HTTP routing', () => {
           called = true;
           return ok({ success: true });
         },
-        use: [
+        middleware: [
           async (requestContext, next) => {
             called = true;
             return await next(requestContext);
@@ -430,7 +430,7 @@ describe('Cricket HTTP routing', () => {
       let app = await createHttpApp({
         endpoints: [healthEndpoint('/session')],
         trustProxy: true,
-        use: [
+        middleware: [
           async (requestContext, next) => {
             called = true;
             return await next(requestContext);

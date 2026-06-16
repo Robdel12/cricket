@@ -98,6 +98,7 @@ describe('Cricket HTTP runtime', () => {
     assert.deepEqual(events.map(event => event.type), [
       'request.started',
       'route.matched',
+      'trace.span.finished',
       'response.finished'
     ]);
     assert.equal(events[0].requestId, 'req_observable_1');
@@ -116,12 +117,13 @@ describe('Cricket HTTP runtime', () => {
       operationId: 'createProjectById'
     });
     assert.deepEqual(events[1].request.params, ['projectId']);
-    assert.equal(events[2].response.status, 201);
-    assert.deepEqual(events[2].response.cookies, ['session']);
-    assert.equal(events[2].response.body, 'json');
-    assert.deepEqual(events[2].replay.map(event => event.type), [
+    assert.equal(events[3].response.status, 201);
+    assert.deepEqual(events[3].response.cookies, ['session']);
+    assert.equal(events[3].response.body, 'json');
+    assert.deepEqual(events[3].replay.map(event => event.type), [
       'request.started',
       'route.matched',
+      'trace.span.finished',
       'response.finished'
     ]);
 
@@ -162,6 +164,7 @@ describe('Cricket HTTP runtime', () => {
     assert.deepEqual(events.map(event => event.type), [
       'request.started',
       'route.matched',
+      'trace.span.finished',
       'response.finished'
     ]);
     assert.deepEqual(events[1].route, {
@@ -169,7 +172,7 @@ describe('Cricket HTTP runtime', () => {
       path: '/health',
       operationId: 'getHealth'
     });
-    assert.equal(events[2].response.body, 'empty');
+    assert.equal(events[3].response.body, 'empty');
   });
 
 
@@ -260,6 +263,7 @@ describe('Cricket HTTP runtime', () => {
       'http.request.started',
       'http.route.matched',
       'handler.called',
+      'trace.span.finished',
       'http.response.finished'
     ]);
 
@@ -346,11 +350,14 @@ describe('Cricket HTTP runtime', () => {
     let spanLogs = logs.filter(log => log.event === 'trace.span.finished');
     let innerSpan = spanLogs.find(log => log.span.name === 'projects.persist');
     let outerSpan = spanLogs.find(log => log.span.name === 'projects.create');
+    let handlerSpan = spanLogs.find(log => log.span.name === 'postProjects');
 
     assert.ok(Number.isFinite(responseLog.metadata.timings.totalMs));
     assert.ok(Number.isFinite(responseLog.metadata.timings.validationMs));
     assert.ok(Number.isFinite(responseLog.metadata.timings.handlerMs));
-    assert.equal(spanLogs.length, 2);
+    assert.equal(spanLogs.length, 3);
+    assert.equal(handlerSpan.requestId, 'req_trace_1');
+    assert.equal(handlerSpan.span.status, 'ok');
     assert.equal(innerSpan.requestId, 'req_trace_1');
     assert.equal(outerSpan.requestId, 'req_trace_1');
     assert.equal(innerSpan.span.parentId, outerSpan.span.id);
@@ -370,12 +377,12 @@ describe('Cricket HTTP runtime', () => {
   });
 
 
-  it('wraps endpoint handlers in product spans when traceName is set', async () => {
+  it('wraps endpoint handlers in operation id spans by default', async () => {
     let logs = [];
     let endpoint = defineEndpoint({
       method: 'post',
       path: '/projects',
-      traceName: 'projects.create',
+      operationId: 'projects.create',
       body: z.object({
         name: z.string()
       }),
@@ -419,7 +426,7 @@ describe('Cricket HTTP runtime', () => {
   });
 
 
-  it('records endpoint traceName failures without changing error responses', async () => {
+  it('lets traceName override endpoint handler span names', async () => {
     let logs = [];
     let endpoint = defineEndpoint({
       method: 'get',
@@ -625,6 +632,7 @@ describe('Cricket HTTP runtime', () => {
     assert.deepEqual(closedEvent.replay.map(event => event.type), [
       'request.started',
       'route.matched',
+      'trace.span.finished',
       'response.closed'
     ]);
   });
@@ -679,10 +687,11 @@ describe('Cricket HTTP runtime', () => {
     assert.deepEqual(events.map(event => event.type), [
       'request.started',
       'route.matched',
+      'trace.span.finished',
       'request.failed',
       'response.finished'
     ]);
-    assert.deepEqual(events[2].error, {
+    assert.deepEqual(events[3].error, {
       code: undefined,
       name: 'Error'
     });

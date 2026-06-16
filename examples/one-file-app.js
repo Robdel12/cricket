@@ -79,7 +79,7 @@ let requireUser = defineRule('requireUser', ({ user }) => {
 let readProject = defineEndpoint({
   method: 'get',
   path: '/projects/:slug',
-  traceName: 'projects.read',
+  operationId: 'projects.read',
   params: z.object({
     slug: z.string().min(3)
   }),
@@ -165,13 +165,7 @@ export let app = defineCricketApp({
       }
     };
   },
-  use: [readUser()],
-  context({ dependencies, services }) {
-    return {
-      ...dependencies,
-      services
-    };
-  }
+  middleware: [readUser()]
 });
 
 await startCricketApp(app, {

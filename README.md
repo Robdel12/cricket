@@ -85,7 +85,7 @@ api/
 | --- | --- | --- |
 | `domains/` | Product API behavior. | App-wide clients and app-level middleware. |
 | `middleware/` | Request middleware: auth extraction, request IDs, CORS, rate limits, raw webhooks, frontend fallbacks. | Domain authorization; put that in `*.rules.js`. |
-| `services/` | Shared app capabilities: email, media storage, payment clients, caches, cross-domain summaries. | Domain-specific product logic. |
+| `services/` | Narrow shared capabilities: email, media storage, payment clients, caches, external clients. | Domain-specific product logic. |
 | `workers/` | Background entrypoints that call services. | A second product layer. |
 | `migrations/` | App-owned Knex migrations. | Hidden Cricket database behavior. |
 | `dev/` | Local-only helpers, fixture builders, reset/setup scripts, smoke-test harnesses. | Production runtime or product behavior. |
@@ -147,13 +147,12 @@ export let app = defineCricketApp({
       }
     };
   },
-  use: [readSession()],
-  context({ dependencies, logger, services }) {
-    // Shape the per-request context your handlers and rules receive.
+  middleware: [readSession()],
+  context({ request }) {
+    // Add app-specific request facts. Cricket already passes dependencies,
+    // logger, services, and trace through the base context.
     return {
-      ...dependencies,
-      logger,
-      services
+      requestId: request.id
     };
   }
 });
@@ -405,9 +404,9 @@ export let projectEndpoints = [
 ];
 ```
 
-Handlers receive Cricket input plus the context your app returns. Knex `db`,
-transactions, logger, services, auth facts, request IDs, and loaded resources
-remain available when you pass them through `context(...)`, `use`, or rules.
+Handlers receive Cricket input plus the request context. Setup dependencies,
+logger, services, and trace are already there. Add app-specific facts in
+`context(...)`, middleware, or rules.
 
 ## Observability
 
@@ -458,16 +457,16 @@ bodies, response bodies, or `Set-Cookie` values.
 The terminal response event includes a replay list for that request. Replay is a
 plain lifecycle artifact, not a second logging system.
 
-Deeper tracing is explicit. Add `traceName` to an endpoint when the handler
-itself is the product operation you want to see in logs. Cricket wraps the
-handler in a request-scoped span, returns the handler result, and rethrows the
-original error path.
+Cricket wraps endpoint handlers in request-scoped spans by default. The span
+name comes from `operationId` when you provide one, or from the method and path
+when you don't. Add `traceName` only when you want a different product name in
+the logs.
 
 ```js
 export let createProject = defineEndpoint({
   method: 'post',
   path: '/projects',
-  traceName: 'projects.create',
+  operationId: 'projects.create',
   async handler({ input, services }) {
     return created(await services.projects.create(input.body));
   }
@@ -500,9 +499,10 @@ need one request, pipe the logs back through Cricket:
 docker logs api | pnpm cricket trace req_123
 ```
 
-The logger redacts common secret-shaped keys at the boundary and keeps child
-metadata, including `requestId`, in the envelope that `cricket trace`
-understands.
+Cricket's built-in structured logger redacts common secret-shaped keys at the
+boundary and keeps child metadata, including `requestId`, in the envelope that
+`cricket trace` understands. If you pass a custom logger, Cricket forwards the
+same events into that logger's shape.
 
 `trace` reads the same logs back on demand and renders request timings plus span
 records. Cricket does not store that data for you.
@@ -534,7 +534,8 @@ human-readable request timeline for one `requestId`, including lifecycle
 timings and any recorded spans.
 
 `init agents` writes lightweight guidance for people and agents working inside a
-Cricket app.
+Cricket app. It augments `AGENTS.md` and installs the repo-local skill at
+`.agents/skills/cricket-api/SKILL.md`.
 
 ## Exports
 

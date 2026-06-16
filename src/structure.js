@@ -384,8 +384,29 @@ export function formatAppScaffoldResult(result) {
   return lines.join('\n');
 }
 
-let agentFiles = {
-  'AGENTS.md': `# Cricket App Guidance
+let agentGuidanceStart = '<!-- cricket-agent-guidance -->';
+let agentGuidanceEnd = '<!-- /cricket-agent-guidance -->';
+
+function appendSection(content, section) {
+  if (!content.trim())
+    return section;
+
+  return `${content.replace(/\s*$/, '')}\n\n${section}`;
+}
+
+function replaceMarkedSection(content, section) {
+  let start = content.indexOf(agentGuidanceStart);
+  let end = content.indexOf(agentGuidanceEnd);
+
+  if (start === -1 || end === -1 || end < start)
+    return appendSection(content, section);
+
+  return `${content.slice(0, start)}${section}${content.slice(end + agentGuidanceEnd.length)}`;
+}
+
+function createAgentGuidanceContent() {
+  return `${agentGuidanceStart}
+## Cricket App Guidance
 
 ## App Shape
 
@@ -394,7 +415,7 @@ Cricket owns the architecture. Your app owns the behavior.
 - \`api/index.js\` is the normal Node entrypoint and visible Cricket app wiring.
 - \`api/domains/\` contains product API domains.
 - \`api/middleware/\` contains request middleware such as auth extraction, request IDs, rate limits, raw webhooks, CORS, and frontend fallbacks.
-- \`api/services/\` contains app-wide services that are not owned by one domain.
+- \`api/services/\` contains narrow app-wide capabilities that are not owned by one domain.
 - \`api/workers/\` contains background worker entrypoints that call services.
 - \`api/migrations/\` contains app-owned database migrations. Point your own Knex config or command at this folder.
 - \`api/dev/\` contains local-only developer support code. It is not product architecture and must not be required by production runtime.
@@ -407,23 +428,38 @@ First-class means scaffolded, documented, inspectable, and easy for agents to fo
 - \`*.validations.js\` owns reusable request, source, and service input schemas.
 - \`*.normalizers.js\` owns pure source-boundary projections for third-party, webhook, queue, import, or legacy payloads.
 - \`*.serializers.js\` owns response projections and validates output contracts.
-- \`*.service.js\` owns data operations.
-- \`*.rules.js\` owns auth, existence, ownership, and business guards.
+- \`*.service.js\` owns data and integration operations.
+- \`*.rules.js\` owns auth, existence, ownership, and business preconditions.
 - \`*.routes.js\` owns endpoint contracts.
 - \`*.test.js\` tests endpoint behavior through HTTP.
 
 The folder is the domain. Keep services boring, rules named, and routes thin.
 Keep HTTP request behavior in \`middleware/\`, not in rules. Keep app-wide clients
-and cross-domain helpers in \`services/\`, not in one random domain.
+and shared capabilities in \`services/\`, not in one random domain.
 Keep source payload weirdness in \`*.normalizers.js\`, not scattered through
 services and routes.
 Keep create/update/search/import input contracts in \`*.validations.js\`, not on
 the model. Routes still import validations explicitly; Cricket does not
 auto-wire schemas by name.
-If code affects product behavior, design it into a domain, app service, worker,
-middleware, or migration. Keep \`dev/\` local-only.
-`,
-  '.codex/skills/cricket-api/SKILL.md': `---
+If code affects product behavior, start in the domain that owns it. Reach for an
+app service, worker, middleware, or migration only when the responsibility is
+actually shared, asynchronous, HTTP-edge, or schema-changing. Keep \`dev/\`
+local-only.
+${agentGuidanceEnd}
+`;
+}
+
+function trackScaffoldResult(result, buckets) {
+  if (result.status === 'created')
+    buckets.created.push(result.filePath);
+  else if (result.status === 'updated')
+    buckets.updated.push(result.filePath);
+  else
+    buckets.skipped.push(result.filePath);
+}
+
+let agentFiles = {
+  '.agents/skills/cricket-api/SKILL.md': `---
 name: cricket-api
 description: Work in a Cricket Node API app with predictable domain files, validations, normalizers, serializers, app middleware/services/workers/migrations, Zod contracts, Knex services, and OpenAPI generation.
 ---
@@ -440,7 +476,7 @@ Start with \`pnpm cricket inspect api/index.js\`, then read \`api/index.js\` and
 
 - Cricket owns the architecture and HTTP runtime. The app owns product behavior, auth policy, data work, queues, and deployment.
 - \`api/middleware/\` is for request middleware, not domain authorization.
-- \`api/services/\` is for app-wide services not owned by one domain.
+- \`api/services/\` is for narrow app-wide capabilities not owned by one domain.
 - \`api/workers/\` is for background worker entrypoints that call services.
 - \`api/migrations/\` is app-owned. Configure Knex there from the app, not Cricket.
 - \`api/dev/\` is for local-only development support. If code touches product behavior, move that behavior into a real service, worker, migration, or domain.
@@ -451,7 +487,7 @@ Start with \`pnpm cricket inspect api/index.js\`, then read \`api/index.js\` and
 2. Put request/source input schemas in \`*.validations.js\` and import them explicitly.
 3. Normalize third-party/source payloads in \`*.normalizers.js\`.
 4. Shape API output in \`*.serializers.js\`.
-5. Keep data work in services.
+5. Keep data and integration work in services.
 6. Put auth, existence, and ownership checks in rules.
 7. Keep endpoint handlers focused on composition.
 8. Generate OpenAPI and check the contract diff.
@@ -471,13 +507,43 @@ After scaffolding a domain, make sure the app's \`domains\` value points at the 
 `
 };
 
+async function upsertAgentGuidance(root, {
+  force = false
+} = {}) {
+  let filePath = path.join(root, 'AGENTS.md');
+  let guidance = createAgentGuidanceContent();
+  let exists = await pathExists(filePath);
+
+  if (!exists) {
+    await fs.writeFile(filePath, guidance);
+    return {
+      status: 'created',
+      filePath
+    };
+  }
+
+  let content = await fs.readFile(filePath, 'utf8');
+
+  if (content.includes(agentGuidanceStart) && !force)
+    return {
+      status: 'skipped',
+      filePath
+    };
+
+  await fs.writeFile(filePath, replaceMarkedSection(content, guidance));
+  return {
+    status: 'updated',
+    filePath
+  };
+}
+
 /**
  * Scaffold project-local agent guidance for Cricket apps.
  *
  * @param {object} [options]
  * @param {string} [options.root='.'] - Project root.
  * @param {boolean} [options.force=false] - Overwrite existing files when true.
- * @returns {Promise<{root: string, created: string[], skipped: string[]}>}
+ * @returns {Promise<{root: string, created: string[], skipped: string[], updated: string[]}>}
  */
 export async function scaffoldAgentFiles({
   root = '.',
@@ -485,6 +551,16 @@ export async function scaffoldAgentFiles({
 } = {}) {
   let created = [];
   let skipped = [];
+  let updated = [];
+  let buckets = {
+    created,
+    skipped,
+    updated
+  };
+
+  trackScaffoldResult(await upsertAgentGuidance(root, {
+    force
+  }), buckets);
 
   for (let [relativePath, content] of Object.entries(agentFiles)) {
     let filePath = path.join(root, relativePath);
@@ -503,14 +579,15 @@ export async function scaffoldAgentFiles({
   return {
     root,
     created,
-    skipped
+    skipped,
+    updated
   };
 }
 
 /**
  * Format the agent scaffold summary for terminal output.
  *
- * @param {{root: string, created: string[], skipped: string[]}} result
+ * @param {{root: string, created: string[], skipped: string[], updated?: string[]}} result
  * @returns {string}
  */
 export function formatAgentScaffoldResult(result) {
@@ -523,6 +600,9 @@ export function formatAgentScaffoldResult(result) {
   for (let filePath of result.created)
     lines.push(`  + ${filePath}`);
 
+  for (let filePath of result.updated ?? [])
+    lines.push(`  ~ ${filePath}`);
+
   for (let filePath of result.skipped)
     lines.push(`  ! skipped existing ${filePath}`);
 
@@ -530,7 +610,7 @@ export function formatAgentScaffoldResult(result) {
     '',
     'Next',
     '  - AGENTS.md explains the Cricket domain split.',
-    '  - .codex/skills/cricket-api/SKILL.md gives Codex a project-local workflow.',
+    '  - .agents/skills/cricket-api/SKILL.md gives agents a project-local workflow.',
     '  - Run `pnpm cricket inspect api/index.js` and `pnpm cricket docs api/index.js --out openapi.json`.'
   );
 

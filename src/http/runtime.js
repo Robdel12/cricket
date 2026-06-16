@@ -20,6 +20,7 @@ import {
   createNoopTrace,
   createTrace
 } from '../trace.js';
+import { routeIdentityFor } from '../route-identity.js';
 import {
   assertAllowedHost,
   completeRequestBody,
@@ -31,8 +32,7 @@ import {
   endpointWithPrefix,
   joinPaths,
   matchRoute,
-  prepareRoutes,
-  routeIdentityFor
+  prepareRoutes
 } from './router.js';
 import {
   safeResponseSnapshot,
@@ -126,9 +126,9 @@ function optionsResponse(allowedMethods) {
  */
 function composeMiddleware(middleware, finalHandler, timing) {
   return middleware.reduceRight(
-    (next, use) => async requestContext => {
+    (next, runMiddleware) => async requestContext => {
       if (!timing)
-        return await use(requestContext, next);
+        return await runMiddleware(requestContext, next);
 
       let downstreamMs = 0;
       let wrappedNext = async nextRequestContext => {
@@ -143,7 +143,7 @@ function composeMiddleware(middleware, finalHandler, timing) {
       let start = performance.now();
 
       try {
-        return await use(requestContext, wrappedNext);
+        return await runMiddleware(requestContext, wrappedNext);
       } finally {
         timing.add('middlewareMs', Math.max(0, performance.now() - start - downstreamMs));
       }
@@ -519,7 +519,7 @@ function createRuntimeHandler({
   routes,
   setup,
   services,
-  use
+  middleware
 }) {
   return async function handle(req, res, {
     expectContinue = false
@@ -697,7 +697,7 @@ function createRuntimeHandler({
 
         return defaultNotFound(requestContextForRequest.request);
       };
-      let response = await composeMiddleware(use, finalHandler, timing)(requestContext);
+      let response = await composeMiddleware(middleware, finalHandler, timing)(requestContext);
 
       writeObservedResponse(req, res, response, {
         logger: requestLogger,
@@ -827,7 +827,7 @@ export async function createCricketRuntime(cricketApp, {
     logger,
     services
   };
-  let use = await resolveMiddleware(appContract.use, runtimeBag);
+  let middleware = await resolveMiddleware(appContract.middleware, runtimeBag);
   let prefixedEndpoints = appContract.endpoints.map(endpoint =>
     endpointWithPrefix(endpoint, appContract.prefix)
   );
@@ -839,7 +839,7 @@ export async function createCricketRuntime(cricketApp, {
     routes,
     setup,
     services,
-    use
+    middleware
   });
   let app = Object.assign(handle, {
     handle,

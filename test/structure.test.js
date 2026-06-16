@@ -138,10 +138,11 @@ describe('Cricket CLI', () => {
 
     let agents = await fs.readFile(path.join(root, 'AGENTS.md'), 'utf8');
     let skill = await fs.readFile(
-      path.join(root, '.codex', 'skills', 'cricket-api', 'SKILL.md'),
+      path.join(root, '.agents', 'skills', 'cricket-api', 'SKILL.md'),
       'utf8'
     );
 
+    assert.match(agents, /cricket-agent-guidance/);
     assert.match(agents, /Cricket App Guidance/);
     assert.match(agents, /App Shape/);
     assert.match(agents, /Domain Shape/);
@@ -159,6 +160,33 @@ describe('Cricket CLI', () => {
     assert.match(skill, /api\/workers/);
     assert.match(skill, /api\/dev/);
     assert.match(skill, /domain-local `\*\.test\.js`/);
+  });
+
+  it('augments existing agent guidance without duplicating Cricket notes', async () => {
+    let root = await tempRoot();
+    let agentsPath = path.join(root, 'AGENTS.md');
+
+    await fs.writeFile(agentsPath, '# Existing Guidance\n\nKeep this note.\n');
+
+    await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'init',
+      'agents',
+      root
+    ]);
+    await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'init',
+      'agents',
+      root
+    ]);
+
+    let agents = await fs.readFile(agentsPath, 'utf8');
+
+    assert.match(agents, /# Existing Guidance/);
+    assert.match(agents, /Keep this note/);
+    assert.equal(agents.split('Cricket App Guidance').length - 1, 1);
+    assert.equal(agents.split('cricket-agent-guidance').length - 1, 2);
   });
 
   it('scaffolds the small Cricket app structure', async () => {

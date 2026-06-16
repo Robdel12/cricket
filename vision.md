@@ -43,9 +43,9 @@ Those files are the expected shape:
 - `normalizers` defines pure source-boundary projections for third-party,
   legacy, webhook, queue, or import payloads.
 - `serializers` defines pure outgoing API projections.
-- `service` defines product/data operations with explicit dependencies.
+- `service` defines domain data and integration operations with explicit dependencies.
 - `rules` defines named guards for auth, existence, ownership, billing,
-  visibility, and business constraints.
+  visibility, and business preconditions.
 - `routes` defines endpoints by composing schemas, rules, services,
   serializers, response contracts, and HTTP metadata.
 - `test` proves endpoint behavior through the HTTP boundary.
@@ -68,11 +68,11 @@ does not mean Cricket secretly owns product policy:
 - `api/domains/` contains product API domains.
 - `api/middleware/` contains request middleware such as auth extraction,
   request IDs, CORS, rate limits, raw webhooks, and frontend fallbacks.
-- `api/services/` contains app-wide services that are not owned by one domain,
-  such as email, media storage, payment clients, caches, and cross-domain
-  summaries.
-- `api/workers/` contains background worker entrypoints. Workers should call
-  services; they should not become a second product layer.
+- `api/services/` contains app-wide capabilities that are not owned by one
+  domain, such as email, media storage, payment clients, caches, and external
+  clients.
+- `api/workers/` contains background worker entrypoints. Workers call services;
+  they should not become a second product layer.
 - `api/migrations/` contains app-owned database migrations.
 - `api/dev/` contains local-only developer support code such as wait-for-db
   helpers, fixture generators, local setup/reset helpers, and smoke-test
@@ -147,7 +147,7 @@ output so leaks fail close to the source.
 
 ### `*.service.js`
 
-Services own product and data operations.
+Services own data and integration operations.
 
 Put database calls, transactions, writes, reads, cross-table workflows, and
 integration calls here. Services should accept explicit dependencies such as
@@ -162,9 +162,9 @@ pass the specific value it needs.
 Rules own guards and preconditions.
 
 Put auth checks, existence checks, ownership checks, visibility checks, billing
-gates, feature limits, and business constraints here. Rules may return
-request-local facts for later rules and handlers when loading them is part of
-the guard.
+gates, feature limits, and business preconditions here. Rules may return the
+minimum request-local facts needed by later rules and handlers when loading
+those facts is part of the guard.
 
 A rule should answer "can this request continue?" If it starts doing the actual
 product operation, move that work into the service.
@@ -307,13 +307,6 @@ architecture humans use: domains by folder, schemas at boundaries, services for
 data work, rules for guards, serializers for outgoing API shape, middleware
 for HTTP edge work, and tests through the HTTP API.
 
-Cricket should also make endpoint coverage inspectable. Since the app contract
-already knows every route, Cricket can compare the route surface against real
-HTTP tests and show what is missing. A future command should make it boring to
-ask, "which endpoints exist without at least one boundary test?" and should
-help scaffold a small smoke test without pretending generated tests prove the
-product. The contract is simple: if an endpoint exists, there should be at
-least one request-level test that proves the consumed boundary works.
 
 ## Product Feel
 

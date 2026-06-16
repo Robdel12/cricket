@@ -21,7 +21,7 @@ function hasLoadedDomains(domains) {
  * @param {object} options - App contract options.
  * @returns {object} Normalized Cricket app contract.
  */
-export function defineCricketApp(options) {
+export function defineCricketApp(options = {}) {
   let domains = options.domains ?? [];
   let loadedDomains = hasLoadedDomains(domains);
   let hasExplicitEndpoints = Object.hasOwn(options, 'endpoints');
@@ -35,7 +35,7 @@ export function defineCricketApp(options) {
   let allowedHosts = options.allowedHosts;
   let prefix = options.prefix ?? '';
   let trustProxy = options.trustProxy ?? false;
-  let use = options.use ?? [];
+  let middleware = options.middleware ?? [];
 
   return {
     ...options,
@@ -43,7 +43,7 @@ export function defineCricketApp(options) {
     allowedHosts,
     prefix,
     trustProxy,
-    use,
+    middleware,
     ...(endpoints === undefined ? {} : { endpoints }),
     ...(models === undefined ? {} : { models })
   };

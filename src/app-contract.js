@@ -6,7 +6,7 @@ import {
   collectEndpoints,
   collectModels
 } from './domain.js';
-import { routeIdentityFor } from './http/router.js';
+import { routeIdentityFor } from './route-identity.js';
 import { resolveCricketApp } from './app.js';
 import { generateOpenApi } from './openapi.js';
 import { isZodSchema } from './schema.js';
