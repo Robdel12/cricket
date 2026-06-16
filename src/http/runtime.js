@@ -13,7 +13,7 @@ import {
   expectationFailed,
   toHttpError
 } from '../errors.js';
-import { normalizeLogger } from '../logger.js';
+import { resolveLogger } from '../logger.js';
 import { normalizeObservability } from '../observability.js';
 import {
   assertAllowedHost,
@@ -192,6 +192,14 @@ function createNodeServer(handle, logger) {
   return server;
 }
 
+function logRuntimeEvent(logger, level, event, metadata) {
+  try {
+    logger[level](event, metadata);
+  } catch {
+    // Logging must never create a response failure path.
+  }
+}
+
 function baseContextFor({
   logger,
   services,
@@ -262,6 +270,7 @@ function safeErrorSnapshot(error) {
 }
 
 function observeResponse({
+  logger,
   replay,
   request,
   requestId,
@@ -282,6 +291,11 @@ function observeResponse({
   return {
     onFinish() {
       finished = true;
+      logRuntimeEvent(logger, 'info', 'http.response.finished', event);
+
+      if (!replay)
+        return;
+
       void replay.emit({
         ...event,
         type: 'response.finished'
@@ -290,6 +304,11 @@ function observeResponse({
 
     onClose() {
       if (finished)
+        return;
+
+      logRuntimeEvent(logger, 'warn', 'http.response.closed', event);
+
+      if (!replay)
         return;
 
       void replay.emit({
@@ -301,18 +320,15 @@ function observeResponse({
 }
 
 function writeObservedResponse(req, res, response, {
+  logger,
   observability,
   replay,
   request,
   requestId,
   route
 }) {
-  if (!observability.enabled) {
-    writeHttpResponse(req, res, response);
-    return;
-  }
-
   let observer = observeResponse({
+    logger,
     replay,
     request,
     requestId,
@@ -347,7 +363,7 @@ async function reportRequestError(appContract, {
 }) {
   try {
     logger.error('request.failed', {
-      error,
+      error: safeErrorSnapshot(error),
       method: baseRequest?.method,
       path: baseRequest?.path
     });
@@ -366,8 +382,8 @@ async function reportRequestError(appContract, {
   } catch (onErrorFailure) {
     try {
       logger.error('request.error_handler_failed', {
-        error: onErrorFailure,
-        originalError: error,
+        error: safeErrorSnapshot(onErrorFailure),
+        originalError: safeErrorSnapshot(error),
         method: baseRequest?.method,
         path: baseRequest?.path
       });
@@ -421,6 +437,9 @@ function createRuntimeHandler({
       requestLogger = logger.child({
         requestId
       });
+      logRuntimeEvent(requestLogger, 'info', 'http.request.started', {
+        request: safeRequestSnapshot(baseRequest)
+      });
       await emitObserved(observability, replay, () => ({
         type: 'request.started',
         requestId,
@@ -473,13 +492,29 @@ function createRuntimeHandler({
           let matchedRequest = withMatchedParams(nextRequestContext.request, match);
           observedRequest = matchedRequest;
           route = routeIdentityFor(match.endpoint);
+          let routeLogger = requestLogger.child({
+            route
+          });
+          requestLogger = routeLogger;
+          logRuntimeEvent(routeLogger, 'info', 'http.route.matched', {
+            request: safeRequestSnapshot(matchedRequest),
+            route
+          });
           await emitObserved(observability, replay, () => ({
             type: 'route.matched',
             requestId,
             request: safeRequestSnapshot(matchedRequest),
             route
           }));
-          let requestContextForMatchedRequest = await resolveRequestContext(appContract, nextRequestContext, {
+          let matchedRequestContext = {
+            ...nextRequestContext,
+            context: {
+              ...nextRequestContext.context,
+              logger: routeLogger
+            },
+            logger: routeLogger
+          };
+          let requestContextForMatchedRequest = await resolveRequestContext(appContract, matchedRequestContext, {
             request: matchedRequest,
             setup
           });
@@ -519,6 +554,7 @@ function createRuntimeHandler({
       let response = await composeMiddleware(use, finalHandler)(requestContext);
 
       writeObservedResponse(req, res, response, {
+        logger: requestLogger,
         observability,
         replay,
         request: observedRequest,
@@ -546,6 +582,7 @@ function createRuntimeHandler({
       }
 
       writeObservedResponse(req, res, response, {
+        logger: requestLogger,
         observability,
         replay,
         request: observedRequest ?? baseRequest ?? {},
@@ -602,7 +639,9 @@ export async function createCricketRuntime(cricketApp, {
   let appContract = await resolveCricketApp(cricketApp, {
     baseUrl
   });
-  let logger = normalizeLogger(runtimeLogger ?? appContract.logger ?? console);
+  let logger = resolveLogger(runtimeLogger ?? appContract.logger, {
+    service: appContract.name ?? 'Cricket app'
+  });
   let observability = normalizeObservability(appContract.observability, {
     logger
   });

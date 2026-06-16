@@ -122,6 +122,10 @@ export let app = defineCricketApp({
   name: 'Project API',
   version: '1.0.0',
   prefix: '/api',
+  logger: {
+    service: 'project-api',
+    level: process.env.LOG_LEVEL ?? 'info'
+  },
   // Cricket scans this folder for standard domain files that exist.
   domains: './domains',
   async setup() {
@@ -407,6 +411,26 @@ remain available when you pass them through `context(...)`, `use`, or rules.
 
 ## Observability
 
+Every Cricket app gets a structured logger. By default it writes
+newline-delimited JSON to stdout with the app name as the service. Configure
+`logger` when you want a different service, level, format, or write target.
+
+```js
+export let app = defineCricketApp({
+  name: 'Project API',
+  logger: {
+    service: 'project-api',
+    level: process.env.LOG_LEVEL ?? 'info',
+    format: process.env.NODE_ENV === 'production' ? 'json' : 'pretty'
+  }
+});
+```
+
+The runtime passes the logger through setup, services, startup, and shutdown.
+For each request, middleware, context, rules, handlers, and error handling get a
+request-scoped child logger. Matched route logs also carry route identity, so
+one `requestId` is enough to inspect the request flow.
+
 Cricket emits safe lifecycle events from the HTTP runtime when an app provides
 `observability.observe`.
 
@@ -429,22 +453,22 @@ bodies, response bodies, or `Set-Cookie` values.
 The terminal response event includes a replay list for that request. Replay is a
 plain lifecycle artifact, not a second logging system.
 
-Use Cricket's structured logger when you want one log shape across setup,
-middleware, rules, handlers, services, and runtime errors.
+Use `createCricketLogger` when you want an explicit logger value for tests,
+workers, CLIs, or custom composition.
 
 ```js
 import { createCricketLogger } from '@robdel12/cricket/logger';
 
-export let logger = createCricketLogger({
+let logger = createCricketLogger({
   service: 'api',
-  level: process.env.LOG_LEVEL ?? 'info',
-  format: process.env.NODE_ENV === 'production' ? 'json' : 'pretty'
+  write(line) {
+    process.stdout.write(`${line}\n`);
+  }
 });
 ```
 
-JSON logs are newline-delimited and meant for stdout. In production, let Docker
-or the host runtime store and rotate them. When you need one request, pipe the
-logs back through Cricket:
+In production, let Docker or the host runtime store and rotate logs. When you
+need one request, pipe the logs back through Cricket:
 
 ```sh
 docker logs api | pnpm cricket trace req_123

@@ -59,7 +59,8 @@ export {
 
 export {
   createCricketLogger,
-  normalizeLogger
+  normalizeLogger,
+  resolveLogger
 } from './logger.js';
 
 export {

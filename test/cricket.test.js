@@ -32,6 +32,7 @@ import {
   ok,
   pickFields,
   renameFields,
+  resolveLogger,
   z
 } from '../src/index.js';
 import {
@@ -210,6 +211,35 @@ describe('Cricket core', () => {
 
     assert.equal(lines.length, 1);
     assert.match(lines[0], /ERROR build-api req_456 server\.failed/);
+  });
+
+
+  it('resolves omitted and configured loggers into Cricket structured loggers', () => {
+    let lines = [];
+    let defaultLogger = resolveLogger(undefined, {
+      service: 'default-api',
+      write(line) {
+        lines.push(JSON.parse(line));
+      }
+    });
+    let configuredLogger = resolveLogger({
+      level: 'error',
+      service: 'configured-api',
+      write(line) {
+        lines.push(JSON.parse(line));
+      }
+    });
+
+    defaultLogger.info('server.started');
+    configuredLogger.info('ignored');
+    configuredLogger.error('server.failed');
+
+    assert.deepEqual(lines.map(log => log.event), [
+      'server.started',
+      'server.failed'
+    ]);
+    assert.equal(lines[0].service, 'default-api');
+    assert.equal(lines[1].service, 'configured-api');
   });
 
 
@@ -604,7 +634,9 @@ describe('Cricket core', () => {
         };
       }
     });
-    let runtime = await createCricketRuntime(cricketApp);
+    let runtime = await createCricketRuntime(cricketApp, {
+      logger: {}
+    });
 
     let response = await request(runtime.app)
       .post('/projects')

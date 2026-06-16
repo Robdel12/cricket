@@ -6,6 +6,12 @@ let levels = {
   error: 40
 };
 let sensitiveKeyPattern = /authorization|cookie|password|secret|set-cookie|token/i;
+let loggerConfigKeys = new Set([
+  'format',
+  'level',
+  'service',
+  'write'
+]);
 
 function callLogger(logger, level, event, metadata) {
   if (typeof logger === 'function')
@@ -90,6 +96,25 @@ function routeName(route) {
     return route;
 
   return route.operationId ?? route.path;
+}
+
+function hasLoggerMethod(logger) {
+  return ['debug', 'info', 'warn', 'error', 'log', 'child']
+    .some(method => typeof logger?.[method] === 'function');
+}
+
+function isCricketLoggerConfig(logger) {
+  if (!logger || typeof logger !== 'object' || hasLoggerMethod(logger))
+    return false;
+
+  return Object.keys(logger).some(key => loggerConfigKeys.has(key));
+}
+
+function assertKnownLoggerConfig(config) {
+  let unknown = Object.keys(config).filter(key => !loggerConfigKeys.has(key));
+
+  if (unknown.length)
+    throw new Error(`Unknown logger option ${unknown.join(', ')}`);
 }
 
 function formatLine(envelope, format) {
@@ -223,4 +248,30 @@ export function createCricketLogger({
       });
     }
   };
+}
+
+/**
+ * Resolve runtime logger input into Cricket's logger shape.
+ *
+ * Omitted loggers become Cricket's structured stdout logger. Foreign loggers are
+ * normalized at the edge. Plain Cricket logger config is passed to
+ * `createCricketLogger()`.
+ *
+ * @param {Function|object|undefined} logger - Logger instance, function, config, or undefined.
+ * @param {object} [defaults={}] - Default Cricket logger options.
+ * @returns {{debug: Function, info: Function, warn: Function, error: Function, child: Function}}
+ */
+export function resolveLogger(logger, defaults = {}) {
+  if (!logger)
+    return createCricketLogger(defaults);
+
+  if (isCricketLoggerConfig(logger)) {
+    assertKnownLoggerConfig(logger);
+    return createCricketLogger({
+      ...defaults,
+      ...logger
+    });
+  }
+
+  return normalizeLogger(logger);
 }

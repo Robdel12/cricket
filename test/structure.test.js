@@ -7,6 +7,10 @@ import { pathToFileURL } from 'node:url';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 
+import {
+  createCricketLogger
+} from '../src/index.js';
+
 let execFileAsync = promisify(execFile);
 
 async function tempRoot() {
@@ -338,41 +342,32 @@ describe('Cricket CLI', () => {
   });
 
   it('traces one request from Cricket JSON logs on stdin', async () => {
-    let input = [
-      'not json',
-      JSON.stringify({
-        time: '2026-06-15T10:00:00.000Z',
-        level: 'info',
-        event: 'http.request.started',
-        requestId: 'req_keep',
-        metadata: {
-          request: {
-            method: 'GET',
-            path: '/api/builds'
-          }
-        }
-      }),
-      JSON.stringify({
-        time: '2026-06-15T10:00:00.010Z',
-        level: 'info',
-        event: 'http.route.matched',
-        requestId: 'req_skip'
-      }),
-      JSON.stringify({
-        time: '2026-06-15T10:00:00.020Z',
-        level: 'info',
-        event: 'http.response.finished',
-        requestId: 'req_keep',
-        route: {
-          operationId: 'getBuilds'
-        },
-        metadata: {
-          response: {
-            status: 200
-          }
-        }
-      })
-    ].join('\n');
+    let lines = ['not json'];
+    let logger = createCricketLogger({
+      write(line) {
+        lines.push(line);
+      }
+    });
+
+    logger.child({ requestId: 'req_keep' }).info('http.request.started', {
+      request: {
+        method: 'GET',
+        path: '/api/builds'
+      }
+    });
+    logger.child({ requestId: 'req_skip' }).info('http.route.matched');
+    logger.child({
+      requestId: 'req_keep',
+      route: {
+        operationId: 'getBuilds'
+      }
+    }).info('http.response.finished', {
+      response: {
+        status: 200
+      }
+    });
+
+    let input = lines.join('\n');
 
     let stdout = execFileSync(process.execPath, [
       'bin/cricket.js',
