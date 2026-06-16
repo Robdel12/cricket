@@ -200,6 +200,11 @@ events, request IDs, safe snapshots, and replay artifacts. Cricket should pass a
 request-scoped logger through setup, middleware, context, rules, handlers,
 services, startup, shutdown, and error handling.
 
+The default logger should be structured, stdout-first, and boring enough for
+Docker and hosted runtimes. Cricket can provide CLI tools that read those
+emitted facts, such as tracing one request by `requestId`, but it should not
+become the storage backend.
+
 Default observability must be conservative: no raw auth headers, cookies, query
 values, request bodies, response bodies, `Set-Cookie` values, or raw error
 objects.

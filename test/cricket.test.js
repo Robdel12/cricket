@@ -14,6 +14,7 @@ import {
   created,
   createCricketRuntime,
   createKnexRepository,
+  createCricketLogger,
   createServices,
   defineCricketApp,
   defineEndpoint,
@@ -151,6 +152,64 @@ describe('Cricket core', () => {
     assert.equal(events[1].event, 'server.failed');
     assert.equal(events[1].metadata.component, 'api');
     assert.equal(events[1].metadata.error.message, 'Nope');
+  });
+
+
+  it('creates structured Cricket log lines with child metadata and redaction', () => {
+    let lines = [];
+    let logger = createCricketLogger({
+      service: 'build-api',
+      level: 'debug',
+      write(line) {
+        lines.push(line);
+      }
+    }).child({
+      requestId: 'req_123',
+      route: {
+        operationId: 'getBuild'
+      }
+    });
+
+    logger.info('http.response.finished', {
+      status: 200,
+      authorization: 'Bearer nope',
+      error: new Error('Example')
+    });
+
+    let log = JSON.parse(lines[0]);
+
+    assert.equal(log.level, 'info');
+    assert.equal(log.event, 'http.response.finished');
+    assert.equal(log.service, 'build-api');
+    assert.equal(log.requestId, 'req_123');
+    assert.deepEqual(log.route, { operationId: 'getBuild' });
+    assert.equal(log.metadata.status, 200);
+    assert.equal(log.metadata.authorization, '[Redacted]');
+    assert.deepEqual(log.metadata.error, {
+      name: 'Error',
+      message: 'Example'
+    });
+  });
+
+
+  it('filters levels and supports pretty Cricket log lines', () => {
+    let lines = [];
+    let logger = createCricketLogger({
+      service: 'build-api',
+      level: 'warn',
+      format: 'pretty',
+      write(line) {
+        lines.push(line);
+      }
+    });
+
+    logger.info('ignored');
+    logger.error('server.failed', {
+      requestId: 'req_456'
+    });
+
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /ERROR build-api req_456 server\.failed/);
   });
 
 

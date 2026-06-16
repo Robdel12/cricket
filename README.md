@@ -429,6 +429,31 @@ bodies, response bodies, or `Set-Cookie` values.
 The terminal response event includes a replay list for that request. Replay is a
 plain lifecycle artifact, not a second logging system.
 
+Use Cricket's structured logger when you want one log shape across setup,
+middleware, rules, handlers, services, and runtime errors.
+
+```js
+import { createCricketLogger } from '@robdel12/cricket/logger';
+
+export let logger = createCricketLogger({
+  service: 'api',
+  level: process.env.LOG_LEVEL ?? 'info',
+  format: process.env.NODE_ENV === 'production' ? 'json' : 'pretty'
+});
+```
+
+JSON logs are newline-delimited and meant for stdout. In production, let Docker
+or the host runtime store and rotate them. When you need one request, pipe the
+logs back through Cricket:
+
+```sh
+docker logs api | pnpm cricket trace req_123
+```
+
+The logger redacts common secret-shaped keys at the boundary and keeps child
+metadata, including `requestId`, in the envelope that `cricket trace`
+understands.
+
 ## CLI
 
 ```sh
@@ -450,6 +475,9 @@ pnpm cricket init agents .
 services, route operation IDs, and observability posture for an app module.
 
 `docs` writes OpenAPI from the same app module your server runs.
+
+`trace` reads newline-delimited JSON logs from stdin and prints the events for
+one `requestId`.
 
 `init agents` writes lightweight guidance for people and agents working inside a
 Cricket app.
@@ -479,6 +507,6 @@ import { createKnexRepository } from '@robdel12/cricket/knex';
 import { generateOpenApi } from '@robdel12/cricket/openapi';
 import { defineCricketApp } from '@robdel12/cricket/app';
 import { loadDomains } from '@robdel12/cricket/domain';
-import { normalizeLogger } from '@robdel12/cricket/logger';
+import { createCricketLogger, normalizeLogger } from '@robdel12/cricket/logger';
 import { defineSerializer } from '@robdel12/cricket/serializer';
 ```

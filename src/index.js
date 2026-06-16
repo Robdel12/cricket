@@ -58,6 +58,7 @@ export {
 } from './openapi.js';
 
 export {
+  createCricketLogger,
   normalizeLogger
 } from './logger.js';
 
