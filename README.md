@@ -432,6 +432,10 @@ For each request, middleware, context, rules, handlers, and error handling get a
 request-scoped child logger. Matched route logs also carry route identity, so
 one `requestId` is enough to inspect the request flow.
 
+Cricket also keeps sparse, monotonic timings at the HTTP boundary: middleware,
+route match, validation, rules, handler, response finish, and close. They show
+where a request spent time without turning logs into a firehose.
+
 Cricket emits safe lifecycle events from the HTTP runtime when an app provides
 `observability.observe`.
 
@@ -453,6 +457,11 @@ bodies, response bodies, or `Set-Cookie` values.
 
 The terminal response event includes a replay list for that request. Replay is a
 plain lifecycle artifact, not a second logging system.
+
+Deeper tracing is explicit. Cricket passes a request-scoped `trace` capability
+through middleware, context, rules, and handlers so apps can wrap meaningful
+workflow stages with `trace.span(name, metadata, fn)`. Spans return the callback
+result, rethrow the original error, and keep metadata to safe scalar values.
 
 Use `createCricketLogger` when you want an explicit logger value for tests,
 workers, CLIs, or custom composition.
@@ -479,6 +488,9 @@ The logger redacts common secret-shaped keys at the boundary and keeps child
 metadata, including `requestId`, in the envelope that `cricket trace`
 understands.
 
+`trace` reads the same logs back on demand and renders request timings plus span
+records. Cricket does not store that data for you.
+
 ## CLI
 
 ```sh
@@ -502,7 +514,8 @@ services, route operation IDs, and observability posture for an app module.
 `docs` writes OpenAPI from the same app module your server runs.
 
 `trace` reads newline-delimited JSON logs from stdin and prints a
-human-readable trace for one `requestId`.
+human-readable request timeline for one `requestId`, including lifecycle
+timings and any recorded spans.
 
 `init agents` writes lightweight guidance for people and agents working inside a
 Cricket app.

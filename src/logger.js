@@ -90,6 +90,7 @@ function logEnvelope({
     ...(service ? { service } : {}),
     ...(safe.requestId ? { requestId: safe.requestId } : {}),
     ...(safe.route ? { route: safe.route } : {}),
+    ...(safe.span ? { span: safe.span } : {}),
     metadata: safe
   };
 }

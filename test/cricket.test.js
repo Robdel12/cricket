@@ -863,6 +863,7 @@ describe('Cricket core', () => {
 
 
   it('can re-read rows after writes when Knex returning is disabled', async () => {
+    let spans = [];
     let db = knex({
       client: 'sqlite3',
       connection: {
@@ -896,7 +897,17 @@ describe('Cricket core', () => {
         }),
         update: z.object({
           name: z.string()
-        })
+        }),
+        trace: {
+          span(name, metadata, fn) {
+            spans.push({
+              name,
+              metadata
+            });
+
+            return fn();
+          }
+        }
       });
 
       let inserted = await repository.insert({
@@ -915,6 +926,150 @@ describe('Cricket core', () => {
         id: '018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0',
         name: 'The Whip II'
       });
+      assert.deepEqual(spans, [
+        {
+          name: 'knex.insert',
+          metadata: {
+            table: 'build',
+            returning: false
+          }
+        },
+        {
+          name: 'knex.updateById',
+          metadata: {
+            table: 'build',
+            returning: false
+          }
+        }
+      ]);
+    } finally {
+      await db.destroy();
+    }
+  });
+
+
+  it('emits safe timing spans for Knex repository helpers', async () => {
+    let spans = [];
+    let db = knex({
+      client: 'sqlite3',
+      connection: {
+        filename: ':memory:'
+      },
+      useNullAsDefault: true
+    });
+
+    try {
+      await db.schema.createTable('build', table => {
+        table.string('id').primary();
+        table.string('name').notNullable();
+      });
+
+      let Build = defineModel({
+        name: 'Build',
+        table: 'build',
+        row: {
+          id: field.public(z.uuid()),
+          name: field.public(z.string())
+        }
+      });
+
+      let repository = createKnexRepository({
+        db,
+        model: Build,
+        insert: z.object({
+          id: z.uuid(),
+          name: z.string()
+        }),
+        update: z.object({
+          name: z.string()
+        }),
+        trace: {
+          span(name, metadata, fn) {
+            spans.push({
+              name,
+              metadata
+            });
+
+            return fn();
+          }
+        }
+      });
+
+      let inserted = await repository.insert({
+        id: '018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0',
+        name: 'The Whip'
+      });
+      let foundById = await repository.findById(inserted.id);
+      let foundOne = await repository.findOne({
+        name: inserted.name
+      });
+      let listed = await repository.list({
+        name: inserted.name
+      });
+      let updated = await repository.updateById(inserted.id, {
+        name: 'The Whip II'
+      });
+      let deleted = await repository.deleteById(inserted.id);
+
+      assert.deepEqual(inserted, {
+        id: '018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0',
+        name: 'The Whip'
+      });
+      assert.deepEqual(foundById, inserted);
+      assert.deepEqual(foundOne, inserted);
+      assert.deepEqual(listed, [inserted]);
+      assert.deepEqual(updated, {
+        id: '018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0',
+        name: 'The Whip II'
+      });
+      assert.equal(deleted, 1);
+      assert.deepEqual(spans, [
+        {
+          name: 'knex.insert',
+          metadata: {
+            table: 'build',
+            returning: true
+          }
+        },
+        {
+          name: 'knex.findById',
+          metadata: {
+            table: 'build',
+            idColumn: 'id'
+          }
+        },
+        {
+          name: 'knex.findOne',
+          metadata: {
+            table: 'build',
+            criteriaCount: 1
+          }
+        },
+        {
+          name: 'knex.list',
+          metadata: {
+            table: 'build',
+            criteriaCount: 1
+          }
+        },
+        {
+          name: 'knex.updateById',
+          metadata: {
+            table: 'build',
+            returning: true
+          }
+        },
+        {
+          name: 'knex.deleteById',
+          metadata: {
+            table: 'build',
+            idColumn: 'id'
+          }
+        }
+      ]);
+      assert.equal(spans.some(span => JSON.stringify(span.metadata).includes(inserted.id)), false);
+      assert.equal(spans.some(span => JSON.stringify(span.metadata).includes('The Whip')), false);
+      assert.equal(spans.some(span => JSON.stringify(span.metadata).includes('The Whip II')), false);
     } finally {
       await db.destroy();
     }

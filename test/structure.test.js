@@ -390,4 +390,80 @@ describe('Cricket CLI', () => {
     assert.match(stdout, /http\.response\.finished getBuilds status=200/);
     assert.doesNotMatch(stdout, /req_skip/);
   });
+
+  it('renders nested span timelines from Cricket JSON logs on stdin', async () => {
+    let input = [
+      JSON.stringify({
+        time: '2026-06-15T11:00:00.000Z',
+        level: 'info',
+        event: 'http.request.started',
+        requestId: 'req_keep',
+        metadata: {
+          request: {
+            method: 'POST',
+            path: '/api/builds'
+          }
+        }
+      }),
+      JSON.stringify({
+        time: '2026-06-15T11:00:00.010Z',
+        level: 'info',
+        event: 'trace.span.finished',
+        requestId: 'req_keep',
+        span: {
+          id: 'span_root',
+          name: 'prepare build',
+          durationMs: 18,
+          status: 'ok'
+        }
+      }),
+      JSON.stringify({
+        time: '2026-06-15T11:00:00.012Z',
+        level: 'warn',
+        event: 'trace.span.finished',
+        requestId: 'req_keep',
+        metadata: {
+          span: {
+            id: 'span_child',
+            parentId: 'span_root',
+            name: 'load fixture',
+            durationMs: 6,
+            status: 'error',
+            error: {
+              code: 'MISSING_FIXTURE'
+            }
+          }
+        }
+      }),
+      JSON.stringify({
+        time: '2026-06-15T11:00:00.020Z',
+        level: 'info',
+        event: 'http.response.finished',
+        requestId: 'req_keep',
+        route: {
+          operationId: 'createBuild'
+        },
+        metadata: {
+          response: {
+            status: 201
+          }
+        }
+      })
+    ].join('\n');
+
+    let stdout = execFileSync(process.execPath, [
+      'bin/cricket.js',
+      'trace',
+      'req_keep'
+    ], {
+      encoding: 'utf8',
+      input
+    });
+
+    assert.match(stdout, /Trace req_keep/);
+    assert.match(stdout, /http\.request\.started POST \/api\/builds/);
+    assert.match(stdout, /trace\.span\.finished prepare build 18ms status=ok/);
+    assert.match(stdout, /\n\s{4}2026-06-15T11:00:00\.012Z WARN trace\.span\.finished load fixture 6ms status=error error=MISSING_FIXTURE/);
+    assert.match(stdout, /http\.response\.finished createBuild status=201/);
+  });
 });

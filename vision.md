@@ -200,14 +200,24 @@ configure it or provide a compatible logger, but Cricket should still pass one
 logger shape through setup, middleware, context, rules, handlers, services,
 startup, shutdown, and error handling.
 
-The HTTP runtime owns request IDs, safe snapshots, route identity, and replay
-artifacts. Request logs should carry those facts when Cricket already knows
-them, and CLI tools can read the emitted log lines to trace one request by
-`requestId`. Cricket should not become the storage backend.
+The HTTP runtime owns request IDs, safe snapshots, route identity, replay
+artifacts, and always-on request timings. Those timings should stay tiny and
+monotonic so the default path explains where time went without turning into a
+heavy observability subsystem.
+
+Deeper spans should be explicit. Apps can use `trace.span(name, metadata, fn)`
+for meaningful workflow stages, and the trace data should stay request-scoped,
+safe, and scalar. Database timing can exist at explicit repository or Knex
+boundaries, but Cricket should keep SQL values, bind values, row data, and
+secrets out of trace payloads.
+
+Request logs should carry the facts Cricket already knows, and CLI tools should
+read the emitted log lines to trace one request by `requestId`. `cricket trace`
+is a log renderer, not a storage backend or dashboard product.
 
 Default observability must be conservative: no raw auth headers, cookies, query
-values, request bodies, response bodies, `Set-Cookie` values, or raw error
-objects.
+values, request bodies, response bodies, `Set-Cookie` values, raw error
+objects, or open-ended trace dumps.
 
 ## Inspect vs OpenAPI
 

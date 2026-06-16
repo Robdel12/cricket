@@ -55,6 +55,13 @@ export function normalizeEndpointMethod(method) {
   return normalized;
 }
 
+function timePhase(timing, name, action) {
+  if (!timing)
+    return action();
+
+  return timing.time(name, action);
+}
+
 function parseRequestSchema(schema, value) {
   if (!schema) return value;
 
@@ -217,12 +224,14 @@ export function defineEndpoint(config) {
     responses,
     rules,
 
-    async handle(request, context = {}) {
-      let input = {
+    async handle(request, context = {}, {
+      timing
+    } = {}) {
+      let input = await timePhase(timing, 'validationMs', () => ({
         body: parseRequestSchema(body, request.body),
         params: parseRequestObjectSchema(params, request.params),
         query: parseRequestObjectSchema(query, request.query)
-      };
+      }));
 
       let endpointContext = {
         ...context,
@@ -230,9 +239,16 @@ export function defineEndpoint(config) {
         input
       };
 
-      let handlerContext = await applyRules(rules, endpointContext);
+      let handlerContext = await timePhase(timing, 'rulesMs', () =>
+        applyRules(rules, endpointContext)
+      );
+      let result = await timePhase(timing, 'handlerMs', () =>
+        handler(handlerContext)
+      );
 
-      return parseEndpointResponse(endpoint, await handler(handlerContext));
+      return await timePhase(timing, 'responseValidationMs', () =>
+        parseEndpointResponse(endpoint, result)
+      );
     }
   };
 
