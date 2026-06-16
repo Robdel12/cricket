@@ -79,6 +79,7 @@ let requireUser = defineRule('requireUser', ({ user }) => {
 let readProject = defineEndpoint({
   method: 'get',
   path: '/projects/:slug',
+  traceName: 'projects.read',
   params: z.object({
     slug: z.string().min(3)
   }),

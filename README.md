@@ -458,10 +458,26 @@ bodies, response bodies, or `Set-Cookie` values.
 The terminal response event includes a replay list for that request. Replay is a
 plain lifecycle artifact, not a second logging system.
 
-Deeper tracing is explicit. Cricket passes a request-scoped `trace` capability
-through middleware, context, rules, and handlers so apps can wrap meaningful
-workflow stages with `trace.span(name, metadata, fn)`. Spans return the callback
-result, rethrow the original error, and keep metadata to safe scalar values.
+Deeper tracing is explicit. Add `traceName` to an endpoint when the handler
+itself is the product operation you want to see in logs. Cricket wraps the
+handler in a request-scoped span, returns the handler result, and rethrows the
+original error path.
+
+```js
+export let createProject = defineEndpoint({
+  method: 'post',
+  path: '/projects',
+  traceName: 'projects.create',
+  async handler({ input, services }) {
+    return created(await services.projects.create(input.body));
+  }
+});
+```
+
+Cricket also passes a request-scoped `trace` capability through middleware,
+context, rules, and handlers so apps can wrap deeper workflow stages with
+`trace.span(name, metadata, fn)`. Spans return the callback result, rethrow the
+original error, and keep metadata to safe scalar values.
 
 Use `createCricketLogger` when you want an explicit logger value for tests,
 workers, CLIs, or custom composition.

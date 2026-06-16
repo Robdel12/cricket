@@ -370,6 +370,96 @@ describe('Cricket HTTP runtime', () => {
   });
 
 
+  it('wraps endpoint handlers in product spans when traceName is set', async () => {
+    let logs = [];
+    let endpoint = defineEndpoint({
+      method: 'post',
+      path: '/projects',
+      traceName: 'projects.create',
+      body: z.object({
+        name: z.string()
+      }),
+      async handler({ input }) {
+        return created({
+          id: '018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0',
+          name: input.body.name
+        });
+      }
+    });
+    let runtime = await createCricketRuntime(defineCricketApp({
+      logger: {
+        format: 'json',
+        write(line) {
+          logs.push(JSON.parse(line));
+        }
+      },
+      endpoints: [endpoint],
+      observability: {
+        requestId() {
+          return 'req_endpoint_trace_1';
+        }
+      }
+    }));
+
+    let response = await request(runtime.app)
+      .post('/projects')
+      .send({
+        name: 'Launch Plan'
+      });
+
+    let spanLog = logs.find(log => log.event === 'trace.span.finished');
+    let responseLog = logs.find(log => log.event === 'http.response.finished');
+
+    assert.equal(response.status, 201);
+    assert.equal(spanLog.requestId, 'req_endpoint_trace_1');
+    assert.equal(spanLog.span.name, 'projects.create');
+    assert.equal(spanLog.span.status, 'ok');
+    assert.equal(spanLog.route.operationId, responseLog.route.operationId);
+    assert.equal(spanLog.span.attributes, undefined);
+  });
+
+
+  it('records endpoint traceName failures without changing error responses', async () => {
+    let logs = [];
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/projects/:projectId',
+      traceName: 'projects.read',
+      async handler() {
+        throw new Error('database password hunter2');
+      }
+    });
+    let runtime = await createCricketRuntime(defineCricketApp({
+      logger: {
+        format: 'json',
+        write(line) {
+          logs.push(JSON.parse(line));
+        }
+      },
+      endpoints: [endpoint],
+      observability: {
+        requestId() {
+          return 'req_endpoint_trace_error_1';
+        }
+      }
+    }));
+
+    let response = await request(runtime.app)
+      .get('/projects/018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0');
+
+    let spanLog = logs.find(log => log.event === 'trace.span.finished');
+
+    assert.equal(response.status, 500);
+    assert.equal(spanLog.requestId, 'req_endpoint_trace_error_1');
+    assert.equal(spanLog.span.name, 'projects.read');
+    assert.equal(spanLog.span.status, 'error');
+    assert.deepEqual(spanLog.span.error, {
+      name: 'Error'
+    });
+    assert.equal(JSON.stringify(logs).includes('hunter2'), false);
+  });
+
+
   it('records trace span failures and rethrows the original error path', async () => {
     let events = [];
     let logs = [];
