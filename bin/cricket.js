@@ -34,8 +34,27 @@ function hasFlag(args, flag) {
   return args.includes(flag);
 }
 
+let valueFlags = new Set([
+  '--env',
+  '--out'
+]);
+
 function withoutFlags(args) {
-  return args.filter(arg => !arg.startsWith('--'));
+  let positional = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    let arg = args[index];
+
+    if (!arg.startsWith('--')) {
+      positional.push(arg);
+      continue;
+    }
+
+    if (valueFlags.has(arg))
+      index += 1;
+  }
+
+  return positional;
 }
 
 function optionValue(args, name) {
@@ -44,7 +63,12 @@ function optionValue(args, name) {
   if (index === -1)
     return undefined;
 
-  return args[index + 1];
+  let value = args[index + 1];
+
+  if (!value || value.startsWith('--'))
+    throw new Error(`${name} requires a value`);
+
+  return value;
 }
 
 function usage() {
@@ -54,12 +78,12 @@ function usage() {
   cricket init agents [root] [--force]
   cricket inspect <appModule>
   cricket docs <appModule> [--out openapi.json]
-  cricket migrate latest <appModule>
-  cricket migrate rollback <appModule> [--all]
-  cricket migrate status <appModule>
-  cricket migrate list <appModule>
-  cricket migrate current-version <appModule>
-  cricket migrate make <appModule> <name>
+  cricket migrate latest <appModule> [--env name]
+  cricket migrate rollback <appModule> [--all] [--env name]
+  cricket migrate status <appModule> [--env name]
+  cricket migrate list <appModule> [--env name]
+  cricket migrate current-version <appModule> [--env name]
+  cricket migrate make <appModule> <name> [--env name]
   cricket trace <requestId>
 
 Examples:
@@ -214,6 +238,7 @@ async function runMigrate(args) {
     command,
     appModule,
     name,
+    environment: optionValue(args, '--env'),
     all: hasFlag(args, '--all')
   });
 

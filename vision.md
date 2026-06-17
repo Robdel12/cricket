@@ -269,7 +269,8 @@ design, query strategy, indexes, and product-specific data behavior.
 
 `api/migrations/` is the convention. Apps should put their migration history
 there and let `defineCricketApp({ database })` power runtime setup and
-`cricket migrate`. Cricket should not run migrations on server start or invent a
+`cricket migrate`. Cricket can resolve named database environments from that
+same app contract, but it should not run migrations on server start or invent a
 second database abstraction.
 
 Cricket is not a generic backend platform. It is opinionated about API

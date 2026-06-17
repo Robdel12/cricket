@@ -9,6 +9,7 @@ import {
 import { routeIdentityFor } from './route-identity.js';
 import { resolveCricketApp } from './app.js';
 import { generateOpenApi } from './openapi.js';
+import { normalizeDatabaseConfig } from './persistence/database.js';
 import { isZodSchema } from './schema.js';
 
 function toArray(value) {
@@ -84,9 +85,12 @@ function databaseSummaryFor(contract) {
       lifecycle: 'disabled'
     };
 
+  let database = normalizeDatabaseConfig(contract.database);
+
   return {
     lifecycle: 'enabled',
-    client: contract.database.client
+    client: database.client,
+    environment: database.environment
   };
 }
 
@@ -216,7 +220,7 @@ export function formatAppMap(appMap) {
   lines.push(`Observability: request IDs ${appMap.observability.requestIds}, lifecycle ${appMap.observability.lifecycle}, replay ${appMap.observability.replay}`);
   lines.push(
     appMap.database.lifecycle === 'enabled'
-      ? `Database: ${appMap.database.client ?? 'configured'}`
+      ? `Database: ${appMap.database.client ?? 'configured'}${appMap.database.environment ? ` (${appMap.database.environment})` : ''}`
       : 'Database: disabled'
   );
 

@@ -23,6 +23,7 @@ function migrationNames(migrations) {
  * @param {string} options.command - Migration command name.
  * @param {string} options.appModule - Side-effect-free app definition module.
  * @param {string} [options.name] - Migration name for `make`.
+ * @param {string} [options.environment] - Database environment to run against.
  * @param {boolean} [options.all=false] - Roll back all completed migrations.
  * @returns {Promise<object>} Plain command result for CLI formatting.
  */
@@ -30,11 +31,13 @@ export async function runMigrationCommand({
   command,
   appModule,
   name,
+  environment,
   all = false
 }) {
   let definition = await loadAppDefinition(appModule);
   let config = knexConfigForDatabase(requireDatabase(definition.app), {
-    baseUrl: definition.moduleUrl
+    baseUrl: definition.moduleUrl,
+    environment
   });
   let migrationsDirectory = config.migrations.directory;
   let db = knex(config);

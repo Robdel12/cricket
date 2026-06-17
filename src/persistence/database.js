@@ -5,8 +5,26 @@ import knex from 'knex';
 
 export let defaultMigrationDirectory = './api/migrations';
 
+let cricketDatabaseKeys = new Set([
+  'base',
+  'defaultEnvironment',
+  'environment',
+  'environments'
+]);
+
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function freezeEnvironmentMap(environments) {
+  return Object.freeze(Object.fromEntries(
+    Object.entries(environments).map(([name, config]) => [
+      name,
+      Object.freeze({
+        ...config
+      })
+    ])
+  ));
 }
 
 function freezeDatabaseConfig(config) {
@@ -18,23 +36,40 @@ function freezeDatabaseConfig(config) {
   });
 }
 
-/**
- * Normalize the app-owned Knex config that Cricket uses for runtime and CLI work.
- *
- * Cricket only owns the shape it needs to make Knex boring to use: a real Knex
- * config object and the conventional migrations directory. Table design,
- * connections, pools, and query strategy stay in the app config.
- *
- * @param {object|undefined} database - Optional Knex config from defineCricketApp.
- * @returns {object|undefined} Frozen config with Cricket migration defaults.
- */
-export function normalizeDatabaseConfig(database) {
-  if (database === undefined)
-    return undefined;
+function mergePlainObjects(left = {}, right = {}) {
+  let merged = {
+    ...left
+  };
 
-  if (!isPlainObject(database))
-    throw new Error('database must be a Knex config object');
+  for (let [key, value] of Object.entries(right)) {
+    merged[key] = isPlainObject(merged[key]) && isPlainObject(value)
+      ? mergePlainObjects(merged[key], value)
+      : value;
+  }
 
+  return merged;
+}
+
+function databaseBaseConfig(database) {
+  if (isPlainObject(database.base) && isPlainObject(database.environments))
+    return database.base;
+
+  return Object.fromEntries(
+    Object.entries(database)
+      .filter(([key]) => !cricketDatabaseKeys.has(key))
+  );
+}
+
+function selectedDatabaseEnvironment(database, environment) {
+  return environment
+    ?? database.environment
+    ?? process.env.CRICKET_DATABASE_ENV
+    ?? process.env.NODE_ENV
+    ?? database.defaultEnvironment
+    ?? 'development';
+}
+
+function normalizeKnexConfig(database) {
   let migrations = isPlainObject(database.migrations)
     ? database.migrations
     : {};
@@ -45,6 +80,48 @@ export function normalizeDatabaseConfig(database) {
       ...migrations,
       directory: migrations.directory ?? defaultMigrationDirectory
     }
+  });
+}
+
+/**
+ * Normalize the app-owned Knex config that Cricket uses for runtime and CLI work.
+ *
+ * Cricket accepts either one Knex config or a small environment map. The
+ * environment map exists so apps can declare database environments once while
+ * runtime, inspect, and migrations all resolve the same selected config.
+ *
+ * @param {object|undefined} database - Optional Knex config from defineCricketApp.
+ * @param {object} [options]
+ * @param {string} [options.environment] - Explicit database environment.
+ * @returns {object|undefined} Frozen config with Cricket migration defaults.
+ */
+export function normalizeDatabaseConfig(database, {
+  environment
+} = {}) {
+  if (database === undefined)
+    return undefined;
+
+  if (!isPlainObject(database))
+    throw new Error('database must be a Knex config object');
+
+  if (!isPlainObject(database.environments))
+    return normalizeKnexConfig(database);
+
+  let selectedEnvironment = selectedDatabaseEnvironment(database, environment);
+  let selectedConfig = database.environments[selectedEnvironment];
+
+  if (!isPlainObject(selectedConfig))
+    throw new Error(`database environment "${selectedEnvironment}" is not configured`);
+
+  let base = Object.freeze(databaseBaseConfig(database));
+  let config = normalizeKnexConfig(mergePlainObjects(base, selectedConfig));
+
+  return freezeDatabaseConfig({
+    ...config,
+    base,
+    defaultEnvironment: database.defaultEnvironment,
+    environment: selectedEnvironment,
+    environments: freezeEnvironmentMap(database.environments)
   });
 }
 
@@ -83,24 +160,32 @@ function resolveMigrationDirectory(directory, baseDirectory) {
  * @param {object} database - Normalized database config.
  * @param {object} [options]
  * @param {string|URL} [options.baseUrl] - App definition URL for CLI migration paths.
+ * @param {string} [options.environment] - Explicit database environment.
  * @returns {object} Knex config safe for Knex to consume.
  */
 export function knexConfigForDatabase(database, {
-  baseUrl
+  baseUrl,
+  environment
 } = {}) {
-  let normalized = normalizeDatabaseConfig(database);
+  let normalized = normalizeDatabaseConfig(database, {
+    environment
+  });
 
   if (!normalized)
     throw new Error('database config is required');
 
   let baseDirectory = appRootFor(baseUrl);
+  let config = Object.fromEntries(
+    Object.entries(normalized)
+      .filter(([key]) => !cricketDatabaseKeys.has(key))
+  );
 
   return {
-    ...normalized,
+    ...config,
     migrations: {
-      ...normalized.migrations,
+      ...config.migrations,
       directory: resolveMigrationDirectory(
-        normalized.migrations.directory,
+        config.migrations.directory,
         baseDirectory
       )
     }

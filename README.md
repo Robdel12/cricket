@@ -127,7 +127,22 @@ export let app = defineCricketApp({
   },
   database: {
     client: 'pg',
-    connection: process.env.DATABASE_URL
+    defaultEnvironment: 'development',
+    environments: {
+      development: {
+        connection: process.env.DATABASE_URL
+      },
+      test: {
+        client: 'sqlite3',
+        connection: {
+          filename: ':memory:'
+        },
+        useNullAsDefault: true
+      },
+      production: {
+        connection: process.env.DATABASE_URL
+      }
+    }
   },
   // Cricket scans this folder for standard domain files that exist.
   domains: './domains',
@@ -334,13 +349,33 @@ Cricket uses Knex as the database path. Put the config on the app contract:
 export let app = defineCricketApp({
   database: {
     client: 'pg',
-    connection: process.env.DATABASE_URL
+    defaultEnvironment: 'development',
+    environments: {
+      development: {
+        connection: process.env.DATABASE_URL
+      },
+      test: {
+        client: 'sqlite3',
+        connection: {
+          filename: ':memory:'
+        },
+        useNullAsDefault: true
+      },
+      production: {
+        connection: process.env.DATABASE_URL
+      }
+    }
   }
 });
 ```
 
 Cricket creates one `db` handle for the runtime, passes it through setup,
 services, rules, middleware, and handlers, then destroys it during cleanup.
+The active environment comes from `database.environment`,
+`CRICKET_DATABASE_ENV`, `NODE_ENV`, `database.defaultEnvironment`, then
+`development`. Shared Knex options can live beside `environments`; the selected
+environment overrides them.
+
 Migrations live in `api/migrations/` by convention. Only set
 `database.migrations.directory` when an app is intentionally changing that
 shape.
@@ -348,6 +383,7 @@ shape.
 ```sh
 pnpm cricket migrate make api/index.js create_projects
 pnpm cricket migrate latest api/index.js
+pnpm cricket migrate latest api/index.js --env production
 pnpm cricket migrate status api/index.js
 pnpm cricket migrate list api/index.js
 pnpm cricket migrate current-version api/index.js
@@ -555,7 +591,8 @@ services, route operation IDs, and observability posture for an app module.
 `docs` writes OpenAPI from the same app module your server runs.
 
 `migrate` runs Knex migrations from the app's `database` contract. The default
-directory is `api/migrations/`.
+directory is `api/migrations/`; pass `--env name` to run against a specific
+database environment.
 
 `trace` reads newline-delimited JSON logs from stdin and prints a
 human-readable request timeline for one `requestId`, including lifecycle
