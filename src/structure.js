@@ -421,10 +421,11 @@ Cricket owns the architecture. Your app owns the behavior.
 - \`api/dev/\` contains local-only developer support code. It is not product architecture and must not be required by production runtime.
 
 First-class means scaffolded, documented, inspectable, and easy for agents to follow. It does not mean Cricket secretly owns auth policy, table design, queues, local tooling, or deployment.
-Cricket-owned runtime facts such as \`lifecycle\`, \`logger\`, \`services\`, and
-\`trace\` are passed through setup, middleware, context, handlers, and shutdown
-hooks. Product health checks may read \`lifecycle\`, but they still own database,
-queue, worker, and deploy readiness.
+
+Cricket passes runtime capabilities such as \`lifecycle\`, \`logger\`, \`services\`,
+and \`trace\` through setup, middleware, context, handlers, and shutdown hooks.
+Product health checks may read \`lifecycle\`, but they still own database, queue,
+worker, and deploy readiness.
 
 ## Domain Shape
 

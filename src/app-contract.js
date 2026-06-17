@@ -73,7 +73,7 @@ function observabilitySummaryFor(contract) {
   let hasRequestId = typeof config?.requestId === 'function';
 
   return {
-    lifecycle: hasObserver ? 'enabled' : 'disabled',
+    events: hasObserver ? 'enabled' : 'disabled',
     replay: hasObserver ? 'terminal events' : 'disabled',
     requestIds: hasRequestId ? 'custom' : 'default'
   };
@@ -82,13 +82,13 @@ function observabilitySummaryFor(contract) {
 function databaseSummaryFor(contract) {
   if (!contract.database)
     return {
-      lifecycle: 'disabled'
+      status: 'disabled'
     };
 
   let database = normalizeDatabaseConfig(contract.database);
 
   return {
-    lifecycle: 'enabled',
+    status: 'enabled',
     client: database.client,
     environment: database.environment
   };
@@ -217,9 +217,9 @@ export function formatAppMap(appMap) {
     appMap.name ? `Cricket app: ${appMap.name}` : 'Cricket app'
   ];
 
-  lines.push(`Observability: request IDs ${appMap.observability.requestIds}, lifecycle ${appMap.observability.lifecycle}, replay ${appMap.observability.replay}`);
+  lines.push(`Observability: request IDs ${appMap.observability.requestIds}, events ${appMap.observability.events}, replay ${appMap.observability.replay}`);
   lines.push(
-    appMap.database.lifecycle === 'enabled'
+    appMap.database.status === 'enabled'
       ? `Database: ${appMap.database.client ?? 'configured'}${appMap.database.environment ? ` (${appMap.database.environment})` : ''}`
       : 'Database: disabled'
   );

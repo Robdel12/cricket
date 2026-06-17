@@ -23,7 +23,7 @@ import {
 } from './fixtures/http.js';
 
 describe('Cricket HTTP runtime', () => {
-  it('emits safe lifecycle events with request IDs, route identity, and replay', async () => {
+  it('emits safe request events with request IDs, route identity, and replay', async () => {
     let events = [];
     let mutatedEvents = [];
     let loggerChildren = [];

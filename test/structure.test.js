@@ -309,7 +309,7 @@ describe('Cricket CLI', () => {
     ]);
 
     assert.match(result.stdout, /Cricket app/);
-    assert.match(result.stdout, /Observability: request IDs default, lifecycle disabled, replay disabled/);
+    assert.match(result.stdout, /Observability: request IDs default, events disabled, replay disabled/);
     assert.match(result.stdout, /Domains/);
     assert.match(result.stdout, /build/);
     assert.match(result.stdout, /validations: BuildCreateInput/);
@@ -381,8 +381,8 @@ describe('Cricket CLI', () => {
       disabledAppPath
     ]);
 
-    assert.match(result.stdout, /Observability: request IDs custom, lifecycle enabled, replay terminal events/);
-    assert.match(disabled.stdout, /Observability: request IDs default, lifecycle disabled, replay disabled/);
+    assert.match(result.stdout, /Observability: request IDs custom, events enabled, replay terminal events/);
+    assert.match(disabled.stdout, /Observability: request IDs default, events disabled, replay disabled/);
   });
 
   it('writes OpenAPI docs for a real Cricket app module', async () => {

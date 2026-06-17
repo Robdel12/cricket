@@ -157,7 +157,7 @@ export let app = defineCricketApp({
   middleware: [readSession()],
   context({ request }) {
     // Add app-specific request facts. Cricket already passes dependencies,
-    // db, logger, services, and trace through the base context.
+    // lifecycle, db, logger, services, and trace through the base context.
     return {
       requestId: request.id
     };
@@ -509,7 +509,7 @@ Cricket also keeps sparse, monotonic timings at the HTTP boundary: middleware,
 route match, validation, rules, handler, response finish, and close. They show
 where a request spent time without turning logs into a firehose.
 
-Cricket emits safe lifecycle events from the HTTP runtime when an app provides
+Cricket emits safe request events from the HTTP runtime when an app provides
 `observability.observe`.
 
 ```js
@@ -529,7 +529,7 @@ They do not include raw auth headers, cookie values, query values, request
 bodies, response bodies, or `Set-Cookie` values.
 
 The terminal response event includes a replay list for that request. Replay is a
-plain lifecycle artifact, not a second logging system.
+plain request artifact, not a second logging system.
 
 Cricket wraps endpoint handlers in request-scoped spans by default. The span
 name comes from `operationId` when you provide one, or from the method and path
@@ -609,8 +609,8 @@ directory is `api/migrations/`; pass `--env name` to run against a specific
 database environment.
 
 `trace` reads newline-delimited JSON logs from stdin and prints a
-human-readable request timeline for one `requestId`, including lifecycle
-timings and any recorded spans.
+human-readable request timeline for one `requestId`, including request timings
+and any recorded spans.
 
 `init agents` writes lightweight guidance for people and agents working inside a
 Cricket app. It augments `AGENTS.md` and installs the repo-local skill at
