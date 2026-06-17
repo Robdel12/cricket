@@ -61,6 +61,9 @@ obvious in every change.
 - Logging is framework-owned. Apps may configure or extend the logger, but the
   runtime should pass one Cricket logger shape through setup, services, rules,
   handlers, middleware, startup, shutdown, and errors.
+- Runtime lifecycle state is framework-owned. Apps may read `lifecycle` from
+  setup, services, middleware, context, handlers, and shutdown hooks, but
+  product health, queues, workers, and deploy checks stay app-owned.
 - HTTP runtime files live in `src/http/` and must stay Cricket-owned.
   Persistence helpers live in `src/persistence/`.
 - The Knex helper is not an ORM. Keep table design, migrations, mapping, and

@@ -193,6 +193,7 @@ describe('Cricket CLI', () => {
     assert.match(agents, /api\/workers/);
     assert.match(agents, /api\/migrations/);
     assert.match(agents, /api\/dev/);
+    assert.match(agents, /lifecycle/);
     assert.match(agents, /\*\.test\.js/);
     assert.match(skill, /name: cricket-api/);
     assert.match(skill, /OpenAPI generation/);
@@ -200,6 +201,7 @@ describe('Cricket CLI', () => {
     assert.match(skill, /api\/middleware/);
     assert.match(skill, /api\/workers/);
     assert.match(skill, /api\/dev/);
+    assert.match(skill, /read-only runtime lifecycle/);
     assert.match(skill, /domain-local `\*\.test\.js`/);
   });
 
