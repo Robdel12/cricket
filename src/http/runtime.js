@@ -16,6 +16,7 @@ import {
 } from '../errors.js';
 import { resolveLogger } from '../logger.js';
 import { normalizeObservability } from '../observability.js';
+import { createDatabaseConnection } from '../persistence/database.js';
 import {
   createNoopTrace,
   createTrace
@@ -65,6 +66,44 @@ function normalizeSetupResult(result) {
     dependencies: result,
     services: {},
     cleanup: undefined
+  };
+}
+
+async function cleanupRuntime(setupCleanup, db) {
+  let cleanupError;
+
+  try {
+    if (setupCleanup)
+      await setupCleanup();
+  } catch (error) {
+    cleanupError = error;
+  } finally {
+    try {
+      if (db)
+        await db.destroy();
+    } catch (error) {
+      cleanupError ??= error;
+    }
+  }
+
+  if (cleanupError)
+    throw cleanupError;
+}
+
+function setupDependenciesFor(setup, db) {
+  if (!db)
+    return setup;
+
+  if (Object.hasOwn(setup.dependencies, 'db'))
+    throw new Error('setup dependencies must not include db when database is configured');
+
+  return {
+    ...setup,
+    dependencies: {
+      db,
+      ...setup.dependencies
+    },
+    cleanup: () => cleanupRuntime(setup.cleanup, db)
   };
 }
 
@@ -791,74 +830,100 @@ export async function createCricketRuntime(cricketApp, {
   let observability = normalizeObservability(appContract.observability, {
     logger
   });
-  let setup = normalizeSetupResult(
-    appContract.setup ? await appContract.setup({
-      app: appContract,
-      logger,
-      trace: createNoopTrace()
-    }) : undefined
-  );
-  let domainServices = createServices(appContract.domains, {
-    ...setup.dependencies,
-    logger
-  });
-  let defaultServices = {
-    ...domainServices,
-    ...setup.services
-  };
-  let services = defaultServices;
+  let db = appContract.database
+    ? createDatabaseConnection(appContract.database, {
+      baseUrl
+    })
+    : undefined;
+  let setup;
 
-  if (typeof appContract.services === 'function') {
-    services = await appContract.services({
+  try {
+    setup = setupDependenciesFor(
+      normalizeSetupResult(
+        appContract.setup ? await appContract.setup({
+          app: appContract,
+          db,
+          logger,
+          trace: createNoopTrace()
+        }) : undefined
+      ),
+      db
+    );
+  } catch (error) {
+    if (db)
+      await db.destroy();
+
+    throw error;
+  }
+
+  try {
+    let domainServices = createServices(appContract.domains, {
+      ...setup.dependencies,
+      logger
+    });
+    let defaultServices = {
+      ...domainServices,
+      ...setup.services
+    };
+    let services = defaultServices;
+
+    if (typeof appContract.services === 'function') {
+      services = await appContract.services({
+        app: appContract,
+        dependencies: setup.dependencies,
+        domainServices,
+        logger,
+        services: defaultServices
+      });
+    } else if (appContract.services) {
+      services = appContract.services;
+    }
+
+    let runtimeBag = {
       app: appContract,
       dependencies: setup.dependencies,
       domainServices,
       logger,
-      services: defaultServices
+      services
+    };
+    let middleware = await resolveMiddleware(appContract.middleware, runtimeBag);
+    let prefixedEndpoints = appContract.endpoints.map(endpoint =>
+      endpointWithPrefix(endpoint, appContract.prefix)
+    );
+    let routes = prepareRoutes(prefixedEndpoints);
+    let handle = createRuntimeHandler({
+      appContract,
+      logger,
+      observability,
+      routes,
+      setup,
+      services,
+      middleware
     });
-  } else if (appContract.services) {
-    services = appContract.services;
+    let app = Object.assign(handle, {
+      handle,
+      listen(...args) {
+        let server = createNodeServer(handle, logger);
+        return server.listen(...args);
+      }
+    });
+
+    return {
+      app,
+      contract: appContract,
+      dependencies: setup.dependencies,
+      handle,
+      logger,
+      observability,
+      services,
+      cleanup: setup.cleanup
+    };
+  } catch (error) {
+    if (setup.cleanup)
+      await setup.cleanup();
+
+    throw error;
   }
-
-  let runtimeBag = {
-    app: appContract,
-    dependencies: setup.dependencies,
-    domainServices,
-    logger,
-    services
-  };
-  let middleware = await resolveMiddleware(appContract.middleware, runtimeBag);
-  let prefixedEndpoints = appContract.endpoints.map(endpoint =>
-    endpointWithPrefix(endpoint, appContract.prefix)
-  );
-  let routes = prepareRoutes(prefixedEndpoints);
-  let handle = createRuntimeHandler({
-    appContract,
-    logger,
-    observability,
-    routes,
-    setup,
-    services,
-    middleware
-  });
-  let app = Object.assign(handle, {
-    handle,
-    listen(...args) {
-      let server = createNodeServer(handle, logger);
-      return server.listen(...args);
-    }
-  });
-
-  return {
-    app,
-    contract: appContract,
-    dependencies: setup.dependencies,
-    handle,
-    logger,
-    observability,
-    services,
-    cleanup: setup.cleanup
-  };
 }
 
 /**

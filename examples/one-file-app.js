@@ -1,5 +1,3 @@
-import knex from 'knex';
-
 import {
   createKnexRepository,
   defineCricketApp,
@@ -130,18 +128,17 @@ export let app = defineCricketApp({
     service: 'one-file-api',
     level: process.env.LOG_LEVEL ?? 'info'
   },
+  database: {
+    client: 'sqlite3',
+    connection: {
+      filename: ':memory:'
+    },
+    useNullAsDefault: true
+  },
   domains: [
     projectDomain
   ],
-  async setup() {
-    let db = knex({
-      client: 'sqlite3',
-      connection: {
-        filename: ':memory:'
-      },
-      useNullAsDefault: true
-    });
-
+  async setup({ db }) {
     await db.schema.createTable('project', table => {
       table.string('id').primary();
       table.string('owner_id').notNullable();
@@ -155,15 +152,6 @@ export let app = defineCricketApp({
       slug: 'signal-notes',
       name: 'Signal Notes'
     });
-
-    return {
-      dependencies: {
-        db
-      },
-      cleanup() {
-        return db.destroy();
-      }
-    };
   },
   middleware: [readUser()]
 });

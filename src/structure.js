@@ -259,7 +259,7 @@ export function formatScaffoldResult(result) {
   lines.push(
     '',
     'Next',
-    `  - Add the ${result.domain.tableName} table or migration in your app.`,
+    `  - Add the ${result.domain.tableName} table migration in api/migrations/.`,
     `  - Point \`defineCricketApp({ domains })\` at the domain root (${result.root}).`,
     '  - Run `pnpm cricket inspect <app-module>` and `pnpm cricket docs <app-module> --out openapi.json`.'
   );
@@ -377,7 +377,7 @@ export function formatAppScaffoldResult(result) {
     '',
     'Next',
     '  - Add domains with `pnpm cricket new domain project api/domains`.',
-    '  - Point your app-owned Knex config at `api/migrations` if you use Knex.',
+    '  - Configure `defineCricketApp({ database })` and put migrations in `api/migrations` if the app persists data.',
     '  - Run `pnpm cricket inspect api/index.js` and `pnpm cricket docs api/index.js --out openapi.json`.'
   );
 
@@ -417,10 +417,10 @@ Cricket owns the architecture. Your app owns the behavior.
 - \`api/middleware/\` contains request middleware such as auth extraction, request IDs, rate limits, raw webhooks, CORS, and frontend fallbacks.
 - \`api/services/\` contains narrow app-wide capabilities that are not owned by one domain.
 - \`api/workers/\` contains background worker entrypoints that call services.
-- \`api/migrations/\` contains app-owned database migrations. Point your own Knex config or command at this folder.
+- \`api/migrations/\` contains app-owned database migrations for \`cricket migrate\`.
 - \`api/dev/\` contains local-only developer support code. It is not product architecture and must not be required by production runtime.
 
-First-class means scaffolded, documented, inspectable, and easy for agents to follow. It does not mean Cricket secretly owns auth policy, migrations, queues, local tooling, or deployment.
+First-class means scaffolded, documented, inspectable, and easy for agents to follow. It does not mean Cricket secretly owns auth policy, table design, queues, local tooling, or deployment.
 
 ## Domain Shape
 
@@ -478,7 +478,7 @@ Start with \`pnpm cricket inspect api/index.js\`, then read \`api/index.js\` and
 - \`api/middleware/\` is for request middleware, not domain authorization.
 - \`api/services/\` is for narrow app-wide capabilities not owned by one domain.
 - \`api/workers/\` is for background worker entrypoints that call services.
-- \`api/migrations/\` is app-owned. Configure Knex there from the app, not Cricket.
+- \`api/migrations/\` is app-owned migration history for the app's Cricket database contract.
 - \`api/dev/\` is for local-only development support. If code touches product behavior, move that behavior into a real service, worker, migration, or domain.
 
 ## Change Flow
@@ -499,11 +499,12 @@ Start with \`pnpm cricket inspect api/index.js\`, then read \`api/index.js\` and
 pnpm cricket init app .
 pnpm cricket inspect api/index.js
 pnpm cricket docs api/index.js --out openapi.json
+pnpm cricket migrate status api/index.js
 pnpm cricket new domain project api/domains
 pnpm test
 \`\`\`
 
-After scaffolding a domain, make sure the app's \`domains\` value points at the domain root, add the table or migration if this domain persists data, then regenerate OpenAPI.
+After scaffolding a domain, make sure the app's \`domains\` value points at the domain root, add the table migration in \`api/migrations/\` if this domain persists data, then regenerate OpenAPI.
 `
 };
 

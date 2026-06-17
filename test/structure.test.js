@@ -6,6 +6,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
+import knex from 'knex';
 
 let execFileAsync = promisify(execFile);
 
@@ -15,6 +16,43 @@ async function tempRoot() {
 
 async function assertDirectoryExists(directoryPath) {
   assert.ok(await fs.stat(directoryPath).then(stat => stat.isDirectory()));
+}
+
+async function writeSqliteAppFixture() {
+  let root = await tempRoot();
+  let appPath = path.join(root, 'app.js');
+  let databasePath = path.join(root, 'app.sqlite');
+  let migrationsDir = path.join(root, 'api', 'migrations');
+  let cricketUrl = pathToFileURL(path.resolve('src/index.js')).href;
+
+  await fs.mkdir(migrationsDir, {
+    recursive: true
+  });
+  await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({
+    type: 'module'
+  }));
+  await fs.writeFile(appPath, `
+    import { defineCricketApp } from '${cricketUrl}';
+
+    export let app = defineCricketApp({
+      database: {
+        client: 'sqlite3',
+        connection: {
+          filename: ${JSON.stringify(databasePath)}
+        },
+        useNullAsDefault: true
+      },
+      endpoints: [],
+      models: []
+    });
+  `);
+
+  return {
+    appPath,
+    databasePath,
+    migrationsDir,
+    root
+  };
 }
 
 describe('Cricket CLI', () => {
@@ -493,5 +531,100 @@ describe('Cricket CLI', () => {
     assert.match(stdout, /trace\.span\.finished prepare build 18ms status=ok/);
     assert.match(stdout, /\n\s{4}2026-06-15T11:00:00\.012Z WARN trace\.span\.finished load fixture 6ms status=error error=MISSING_FIXTURE/);
     assert.match(stdout, /http\.response\.finished createBuild status=201/);
+  });
+
+  it('runs database migrations from a Cricket app definition', async () => {
+    let {
+      appPath,
+      databasePath,
+      migrationsDir
+    } = await writeSqliteAppFixture();
+
+    await fs.writeFile(path.join(migrationsDir, '20260616000000_create_projects.js'), `
+      export async function up(db) {
+        await db.schema.createTable('projects', table => {
+          table.increments('id');
+          table.string('name').notNullable();
+        });
+        await db('projects').insert({ name: 'Launch Plan' });
+      }
+
+      export async function down(db) {
+        await db.schema.dropTable('projects');
+      }
+    `);
+
+    let latest = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'migrate',
+      'latest',
+      appPath
+    ]);
+    let db = knex({
+      client: 'sqlite3',
+      connection: {
+        filename: databasePath
+      },
+      useNullAsDefault: true
+    });
+
+    try {
+      assert.match(latest.stdout, /Migrations:/);
+      assert.match(latest.stdout, /20260616000000_create_projects\.js/);
+      assert.deepEqual(await db('projects').select('name'), [
+        {
+          name: 'Launch Plan'
+        }
+      ]);
+    } finally {
+      await db.destroy();
+    }
+
+    let list = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'migrate',
+      'list',
+      appPath
+    ]);
+    let version = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'migrate',
+      'current-version',
+      appPath
+    ]);
+    let rollback = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'migrate',
+      'rollback',
+      appPath
+    ]);
+
+    assert.match(list.stdout, /Completed:/);
+    assert.match(list.stdout, /20260616000000_create_projects\.js/);
+    assert.match(version.stdout, /Current version: 20260616000000/);
+    assert.match(rollback.stdout, /Migrations run:/);
+    assert.match(rollback.stdout, /20260616000000_create_projects\.js/);
+  });
+
+  it('creates migration files in the Cricket migrations directory by default', async () => {
+    let {
+      appPath,
+      root
+    } = await writeSqliteAppFixture();
+
+    let result = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'migrate',
+      'make',
+      appPath,
+      'create_builds'
+    ]);
+
+    assert.match(result.stdout, /api\/migrations/);
+
+    let files = await fs.readdir(path.join(root, 'api', 'migrations'));
+
+    assert.equal(files.length, 1);
+    assert.match(files[0], /create_builds\.js$/);
   });
 });

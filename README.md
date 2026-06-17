@@ -87,7 +87,7 @@ api/
 | `middleware/` | Request middleware: auth extraction, request IDs, CORS, rate limits, raw webhooks, frontend fallbacks. | Domain authorization; put that in `*.rules.js`. |
 | `services/` | Narrow shared capabilities: email, media storage, payment clients, caches, external clients. | Domain-specific product logic. |
 | `workers/` | Background entrypoints that call services. | A second product layer. |
-| `migrations/` | App-owned Knex migrations. | Hidden Cricket database behavior. |
+| `migrations/` | App-owned Knex migrations for `cricket migrate`. | Product data policy or query design. |
 | `dev/` | Local-only helpers, fixture builders, reset/setup scripts, smoke-test harnesses. | Production runtime or product behavior. |
 
 If code affects product behavior, design it into a domain, app service, worker,
@@ -98,7 +98,6 @@ middleware, or migration. `dev/` is local-only.
 Put the app contract in your normal Node entrypoint, usually `api/index.js`.
 
 ```js
-import knex from 'knex';
 import { defineCricketApp, startCricketApp } from '@robdel12/cricket';
 
 function readSession() {
@@ -126,31 +125,24 @@ export let app = defineCricketApp({
     service: 'project-api',
     level: process.env.LOG_LEVEL ?? 'info'
   },
+  database: {
+    client: 'pg',
+    connection: process.env.DATABASE_URL
+  },
   // Cricket scans this folder for standard domain files that exist.
   domains: './domains',
-  async setup() {
-    // Create app-wide dependencies once at startup.
-    let db = knex({
-      client: 'pg',
-      connection: process.env.DATABASE_URL
-    });
-
-    // Return the things Cricket should pass into routes, rules, and cleanup.
+  async setup({ db }) {
     return {
-      dependencies: { db },
       services: {
         mailer: createMailer(),
         sessions: createSessionService({ db })
-      },
-      cleanup() {
-        return db.destroy();
       }
     };
   },
   middleware: [readSession()],
   context({ request }) {
     // Add app-specific request facts. Cricket already passes dependencies,
-    // logger, services, and trace through the base context.
+    // db, logger, services, and trace through the base context.
     return {
       requestId: request.id
     };
@@ -334,6 +326,38 @@ export function createProjectService({ db, ids }) {
 `createKnexRepository()` handles row parsing and small CRUD helpers. It is not an
 ORM. Use raw Knex when the query is clearer.
 
+## Database
+
+Cricket uses Knex as the database path. Put the config on the app contract:
+
+```js
+export let app = defineCricketApp({
+  database: {
+    client: 'pg',
+    connection: process.env.DATABASE_URL
+  }
+});
+```
+
+Cricket creates one `db` handle for the runtime, passes it through setup,
+services, rules, middleware, and handlers, then destroys it during cleanup.
+Migrations live in `api/migrations/` by convention. Only set
+`database.migrations.directory` when an app is intentionally changing that
+shape.
+
+```sh
+pnpm cricket migrate make api/index.js create_projects
+pnpm cricket migrate latest api/index.js
+pnpm cricket migrate status api/index.js
+pnpm cricket migrate list api/index.js
+pnpm cricket migrate current-version api/index.js
+pnpm cricket migrate rollback api/index.js
+```
+
+Cricket does not run migrations on server start, design tables, hide data
+policy, or replace Knex. It just makes the database contract and migration
+commands visible from the same app definition.
+
 ## Rule
 
 Rules answer whether the request can continue.
@@ -514,6 +538,7 @@ pnpm cricket init app .
 pnpm cricket new domain project api/domains
 pnpm cricket inspect api/index.js
 pnpm cricket docs api/index.js --out openapi.json
+pnpm cricket migrate latest api/index.js
 pnpm cricket init agents .
 ```
 
@@ -528,6 +553,9 @@ pnpm cricket init agents .
 services, route operation IDs, and observability posture for an app module.
 
 `docs` writes OpenAPI from the same app module your server runs.
+
+`migrate` runs Knex migrations from the app's `database` contract. The default
+directory is `api/migrations/`.
 
 `trace` reads newline-delimited JSON logs from stdin and prints a
 human-readable request timeline for one `requestId`, including lifecycle

@@ -263,12 +263,14 @@ the code easier for LLM agents to extend safely.
 
 ## What Cricket Is Not
 
-Cricket is not an ORM. The app owns migrations, table design, query strategy,
-indexes, and product-specific data behavior.
+Cricket is not an ORM. It blesses Knex as the database path and can own the
+runtime handle plus migration CLI, but the app still owns migrations, table
+design, query strategy, indexes, and product-specific data behavior.
 
-If an app uses Knex, its own `knexfile.js` or migration command should point at
-`api/migrations/`. Cricket can scaffold and document the folder, but it should
-not secretly configure database behavior.
+`api/migrations/` is the convention. Apps should put their migration history
+there and let `defineCricketApp({ database })` power runtime setup and
+`cricket migrate`. Cricket should not run migrations on server start or invent a
+second database abstraction.
 
 Cricket is not a generic backend platform. It is opinionated about API
 architecture, but it should stay small and plain.
@@ -290,6 +292,7 @@ pnpm cricket init app .
 pnpm cricket new domain project api/domains
 pnpm cricket inspect api/index.js
 pnpm cricket docs api/index.js --out openapi.json
+pnpm cricket migrate status api/index.js
 pnpm cricket init agents .
 ```
 

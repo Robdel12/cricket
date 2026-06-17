@@ -1,6 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import request from 'supertest';
 
@@ -216,6 +219,137 @@ describe('Cricket HTTP runtime', () => {
       path: '/api/projects/:projectId',
       operationId: docs.paths['/api/projects/{projectId}'].get.operationId
     });
+  });
+
+  it('threads the configured database through setup and request context', async () => {
+    let root = await fs.mkdtemp(path.join(os.tmpdir(), 'cricket-runtime-'));
+    let databasePath = path.join(root, 'app.sqlite');
+    let cleanupCalled = false;
+    let endpoint = defineEndpoint({
+      method: 'post',
+      path: '/projects',
+      body: z.object({
+        name: z.string()
+      }),
+      async handler({ db, request }) {
+        await db('projects').insert({
+          name: request.body.name
+        });
+
+        let project = await db('projects')
+          .where({
+            name: request.body.name
+          })
+          .first();
+
+        return created({
+          id: project.id,
+          name: project.name
+        });
+      }
+    });
+    let cricketApp = defineCricketApp({
+      database: {
+        client: 'sqlite3',
+        connection: {
+          filename: databasePath
+        },
+        useNullAsDefault: true
+      },
+      endpoints: [endpoint],
+      async setup({ db }) {
+        await db.schema.createTable('projects', table => {
+          table.increments('id');
+          table.string('name').notNullable();
+        });
+
+        return {
+          cleanup() {
+            cleanupCalled = true;
+          }
+        };
+      }
+    });
+    let runtime = await createCricketRuntime(cricketApp, {
+      logger() {}
+    });
+
+    try {
+      let response = await request(runtime.app)
+        .post('/projects')
+        .send({
+          name: 'Launch Plan'
+        });
+
+      assert.equal(response.status, 201, JSON.stringify(response.body));
+      assert.deepEqual(response.body, {
+        id: 1,
+        name: 'Launch Plan'
+      });
+    } finally {
+      await runtime.cleanup();
+    }
+
+    assert.equal(cleanupCalled, true);
+  });
+
+  it('rejects setup-provided db dependencies when Cricket owns the database', async () => {
+    let cricketApp = defineCricketApp({
+      database: {
+        client: 'sqlite3',
+        connection: {
+          filename: ':memory:'
+        },
+        useNullAsDefault: true
+      },
+      endpoints: [],
+      setup({ db }) {
+        return {
+          dependencies: {
+            db
+          }
+        };
+      }
+    });
+
+    await assert.rejects(
+      createCricketRuntime(cricketApp, {
+        logger() {}
+      }),
+      /must not include db/
+    );
+  });
+
+  it('cleans up the configured database when runtime assembly fails', async () => {
+    let cleanupCalled = false;
+    let cricketApp = defineCricketApp({
+      database: {
+        client: 'sqlite3',
+        connection: {
+          filename: ':memory:'
+        },
+        useNullAsDefault: true
+      },
+      endpoints: [],
+      setup() {
+        return {
+          cleanup() {
+            cleanupCalled = true;
+          }
+        };
+      },
+      middleware() {
+        throw new Error('middleware failed');
+      }
+    });
+
+    await assert.rejects(
+      createCricketRuntime(cricketApp, {
+        logger() {}
+      }),
+      /middleware failed/
+    );
+    assert.equal(cleanupCalled, true);
   });
 
 

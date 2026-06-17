@@ -18,6 +18,10 @@ import {
   traceLogs
 } from '../src/log-trace.js';
 import {
+  formatMigrationResult,
+  runMigrationCommand
+} from '../src/persistence/migrations.js';
+import {
   formatAppScaffoldResult,
   formatAgentScaffoldResult,
   formatScaffoldResult,
@@ -50,6 +54,12 @@ function usage() {
   cricket init agents [root] [--force]
   cricket inspect <appModule>
   cricket docs <appModule> [--out openapi.json]
+  cricket migrate latest <appModule>
+  cricket migrate rollback <appModule> [--all]
+  cricket migrate status <appModule>
+  cricket migrate list <appModule>
+  cricket migrate current-version <appModule>
+  cricket migrate make <appModule> <name>
   cricket trace <requestId>
 
 Examples:
@@ -57,7 +67,8 @@ Examples:
   cricket new domain project api/domains
   cricket init agents .
   cricket inspect api/index.js
-  cricket docs api/index.js --out openapi.json`;
+  cricket docs api/index.js --out openapi.json
+  cricket migrate latest api/index.js`;
 }
 
 /**
@@ -184,6 +195,32 @@ async function runTrace(args) {
 }
 
 /**
+ * Run a Knex migration command through the Cricket app database contract.
+ *
+ * @param {string[]} args - Raw CLI arguments after `cricket`.
+ * @returns {Promise<void>} Resolves after the migration command is printed.
+ */
+async function runMigrate(args) {
+  let positional = withoutFlags(args);
+  let [, command, appModule, name] = positional;
+
+  if (!command)
+    throw new Error('Migrate command is required');
+
+  if (!appModule)
+    throw new Error('App module is required');
+
+  let result = await runMigrationCommand({
+    command,
+    appModule,
+    name,
+    all: hasFlag(args, '--all')
+  });
+
+  console.log(formatMigrationResult(result));
+}
+
+/**
  * Dispatch the Cricket CLI entrypoint from argv.
  *
  * @param {string[]} [argv=process.argv.slice(2)] - Arguments passed to the CLI.
@@ -206,6 +243,9 @@ export async function runCli(argv = process.argv.slice(2)) {
 
   if (command === 'docs')
     return await runDocs(argv);
+
+  if (command === 'migrate')
+    return await runMigrate(argv);
 
   if (command === 'trace')
     return await runTrace(argv);

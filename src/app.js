@@ -7,6 +7,7 @@ import {
   loadDomains
 } from './domain.js';
 import { flattenRoutes } from './http/router.js';
+import { normalizeDatabaseConfig } from './persistence/database.js';
 
 function hasLoadedDomains(domains) {
   return Array.isArray(domains) && domains.every(domain =>
@@ -36,11 +37,13 @@ export function defineCricketApp(options = {}) {
   let prefix = options.prefix ?? '';
   let trustProxy = options.trustProxy ?? false;
   let middleware = options.middleware ?? [];
+  let database = normalizeDatabaseConfig(options.database);
 
   return {
     ...options,
     domains,
     allowedHosts,
+    ...(database === undefined ? {} : { database }),
     prefix,
     trustProxy,
     middleware,
