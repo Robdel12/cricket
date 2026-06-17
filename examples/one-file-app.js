@@ -2,6 +2,7 @@ import knex from 'knex';
 
 import {
   createKnexRepository,
+  deprecateEndpoint,
   defineCricketApp,
   defineEndpoint,
   defineModel,
@@ -99,10 +100,23 @@ let readProject = defineEndpoint({
   }
 });
 
+let readLegacyProject = deprecateEndpoint({
+  ...readProject,
+  path: '/legacy/projects/:slug',
+  operationId: 'legacyProjects.read'
+}, {
+  sunset: '2026-09-01',
+  replacement: 'GET /projects/:slug',
+  reason: 'Use the current project route.'
+});
+
 let projectDomain = {
   name: 'project',
   models: [Project],
-  endpoints: [readProject],
+  endpoints: [
+    readProject,
+    readLegacyProject
+  ],
   services: {
     project: createProjectService
   }

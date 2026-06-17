@@ -23,6 +23,7 @@ export {
 
 export {
   defineEndpoint,
+  deprecateEndpoint,
   created,
   ok
 } from './endpoint.js';

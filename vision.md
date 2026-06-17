@@ -178,6 +178,13 @@ handler, response schema, and OpenAPI metadata. Routes should read like a
 concise product flow: validate input, run rules, call services, serialize
 output.
 
+Deprecation is route metadata, not behavior control. Use a composable endpoint
+wrapper to mark supported-but-going-away routes so docs, inspect output,
+and observability can surface the same signal. HTTP deprecation headers should
+stay opt-in for public APIs that need wire-level migration hints. Cricket should
+not disable, redirect, or change validation for deprecated endpoints; deleting
+the route later remains an app-owned product decision.
+
 ## Source Ingest Flow
 
 ```text
