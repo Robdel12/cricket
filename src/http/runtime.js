@@ -28,6 +28,7 @@ import {
   createBaseRequest,
   safeRequestSnapshot
 } from './request.js';
+import { createRuntimeLifecycle } from './lifecycle.js';
 import {
   allowedMethodsForPath,
   endpointWithPrefix,
@@ -39,6 +40,8 @@ import {
   safeResponseSnapshot,
   writeHttpResponse
 } from './response.js';
+
+let lifecycleControllerKey = Symbol('cricket.lifecycleController');
 
 function toArray(value) {
   if (!value)
@@ -104,6 +107,20 @@ function setupDependenciesFor(setup, db) {
       ...setup.dependencies
     },
     cleanup: () => cleanupRuntime(setup.cleanup, db)
+  };
+}
+
+function setupWithLifecycleCleanup(setup, lifecycleController) {
+  return {
+    ...setup,
+    cleanup: async () => {
+      try {
+        if (setup.cleanup)
+          await setup.cleanup();
+      } finally {
+        lifecycleController.stopped();
+      }
+    }
   };
 }
 
@@ -335,6 +352,7 @@ function logRuntimeEvent(logger, level, event, metadata) {
 }
 
 function baseContextFor({
+  lifecycle,
   logger,
   services,
   setup,
@@ -342,6 +360,7 @@ function baseContextFor({
 }) {
   return {
     ...setup.dependencies,
+    lifecycle,
     logger,
     services,
     trace
@@ -360,6 +379,7 @@ async function resolveContext(appContract, {
     app: appContract,
     request,
     dependencies: setup.dependencies,
+    lifecycle: baseContext.lifecycle,
     logger: baseContext.logger,
     services: baseContext.services,
     trace: baseContext.trace
@@ -553,6 +573,7 @@ async function reportRequestError(appContract, {
 
 function createRuntimeHandler({
   appContract,
+  lifecycle,
   logger,
   observability,
   routes,
@@ -639,6 +660,7 @@ function createRuntimeHandler({
         startedAt: timing.startedAt
       });
       let context = baseContextFor({
+        lifecycle,
         logger: requestLogger,
         services,
         setup,
@@ -821,6 +843,8 @@ export async function createCricketRuntime(cricketApp, {
   baseUrl,
   logger: runtimeLogger
 } = {}) {
+  let lifecycleController = createRuntimeLifecycle();
+  let { lifecycle } = lifecycleController;
   let appContract = await resolveCricketApp(cricketApp, {
     baseUrl
   });
@@ -843,15 +867,21 @@ export async function createCricketRuntime(cricketApp, {
         appContract.setup ? await appContract.setup({
           app: appContract,
           db,
+          lifecycle,
           logger,
           trace: createNoopTrace()
         }) : undefined
       ),
       db
     );
+    setup = setupWithLifecycleCleanup(setup, lifecycleController);
   } catch (error) {
-    if (db)
-      await db.destroy();
+    try {
+      if (db)
+        await db.destroy();
+    } finally {
+      lifecycleController.stopped();
+    }
 
     throw error;
   }
@@ -859,6 +889,7 @@ export async function createCricketRuntime(cricketApp, {
   try {
     let domainServices = createServices(appContract.domains, {
       ...setup.dependencies,
+      lifecycle,
       logger
     });
     let defaultServices = {
@@ -872,6 +903,7 @@ export async function createCricketRuntime(cricketApp, {
         app: appContract,
         dependencies: setup.dependencies,
         domainServices,
+        lifecycle,
         logger,
         services: defaultServices
       });
@@ -883,6 +915,7 @@ export async function createCricketRuntime(cricketApp, {
       app: appContract,
       dependencies: setup.dependencies,
       domainServices,
+      lifecycle,
       logger,
       services
     };
@@ -893,6 +926,7 @@ export async function createCricketRuntime(cricketApp, {
     let routes = prepareRoutes(prefixedEndpoints);
     let handle = createRuntimeHandler({
       appContract,
+      lifecycle,
       logger,
       observability,
       routes,
@@ -907,20 +941,26 @@ export async function createCricketRuntime(cricketApp, {
         return server.listen(...args);
       }
     });
-
-    return {
+    let runtime = {
       app,
       contract: appContract,
       dependencies: setup.dependencies,
       handle,
+      lifecycle,
       logger,
       observability,
       services,
       cleanup: setup.cleanup
     };
+
+    Object.defineProperty(runtime, lifecycleControllerKey, {
+      value: lifecycleController
+    });
+    lifecycleController.ready();
+
+    return runtime;
   } catch (error) {
-    if (setup.cleanup)
-      await setup.cleanup();
+    await setup.cleanup();
 
     throw error;
   }
@@ -980,6 +1020,8 @@ export async function startCricketApp(cricketApp, {
     let shutdownError;
 
     try {
+      runtime[lifecycleControllerKey].shuttingDown(signal);
+
       if (signal && runtime.contract.onShutdown)
         await runtime.contract.onShutdown({
           signal,

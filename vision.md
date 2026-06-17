@@ -205,6 +205,11 @@ artifacts, and always-on request timings. Those timings should stay tiny and
 monotonic so the default path explains where time went without turning into a
 heavy observability subsystem.
 
+The HTTP runtime also owns its own lifecycle state: starting, ready, shutting
+down, and stopped. Apps may read that state through the lifecycle capability,
+but they should compose their own product health, readiness, workers, queues,
+and deploy checks outside the framework.
+
 Deeper spans should be explicit. Apps can use `trace.span(name, metadata, fn)`
 for meaningful workflow stages, and the trace data should stay request-scoped,
 safe, and scalar. Database timing can exist at explicit repository or Knex

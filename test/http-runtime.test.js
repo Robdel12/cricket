@@ -320,6 +320,82 @@ describe('Cricket HTTP runtime', () => {
     );
   });
 
+  it('threads read-only lifecycle state through runtime setup and requests', async () => {
+    let events = [];
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/lifecycle',
+      handler({ lifecycle }) {
+        let status = lifecycle.status();
+
+        assert.equal(lifecycle.phase(), 'ready');
+        assert.equal(lifecycle.isReady(), true);
+        assert.equal(Object.isFrozen(status), true);
+        assert.equal(status.phase, 'ready');
+        assert.equal(lifecycle.ready, undefined);
+        assert.throws(() => {
+          status.phase = 'stopped';
+        }, TypeError);
+
+        events.push(`handler:${lifecycle.phase()}`);
+
+        return ok({
+          phase: lifecycle.phase()
+        });
+      }
+    });
+    let cricketApp = defineCricketApp({
+      endpoints: [endpoint],
+      setup({ lifecycle }) {
+        events.push(`setup:${lifecycle.phase()}`);
+      },
+      services({ lifecycle, services }) {
+        events.push(`services:${lifecycle.phase()}`);
+        return services;
+      },
+      middleware({ lifecycle }) {
+        events.push(`middleware:${lifecycle.phase()}`);
+
+        return async (requestContext, next) => {
+          events.push(`middleware.run:${requestContext.context.lifecycle.phase()}`);
+          return await next(requestContext);
+        };
+      },
+      context({ lifecycle }) {
+        events.push(`context:${lifecycle.phase()}`);
+      }
+    });
+    let runtime = await createCricketRuntime(cricketApp, {
+      logger() {}
+    });
+
+    try {
+      assert.equal(runtime.lifecycle.phase(), 'ready');
+      assert.equal(runtime.lifecycle.isReady(), true);
+
+      let response = await request(runtime.app)
+        .get('/lifecycle');
+
+      assert.equal(response.status, 200);
+      assert.deepEqual(response.body, {
+        phase: 'ready'
+      });
+    } finally {
+      await runtime.cleanup();
+    }
+
+    assert.equal(runtime.lifecycle.phase(), 'stopped');
+    assert.equal(runtime.lifecycle.isStopped(), true);
+    assert.deepEqual(events, [
+      'setup:starting',
+      'services:starting',
+      'middleware:starting',
+      'middleware.run:ready',
+      'context:ready',
+      'handler:ready'
+    ]);
+  });
+
   it('cleans up the configured database when runtime assembly fails', async () => {
     let cleanupCalled = false;
     let cricketApp = defineCricketApp({
@@ -958,6 +1034,52 @@ describe('Cricket HTTP runtime', () => {
     ]);
     assert.equal(process.listenerCount('SIGINT'), sigintListeners);
     assert.equal(process.listenerCount('SIGTERM'), sigtermListeners);
+  });
+
+  it('marks started runtimes as shutting down before shutdown hooks', async () => {
+    let events = [];
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/health',
+      handler({ lifecycle }) {
+        return ok({
+          phase: lifecycle.phase()
+        });
+      }
+    });
+    let cricketApp = defineCricketApp({
+      endpoints: [endpoint],
+      setup({ lifecycle }) {
+        return {
+          cleanup() {
+            events.push(`cleanup:${lifecycle.phase()}`);
+          }
+        };
+      },
+      onShutdown({ lifecycle, signal }) {
+        events.push(`shutdown:${signal}:${lifecycle.phase()}`);
+        events.push(`shuttingDown:${lifecycle.isShuttingDown()}`);
+      }
+    });
+    let runtime = await startCricketApp(cricketApp, {
+      port: 0,
+      logger() {}
+    });
+
+    assert.equal(runtime.lifecycle.phase(), 'ready');
+
+    await runtime.stop('SIGTERM');
+
+    assert.equal(runtime.lifecycle.phase(), 'stopped');
+    assert.deepEqual(runtime.lifecycle.status(), {
+      phase: 'stopped',
+      signal: 'SIGTERM'
+    });
+    assert.deepEqual(events, [
+      'shutdown:SIGTERM:shutting_down',
+      'shuttingDown:true',
+      'cleanup:shutting_down'
+    ]);
   });
 
 

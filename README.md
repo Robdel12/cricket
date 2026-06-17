@@ -465,8 +465,22 @@ export let projectEndpoints = [
 ```
 
 Handlers receive Cricket input plus the request context. Setup dependencies,
-logger, services, and trace are already there. Add app-specific facts in
+lifecycle, logger, services, and trace are already there. Add app-specific facts in
 `context(...)`, middleware, or rules.
+
+## Runtime Lifecycle
+
+Cricket exposes the HTTP runtime state it already owns through `lifecycle`.
+Apps can read `lifecycle.phase()`, `lifecycle.status()`,
+`lifecycle.isReady()`, `lifecycle.isShuttingDown()`, and
+`lifecycle.isStopped()` from setup, services, middleware, context, handlers, and
+shutdown hooks.
+
+The lifecycle reader is immutable from app code. `status()` returns a frozen
+snapshot, and Cricket keeps phase transitions private inside the runtime.
+
+This is not a health endpoint or readiness system. Compose lifecycle state into
+your own product health checks when it matters.
 
 ## Observability
 
