@@ -85,9 +85,9 @@ api/
 | --- | --- | --- |
 | `domains/` | Product API behavior. | App-wide clients and app-level middleware. |
 | `middleware/` | Request middleware: auth extraction, request IDs, CORS, rate limits, raw webhooks, frontend fallbacks. | Domain authorization; put that in `*.rules.js`. |
-| `services/` | Shared app capabilities: email, media storage, payment clients, caches, cross-domain summaries. | Domain-specific product logic. |
+| `services/` | Narrow shared capabilities: email, media storage, payment clients, caches, external clients. | Domain-specific product logic. |
 | `workers/` | Background entrypoints that call services. | A second product layer. |
-| `migrations/` | App-owned Knex migrations. | Hidden Cricket database behavior. |
+| `migrations/` | App-owned Knex migrations for `cricket migrate`. | Product data policy or query design. |
 | `dev/` | Local-only helpers, fixture builders, reset/setup scripts, smoke-test harnesses. | Production runtime or product behavior. |
 
 If code affects product behavior, design it into a domain, app service, worker,
@@ -98,7 +98,6 @@ middleware, or migration. `dev/` is local-only.
 Put the app contract in your normal Node entrypoint, usually `api/index.js`.
 
 ```js
-import knex from 'knex';
 import { defineCricketApp, startCricketApp } from '@robdel12/cricket';
 
 function readSession() {
@@ -126,34 +125,41 @@ export let app = defineCricketApp({
     service: 'project-api',
     level: process.env.LOG_LEVEL ?? 'info'
   },
+  database: {
+    client: 'pg',
+    defaultEnvironment: 'development',
+    environments: {
+      development: {
+        connection: process.env.DATABASE_URL
+      },
+      test: {
+        client: 'sqlite3',
+        connection: {
+          filename: ':memory:'
+        },
+        useNullAsDefault: true
+      },
+      production: {
+        connection: process.env.DATABASE_URL
+      }
+    }
+  },
   // Cricket scans this folder for standard domain files that exist.
   domains: './domains',
-  async setup() {
-    // Create app-wide dependencies once at startup.
-    let db = knex({
-      client: 'pg',
-      connection: process.env.DATABASE_URL
-    });
-
-    // Return the things Cricket should pass into routes, rules, and cleanup.
+  async setup({ db }) {
     return {
-      dependencies: { db },
       services: {
         mailer: createMailer(),
         sessions: createSessionService({ db })
-      },
-      cleanup() {
-        return db.destroy();
       }
     };
   },
-  use: [readSession()],
-  context({ dependencies, logger, services }) {
-    // Shape the per-request context your handlers and rules receive.
+  middleware: [readSession()],
+  context({ request }) {
+    // Add app-specific request facts. Cricket already passes dependencies,
+    // lifecycle, db, logger, services, and trace through the base context.
     return {
-      ...dependencies,
-      logger,
-      services
+      requestId: request.id
     };
   }
 });
@@ -335,6 +341,59 @@ export function createProjectService({ db, ids }) {
 `createKnexRepository()` handles row parsing and small CRUD helpers. It is not an
 ORM. Use raw Knex when the query is clearer.
 
+## Database
+
+Cricket uses Knex as the database path. Put the config on the app contract:
+
+```js
+export let app = defineCricketApp({
+  database: {
+    client: 'pg',
+    defaultEnvironment: 'development',
+    environments: {
+      development: {
+        connection: process.env.DATABASE_URL
+      },
+      test: {
+        client: 'sqlite3',
+        connection: {
+          filename: ':memory:'
+        },
+        useNullAsDefault: true
+      },
+      production: {
+        connection: process.env.DATABASE_URL
+      }
+    }
+  }
+});
+```
+
+Cricket creates one `db` handle for the runtime, passes it through setup,
+services, rules, middleware, and handlers, then destroys it during cleanup.
+The active environment comes from `database.environment`,
+`CRICKET_DATABASE_ENV`, `NODE_ENV`, `database.defaultEnvironment`, then
+`development`. Shared Knex options can live beside `environments`; the selected
+environment overrides them.
+
+Migrations live in `api/migrations/` by convention. Only set
+`database.migrations.directory` when an app is intentionally changing that
+shape.
+
+```sh
+pnpm cricket migrate make api/index.js create_projects
+pnpm cricket migrate latest api/index.js
+pnpm cricket migrate latest api/index.js --env production
+pnpm cricket migrate status api/index.js
+pnpm cricket migrate list api/index.js
+pnpm cricket migrate current-version api/index.js
+pnpm cricket migrate rollback api/index.js
+```
+
+Cricket does not run migrations on server start, design tables, hide data
+policy, or replace Knex. It just makes the database contract and migration
+commands visible from the same app definition.
+
 ## Rule
 
 Rules answer whether the request can continue.
@@ -405,9 +464,23 @@ export let projectEndpoints = [
 ];
 ```
 
-Handlers receive Cricket input plus the context your app returns. Knex `db`,
-transactions, logger, services, auth facts, request IDs, and loaded resources
-remain available when you pass them through `context(...)`, `use`, or rules.
+Handlers receive Cricket input plus the request context. Setup dependencies,
+lifecycle, logger, services, and trace are already there. Add app-specific facts in
+`context(...)`, middleware, or rules.
+
+## Runtime Lifecycle
+
+Cricket exposes the HTTP runtime state it already owns through `lifecycle`.
+Apps can read `lifecycle.phase()`, `lifecycle.status()`,
+`lifecycle.isReady()`, `lifecycle.isShuttingDown()`, and
+`lifecycle.isStopped()` from setup, services, middleware, context, handlers, and
+shutdown hooks.
+
+The lifecycle reader is immutable from app code. `status()` returns a frozen
+snapshot, and Cricket keeps phase transitions private inside the runtime.
+
+This is not a health endpoint or readiness system. Compose lifecycle state into
+your own product health checks when it matters.
 
 ## Observability
 
@@ -436,7 +509,7 @@ Cricket also keeps sparse, monotonic timings at the HTTP boundary: middleware,
 route match, validation, rules, handler, response finish, and close. They show
 where a request spent time without turning logs into a firehose.
 
-Cricket emits safe lifecycle events from the HTTP runtime when an app provides
+Cricket emits safe request events from the HTTP runtime when an app provides
 `observability.observe`.
 
 ```js
@@ -456,18 +529,18 @@ They do not include raw auth headers, cookie values, query values, request
 bodies, response bodies, or `Set-Cookie` values.
 
 The terminal response event includes a replay list for that request. Replay is a
-plain lifecycle artifact, not a second logging system.
+plain request artifact, not a second logging system.
 
-Deeper tracing is explicit. Add `traceName` to an endpoint when the handler
-itself is the product operation you want to see in logs. Cricket wraps the
-handler in a request-scoped span, returns the handler result, and rethrows the
-original error path.
+Cricket wraps endpoint handlers in request-scoped spans by default. The span
+name comes from `operationId` when you provide one, or from the method and path
+when you don't. Add `traceName` only when you want a different product name in
+the logs.
 
 ```js
 export let createProject = defineEndpoint({
   method: 'post',
   path: '/projects',
-  traceName: 'projects.create',
+  operationId: 'projects.create',
   async handler({ input, services }) {
     return created(await services.projects.create(input.body));
   }
@@ -500,9 +573,10 @@ need one request, pipe the logs back through Cricket:
 docker logs api | pnpm cricket trace req_123
 ```
 
-The logger redacts common secret-shaped keys at the boundary and keeps child
-metadata, including `requestId`, in the envelope that `cricket trace`
-understands.
+Cricket's built-in structured logger redacts common secret-shaped keys at the
+boundary and keeps child metadata, including `requestId`, in the envelope that
+`cricket trace` understands. If you pass a custom logger, Cricket forwards the
+same events into that logger's shape.
 
 `trace` reads the same logs back on demand and renders request timings plus span
 records. Cricket does not store that data for you.
@@ -514,6 +588,7 @@ pnpm cricket init app .
 pnpm cricket new domain project api/domains
 pnpm cricket inspect api/index.js
 pnpm cricket docs api/index.js --out openapi.json
+pnpm cricket migrate latest api/index.js
 pnpm cricket init agents .
 ```
 
@@ -529,12 +604,17 @@ services, route operation IDs, and observability posture for an app module.
 
 `docs` writes OpenAPI from the same app module your server runs.
 
+`migrate` runs Knex migrations from the app's `database` contract. The default
+directory is `api/migrations/`; pass `--env name` to run against a specific
+database environment.
+
 `trace` reads newline-delimited JSON logs from stdin and prints a
-human-readable request timeline for one `requestId`, including lifecycle
-timings and any recorded spans.
+human-readable request timeline for one `requestId`, including request timings
+and any recorded spans.
 
 `init agents` writes lightweight guidance for people and agents working inside a
-Cricket app.
+Cricket app. It augments `AGENTS.md` and installs the repo-local skill at
+`.agents/skills/cricket-api/SKILL.md`.
 
 ## Exports
 

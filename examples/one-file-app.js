@@ -1,5 +1,3 @@
-import knex from 'knex';
-
 import {
   createKnexRepository,
   defineCricketApp,
@@ -79,7 +77,7 @@ let requireUser = defineRule('requireUser', ({ user }) => {
 let readProject = defineEndpoint({
   method: 'get',
   path: '/projects/:slug',
-  traceName: 'projects.read',
+  operationId: 'projects.read',
   params: z.object({
     slug: z.string().min(3)
   }),
@@ -130,18 +128,17 @@ export let app = defineCricketApp({
     service: 'one-file-api',
     level: process.env.LOG_LEVEL ?? 'info'
   },
+  database: {
+    client: 'sqlite3',
+    connection: {
+      filename: ':memory:'
+    },
+    useNullAsDefault: true
+  },
   domains: [
     projectDomain
   ],
-  async setup() {
-    let db = knex({
-      client: 'sqlite3',
-      connection: {
-        filename: ':memory:'
-      },
-      useNullAsDefault: true
-    });
-
+  async setup({ db }) {
     await db.schema.createTable('project', table => {
       table.string('id').primary();
       table.string('owner_id').notNullable();
@@ -155,23 +152,8 @@ export let app = defineCricketApp({
       slug: 'signal-notes',
       name: 'Signal Notes'
     });
-
-    return {
-      dependencies: {
-        db
-      },
-      cleanup() {
-        return db.destroy();
-      }
-    };
   },
-  use: [readUser()],
-  context({ dependencies, services }) {
-    return {
-      ...dependencies,
-      services
-    };
-  }
+  middleware: [readUser()]
 });
 
 await startCricketApp(app, {

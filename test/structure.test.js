@@ -6,6 +6,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
+import knex from 'knex';
 
 let execFileAsync = promisify(execFile);
 
@@ -15,6 +16,46 @@ async function tempRoot() {
 
 async function assertDirectoryExists(directoryPath) {
   assert.ok(await fs.stat(directoryPath).then(stat => stat.isDirectory()));
+}
+
+async function writeSqliteAppFixture({
+  databaseSource
+} = {}) {
+  let root = await tempRoot();
+  let appPath = path.join(root, 'app.js');
+  let databasePath = path.join(root, 'app.sqlite');
+  let migrationsDir = path.join(root, 'api', 'migrations');
+  let cricketUrl = pathToFileURL(path.resolve('src/index.js')).href;
+  let database = databaseSource ?? `{
+        client: 'sqlite3',
+        connection: {
+          filename: ${JSON.stringify(databasePath)}
+        },
+        useNullAsDefault: true
+      }`;
+
+  await fs.mkdir(migrationsDir, {
+    recursive: true
+  });
+  await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({
+    type: 'module'
+  }));
+  await fs.writeFile(appPath, `
+    import { defineCricketApp } from '${cricketUrl}';
+
+    export let app = defineCricketApp({
+      database: ${database},
+      endpoints: [],
+      models: []
+    });
+  `);
+
+  return {
+    appPath,
+    databasePath,
+    migrationsDir,
+    root
+  };
 }
 
 describe('Cricket CLI', () => {
@@ -138,10 +179,11 @@ describe('Cricket CLI', () => {
 
     let agents = await fs.readFile(path.join(root, 'AGENTS.md'), 'utf8');
     let skill = await fs.readFile(
-      path.join(root, '.codex', 'skills', 'cricket-api', 'SKILL.md'),
+      path.join(root, '.agents', 'skills', 'cricket-api', 'SKILL.md'),
       'utf8'
     );
 
+    assert.match(agents, /cricket-agent-guidance/);
     assert.match(agents, /Cricket App Guidance/);
     assert.match(agents, /App Shape/);
     assert.match(agents, /Domain Shape/);
@@ -151,6 +193,7 @@ describe('Cricket CLI', () => {
     assert.match(agents, /api\/workers/);
     assert.match(agents, /api\/migrations/);
     assert.match(agents, /api\/dev/);
+    assert.match(agents, /lifecycle/);
     assert.match(agents, /\*\.test\.js/);
     assert.match(skill, /name: cricket-api/);
     assert.match(skill, /OpenAPI generation/);
@@ -158,7 +201,35 @@ describe('Cricket CLI', () => {
     assert.match(skill, /api\/middleware/);
     assert.match(skill, /api\/workers/);
     assert.match(skill, /api\/dev/);
+    assert.match(skill, /read-only runtime lifecycle/);
     assert.match(skill, /domain-local `\*\.test\.js`/);
+  });
+
+  it('augments existing agent guidance without duplicating Cricket notes', async () => {
+    let root = await tempRoot();
+    let agentsPath = path.join(root, 'AGENTS.md');
+
+    await fs.writeFile(agentsPath, '# Existing Guidance\n\nKeep this note.\n');
+
+    await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'init',
+      'agents',
+      root
+    ]);
+    await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'init',
+      'agents',
+      root
+    ]);
+
+    let agents = await fs.readFile(agentsPath, 'utf8');
+
+    assert.match(agents, /# Existing Guidance/);
+    assert.match(agents, /Keep this note/);
+    assert.equal(agents.split('Cricket App Guidance').length - 1, 1);
+    assert.equal(agents.split('cricket-agent-guidance').length - 1, 2);
   });
 
   it('scaffolds the small Cricket app structure', async () => {
@@ -238,7 +309,7 @@ describe('Cricket CLI', () => {
     ]);
 
     assert.match(result.stdout, /Cricket app/);
-    assert.match(result.stdout, /Observability: request IDs default, lifecycle disabled, replay disabled/);
+    assert.match(result.stdout, /Observability: request IDs default, events disabled, replay disabled/);
     assert.match(result.stdout, /Domains/);
     assert.match(result.stdout, /build/);
     assert.match(result.stdout, /validations: BuildCreateInput/);
@@ -310,8 +381,8 @@ describe('Cricket CLI', () => {
       disabledAppPath
     ]);
 
-    assert.match(result.stdout, /Observability: request IDs custom, lifecycle enabled, replay terminal events/);
-    assert.match(disabled.stdout, /Observability: request IDs default, lifecycle disabled, replay disabled/);
+    assert.match(result.stdout, /Observability: request IDs custom, events enabled, replay terminal events/);
+    assert.match(disabled.stdout, /Observability: request IDs default, events disabled, replay disabled/);
   });
 
   it('writes OpenAPI docs for a real Cricket app module', async () => {
@@ -465,5 +536,182 @@ describe('Cricket CLI', () => {
     assert.match(stdout, /trace\.span\.finished prepare build 18ms status=ok/);
     assert.match(stdout, /\n\s{4}2026-06-15T11:00:00\.012Z WARN trace\.span\.finished load fixture 6ms status=error error=MISSING_FIXTURE/);
     assert.match(stdout, /http\.response\.finished createBuild status=201/);
+  });
+
+  it('runs database migrations from a Cricket app definition', async () => {
+    let {
+      appPath,
+      databasePath,
+      migrationsDir
+    } = await writeSqliteAppFixture();
+
+    await fs.writeFile(path.join(migrationsDir, '20260616000000_create_projects.js'), `
+      export async function up(db) {
+        await db.schema.createTable('projects', table => {
+          table.increments('id');
+          table.string('name').notNullable();
+        });
+        await db('projects').insert({ name: 'Launch Plan' });
+      }
+
+      export async function down(db) {
+        await db.schema.dropTable('projects');
+      }
+    `);
+
+    let latest = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'migrate',
+      'latest',
+      appPath
+    ]);
+    let db = knex({
+      client: 'sqlite3',
+      connection: {
+        filename: databasePath
+      },
+      useNullAsDefault: true
+    });
+
+    try {
+      assert.match(latest.stdout, /Migrations:/);
+      assert.match(latest.stdout, /20260616000000_create_projects\.js/);
+      assert.deepEqual(await db('projects').select('name'), [
+        {
+          name: 'Launch Plan'
+        }
+      ]);
+    } finally {
+      await db.destroy();
+    }
+
+    let list = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'migrate',
+      'list',
+      appPath
+    ]);
+    let version = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'migrate',
+      'current-version',
+      appPath
+    ]);
+    let rollback = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'migrate',
+      'rollback',
+      appPath
+    ]);
+
+    assert.match(list.stdout, /Completed:/);
+    assert.match(list.stdout, /20260616000000_create_projects\.js/);
+    assert.match(version.stdout, /Current version: 20260616000000/);
+    assert.match(rollback.stdout, /Migrations run:/);
+    assert.match(rollback.stdout, /20260616000000_create_projects\.js/);
+  });
+
+  it('runs database migrations against an explicit environment', async () => {
+    let root = await tempRoot();
+    let appPath = path.join(root, 'app.js');
+    let developmentPath = path.join(root, 'development.sqlite');
+    let testPath = path.join(root, 'test.sqlite');
+    let migrationsDir = path.join(root, 'api', 'migrations');
+    let cricketUrl = pathToFileURL(path.resolve('src/index.js')).href;
+
+    await fs.mkdir(migrationsDir, {
+      recursive: true
+    });
+    await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({
+      type: 'module'
+    }));
+    await fs.writeFile(appPath, `
+      import { defineCricketApp } from '${cricketUrl}';
+
+      export let app = defineCricketApp({
+        database: {
+          defaultEnvironment: 'development',
+          environments: {
+            development: {
+              client: 'sqlite3',
+              connection: {
+                filename: ${JSON.stringify(developmentPath)}
+              },
+              useNullAsDefault: true
+            },
+            test: {
+              client: 'sqlite3',
+              connection: {
+                filename: ${JSON.stringify(testPath)}
+              },
+              useNullAsDefault: true
+            }
+          }
+        },
+        endpoints: [],
+        models: []
+      });
+    `);
+    await fs.writeFile(path.join(migrationsDir, '20260616000000_create_projects.js'), `
+      export async function up(db) {
+        await db.schema.createTable('projects', table => {
+          table.increments('id');
+          table.string('name').notNullable();
+        });
+      }
+
+      export async function down(db) {
+        await db.schema.dropTable('projects');
+      }
+    `);
+
+    let result = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'migrate',
+      'latest',
+      appPath,
+      '--env',
+      'test'
+    ]);
+    let db = knex({
+      client: 'sqlite3',
+      connection: {
+        filename: testPath
+      },
+      useNullAsDefault: true
+    });
+
+    try {
+      assert.match(result.stdout, /20260616000000_create_projects\.js/);
+      assert.deepEqual(await db.schema.hasTable('projects'), true);
+    } finally {
+      await db.destroy();
+    }
+
+    await assert.rejects(fs.stat(developmentPath), {
+      code: 'ENOENT'
+    });
+  });
+
+  it('creates migration files in the Cricket migrations directory by default', async () => {
+    let {
+      appPath,
+      root
+    } = await writeSqliteAppFixture();
+
+    let result = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'migrate',
+      'make',
+      appPath,
+      'create_builds'
+    ]);
+
+    assert.match(result.stdout, /api\/migrations/);
+
+    let files = await fs.readdir(path.join(root, 'api', 'migrations'));
+
+    assert.equal(files.length, 1);
+    assert.match(files[0], /create_builds\.js$/);
   });
 });

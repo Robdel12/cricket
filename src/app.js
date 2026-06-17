@@ -7,6 +7,7 @@ import {
   loadDomains
 } from './domain.js';
 import { flattenRoutes } from './http/router.js';
+import { normalizeDatabaseConfig } from './persistence/database.js';
 
 function hasLoadedDomains(domains) {
   return Array.isArray(domains) && domains.every(domain =>
@@ -21,7 +22,7 @@ function hasLoadedDomains(domains) {
  * @param {object} options - App contract options.
  * @returns {object} Normalized Cricket app contract.
  */
-export function defineCricketApp(options) {
+export function defineCricketApp(options = {}) {
   let domains = options.domains ?? [];
   let loadedDomains = hasLoadedDomains(domains);
   let hasExplicitEndpoints = Object.hasOwn(options, 'endpoints');
@@ -35,15 +36,17 @@ export function defineCricketApp(options) {
   let allowedHosts = options.allowedHosts;
   let prefix = options.prefix ?? '';
   let trustProxy = options.trustProxy ?? false;
-  let use = options.use ?? [];
+  let middleware = options.middleware ?? [];
+  let database = normalizeDatabaseConfig(options.database);
 
   return {
     ...options,
     domains,
     allowedHosts,
+    ...(database === undefined ? {} : { database }),
     prefix,
     trustProxy,
-    use,
+    middleware,
     ...(endpoints === undefined ? {} : { endpoints }),
     ...(models === undefined ? {} : { models })
   };

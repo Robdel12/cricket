@@ -6,9 +6,10 @@ import {
   collectEndpoints,
   collectModels
 } from './domain.js';
-import { routeIdentityFor } from './http/router.js';
+import { routeIdentityFor } from './route-identity.js';
 import { resolveCricketApp } from './app.js';
 import { generateOpenApi } from './openapi.js';
+import { normalizeDatabaseConfig } from './persistence/database.js';
 import { isZodSchema } from './schema.js';
 
 function toArray(value) {
@@ -72,9 +73,24 @@ function observabilitySummaryFor(contract) {
   let hasRequestId = typeof config?.requestId === 'function';
 
   return {
-    lifecycle: hasObserver ? 'enabled' : 'disabled',
+    events: hasObserver ? 'enabled' : 'disabled',
     replay: hasObserver ? 'terminal events' : 'disabled',
     requestIds: hasRequestId ? 'custom' : 'default'
+  };
+}
+
+function databaseSummaryFor(contract) {
+  if (!contract.database)
+    return {
+      status: 'disabled'
+    };
+
+  let database = normalizeDatabaseConfig(contract.database);
+
+  return {
+    status: 'enabled',
+    client: database.client,
+    environment: database.environment
   };
 }
 
@@ -101,27 +117,42 @@ function withPathPrefix(pathValue, prefix) {
   return `${prefix.replace(/\/$/, '')}/${pathValue.replace(/^\//, '')}`;
 }
 
-async function appContractFromModule(module, {
-  baseUrl
-} = {}) {
-  let app = module.app ?? module.default;
-
-  if (!app)
-    throw new Error('App module must export app = defineCricketApp(...)');
-
-  let resolvedApp = await resolveCricketApp(app, {
-    baseUrl
-  });
-
+function appContractFromResolvedApp(resolvedApp) {
   return {
     name: resolvedApp.name,
     version: resolvedApp.version,
     description: resolvedApp.description,
     prefix: resolvedApp.prefix,
+    database: resolvedApp.database,
     observability: resolvedApp.observability,
     domains: resolvedApp.domains ?? [],
     endpoints: resolvedApp.endpoints ?? [],
     models: resolvedApp.models ?? []
+  };
+}
+
+/**
+ * Load a side-effect-free Cricket app definition module.
+ *
+ * CLI commands use this when they need the full app contract, not just the
+ * inspect/docs projection.
+ *
+ * @param {string} modulePath - App definition module path to import.
+ * @returns {Promise<{app: object, modulePath: string, moduleUrl: string}>}
+ */
+export async function loadAppDefinition(modulePath) {
+  let resolvedPath = path.resolve(modulePath);
+  let moduleUrl = pathToFileURL(resolvedPath).href;
+  let module = await import(moduleUrl);
+  let app = module.app ?? module.default;
+
+  if (!app)
+    throw new Error('App module must export app = defineCricketApp(...)');
+
+  return {
+    app,
+    modulePath: resolvedPath,
+    moduleUrl
   };
 }
 
@@ -132,12 +163,12 @@ async function appContractFromModule(module, {
  * @returns {Promise<object>} Normalized app contract with domains, endpoints, and models.
  */
 export async function loadAppContract(modulePath) {
-  let resolvedPath = path.resolve(modulePath);
-  let module = await import(pathToFileURL(resolvedPath).href);
-
-  return await appContractFromModule(module, {
-    baseUrl: pathToFileURL(resolvedPath).href
+  let definition = await loadAppDefinition(modulePath);
+  let app = await resolveCricketApp(definition.app, {
+    baseUrl: definition.moduleUrl
   });
+
+  return appContractFromResolvedApp(app);
 }
 
 /**
@@ -149,6 +180,7 @@ export async function loadAppContract(modulePath) {
 export function createAppMap(contract) {
   return {
     name: contract.name,
+    database: databaseSummaryFor(contract),
     observability: observabilitySummaryFor(contract),
     domains: contract.domains.map((domain, index) => ({
       name: domainNameFor(domain, index),
@@ -185,7 +217,12 @@ export function formatAppMap(appMap) {
     appMap.name ? `Cricket app: ${appMap.name}` : 'Cricket app'
   ];
 
-  lines.push(`Observability: request IDs ${appMap.observability.requestIds}, lifecycle ${appMap.observability.lifecycle}, replay ${appMap.observability.replay}`);
+  lines.push(`Observability: request IDs ${appMap.observability.requestIds}, events ${appMap.observability.events}, replay ${appMap.observability.replay}`);
+  lines.push(
+    appMap.database.status === 'enabled'
+      ? `Database: ${appMap.database.client ?? 'configured'}${appMap.database.environment ? ` (${appMap.database.environment})` : ''}`
+      : 'Database: disabled'
+  );
 
   lines.push('', 'Domains');
   for (let domain of appMap.domains) {

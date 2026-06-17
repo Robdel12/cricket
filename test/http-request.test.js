@@ -143,7 +143,7 @@ describe('Cricket HTTP requests', () => {
     });
     let app = await createHttpApp({
       endpoints: [endpoint],
-      use: [
+      middleware: [
         async requestContext => {
           if (!requestContext.request.headers.authorization)
             return {
@@ -198,7 +198,7 @@ describe('Cricket HTTP requests', () => {
     });
     let app = await createHttpApp({
       endpoints: [endpoint],
-      use: [
+      middleware: [
         async (requestContext, next) => {
           if (!requestContext.request.headers.authorization)
             return toHttpError(unauthenticated());

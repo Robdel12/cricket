@@ -16,28 +16,32 @@ import {
 } from '../errors.js';
 import { resolveLogger } from '../logger.js';
 import { normalizeObservability } from '../observability.js';
+import { createDatabaseConnection } from '../persistence/database.js';
 import {
   createNoopTrace,
   createTrace
 } from '../trace.js';
+import { routeIdentityFor } from '../route-identity.js';
 import {
   assertAllowedHost,
   completeRequestBody,
   createBaseRequest,
   safeRequestSnapshot
 } from './request.js';
+import { createRuntimeLifecycle } from './lifecycle.js';
 import {
   allowedMethodsForPath,
   endpointWithPrefix,
   joinPaths,
   matchRoute,
-  prepareRoutes,
-  routeIdentityFor
+  prepareRoutes
 } from './router.js';
 import {
   safeResponseSnapshot,
   writeHttpResponse
 } from './response.js';
+
+let lifecycleControllerKey = Symbol('cricket.lifecycleController');
 
 function toArray(value) {
   if (!value)
@@ -65,6 +69,58 @@ function normalizeSetupResult(result) {
     dependencies: result,
     services: {},
     cleanup: undefined
+  };
+}
+
+async function cleanupRuntime(setupCleanup, db) {
+  let cleanupError;
+
+  try {
+    if (setupCleanup)
+      await setupCleanup();
+  } catch (error) {
+    cleanupError = error;
+  } finally {
+    try {
+      if (db)
+        await db.destroy();
+    } catch (error) {
+      cleanupError ??= error;
+    }
+  }
+
+  if (cleanupError)
+    throw cleanupError;
+}
+
+function setupDependenciesFor(setup, db) {
+  if (!db)
+    return setup;
+
+  if (Object.hasOwn(setup.dependencies, 'db'))
+    throw new Error('setup dependencies must not include db when database is configured');
+
+  return {
+    ...setup,
+    dependencies: {
+      db,
+      ...setup.dependencies
+    },
+    cleanup: () => cleanupRuntime(setup.cleanup, db)
+  };
+}
+
+function setupWithLifecycleCleanup(setup, lifecycleController) {
+  return {
+    ...setup,
+    cleanup: async () => {
+      try {
+        if (setup.cleanup)
+          await setup.cleanup();
+      } finally {
+        lifecycleController.stopped();
+      }
+    }
   };
 }
 
@@ -126,9 +182,9 @@ function optionsResponse(allowedMethods) {
  */
 function composeMiddleware(middleware, finalHandler, timing) {
   return middleware.reduceRight(
-    (next, use) => async requestContext => {
+    (next, runMiddleware) => async requestContext => {
       if (!timing)
-        return await use(requestContext, next);
+        return await runMiddleware(requestContext, next);
 
       let downstreamMs = 0;
       let wrappedNext = async nextRequestContext => {
@@ -143,7 +199,7 @@ function composeMiddleware(middleware, finalHandler, timing) {
       let start = performance.now();
 
       try {
-        return await use(requestContext, wrappedNext);
+        return await runMiddleware(requestContext, wrappedNext);
       } finally {
         timing.add('middlewareMs', Math.max(0, performance.now() - start - downstreamMs));
       }
@@ -296,6 +352,7 @@ function logRuntimeEvent(logger, level, event, metadata) {
 }
 
 function baseContextFor({
+  lifecycle,
   logger,
   services,
   setup,
@@ -303,6 +360,7 @@ function baseContextFor({
 }) {
   return {
     ...setup.dependencies,
+    lifecycle,
     logger,
     services,
     trace
@@ -321,6 +379,7 @@ async function resolveContext(appContract, {
     app: appContract,
     request,
     dependencies: setup.dependencies,
+    lifecycle: baseContext.lifecycle,
     logger: baseContext.logger,
     services: baseContext.services,
     trace: baseContext.trace
@@ -514,12 +573,13 @@ async function reportRequestError(appContract, {
 
 function createRuntimeHandler({
   appContract,
+  lifecycle,
   logger,
   observability,
   routes,
   setup,
   services,
-  use
+  middleware
 }) {
   return async function handle(req, res, {
     expectContinue = false
@@ -600,6 +660,7 @@ function createRuntimeHandler({
         startedAt: timing.startedAt
       });
       let context = baseContextFor({
+        lifecycle,
         logger: requestLogger,
         services,
         setup,
@@ -697,7 +758,7 @@ function createRuntimeHandler({
 
         return defaultNotFound(requestContextForRequest.request);
       };
-      let response = await composeMiddleware(use, finalHandler, timing)(requestContext);
+      let response = await composeMiddleware(middleware, finalHandler, timing)(requestContext);
 
       writeObservedResponse(req, res, response, {
         logger: requestLogger,
@@ -772,6 +833,7 @@ function closeServer(server, {
  *   contract: object,
  *   dependencies: object,
  *   handle: Function,
+ *   lifecycle: object,
  *   logger: object,
  *   observability: object,
  *   services: object,
@@ -782,6 +844,8 @@ export async function createCricketRuntime(cricketApp, {
   baseUrl,
   logger: runtimeLogger
 } = {}) {
+  let lifecycleController = createRuntimeLifecycle();
+  let { lifecycle } = lifecycleController;
   let appContract = await resolveCricketApp(cricketApp, {
     baseUrl
   });
@@ -791,74 +855,116 @@ export async function createCricketRuntime(cricketApp, {
   let observability = normalizeObservability(appContract.observability, {
     logger
   });
-  let setup = normalizeSetupResult(
-    appContract.setup ? await appContract.setup({
-      app: appContract,
-      logger,
-      trace: createNoopTrace()
-    }) : undefined
-  );
-  let domainServices = createServices(appContract.domains, {
-    ...setup.dependencies,
-    logger
-  });
-  let defaultServices = {
-    ...domainServices,
-    ...setup.services
-  };
-  let services = defaultServices;
+  let db = appContract.database
+    ? createDatabaseConnection(appContract.database, {
+      baseUrl
+    })
+    : undefined;
+  let setup;
 
-  if (typeof appContract.services === 'function') {
-    services = await appContract.services({
+  try {
+    setup = setupDependenciesFor(
+      normalizeSetupResult(
+        appContract.setup ? await appContract.setup({
+          app: appContract,
+          db,
+          lifecycle,
+          logger,
+          trace: createNoopTrace()
+        }) : undefined
+      ),
+      db
+    );
+    setup = setupWithLifecycleCleanup(setup, lifecycleController);
+  } catch (error) {
+    try {
+      if (db)
+        await db.destroy();
+    } finally {
+      lifecycleController.stopped();
+    }
+
+    throw error;
+  }
+
+  try {
+    let domainServices = createServices(appContract.domains, {
+      ...setup.dependencies,
+      lifecycle,
+      logger
+    });
+    let defaultServices = {
+      ...domainServices,
+      ...setup.services
+    };
+    let services = defaultServices;
+
+    if (typeof appContract.services === 'function') {
+      services = await appContract.services({
+        app: appContract,
+        dependencies: setup.dependencies,
+        domainServices,
+        lifecycle,
+        logger,
+        services: defaultServices
+      });
+    } else if (appContract.services) {
+      services = appContract.services;
+    }
+
+    let runtimeBag = {
       app: appContract,
       dependencies: setup.dependencies,
       domainServices,
+      lifecycle,
       logger,
-      services: defaultServices
+      services
+    };
+    let middleware = await resolveMiddleware(appContract.middleware, runtimeBag);
+    let prefixedEndpoints = appContract.endpoints.map(endpoint =>
+      endpointWithPrefix(endpoint, appContract.prefix)
+    );
+    let routes = prepareRoutes(prefixedEndpoints);
+    let handle = createRuntimeHandler({
+      appContract,
+      lifecycle,
+      logger,
+      observability,
+      routes,
+      setup,
+      services,
+      middleware
     });
-  } else if (appContract.services) {
-    services = appContract.services;
+    let app = Object.assign(handle, {
+      handle,
+      listen(...args) {
+        let server = createNodeServer(handle, logger);
+        return server.listen(...args);
+      }
+    });
+    let runtime = {
+      app,
+      contract: appContract,
+      dependencies: setup.dependencies,
+      handle,
+      lifecycle,
+      logger,
+      observability,
+      services,
+      cleanup: setup.cleanup
+    };
+
+    Object.defineProperty(runtime, lifecycleControllerKey, {
+      value: lifecycleController
+    });
+    lifecycleController.ready();
+
+    return runtime;
+  } catch (error) {
+    await setup.cleanup();
+
+    throw error;
   }
-
-  let runtimeBag = {
-    app: appContract,
-    dependencies: setup.dependencies,
-    domainServices,
-    logger,
-    services
-  };
-  let use = await resolveMiddleware(appContract.use, runtimeBag);
-  let prefixedEndpoints = appContract.endpoints.map(endpoint =>
-    endpointWithPrefix(endpoint, appContract.prefix)
-  );
-  let routes = prepareRoutes(prefixedEndpoints);
-  let handle = createRuntimeHandler({
-    appContract,
-    logger,
-    observability,
-    routes,
-    setup,
-    services,
-    use
-  });
-  let app = Object.assign(handle, {
-    handle,
-    listen(...args) {
-      let server = createNodeServer(handle, logger);
-      return server.listen(...args);
-    }
-  });
-
-  return {
-    app,
-    contract: appContract,
-    dependencies: setup.dependencies,
-    handle,
-    logger,
-    observability,
-    services,
-    cleanup: setup.cleanup
-  };
 }
 
 /**
@@ -878,6 +984,7 @@ export async function createCricketRuntime(cricketApp, {
  *   contract: object,
  *   dependencies: object,
  *   handle: Function,
+ *   lifecycle: object,
  *   logger: object,
  *   server: object,
  *   services: object,
@@ -915,6 +1022,8 @@ export async function startCricketApp(cricketApp, {
     let shutdownError;
 
     try {
+      runtime[lifecycleControllerKey].shuttingDown(signal);
+
       if (signal && runtime.contract.onShutdown)
         await runtime.contract.onShutdown({
           signal,

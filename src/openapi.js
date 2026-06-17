@@ -1,5 +1,5 @@
 import { defaultStatusForMethod } from './endpoint.js';
-import { operationIdFor } from './http/router.js';
+import { operationIdFor } from './route-identity.js';
 import {
   isZodSchema,
   toJsonSchema

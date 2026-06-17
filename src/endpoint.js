@@ -7,6 +7,7 @@ import {
   isZodSchema,
   parseZod
 } from './schema.js';
+import { operationIdFor } from './route-identity.js';
 
 export let supportedEndpointMethods = Object.freeze([
   'DELETE',
@@ -249,9 +250,10 @@ export function defineEndpoint(config) {
       let handlerContext = await timePhase(timing, 'rulesMs', () =>
         applyRules(rules, endpointContext)
       );
+      let handlerTraceName = traceName ?? operationIdFor(endpoint);
       let result = await timePhase(timing, 'handlerMs', () => {
-        if (traceName && typeof handlerContext.trace?.span === 'function')
-          return handlerContext.trace.span(traceName, () => handler(handlerContext));
+        if (typeof handlerContext.trace?.span === 'function')
+          return handlerContext.trace.span(handlerTraceName, () => handler(handlerContext));
 
         return handler(handlerContext);
       });

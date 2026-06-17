@@ -18,6 +18,10 @@ import {
   traceLogs
 } from '../src/log-trace.js';
 import {
+  formatMigrationResult,
+  runMigrationCommand
+} from '../src/persistence/migrations.js';
+import {
   formatAppScaffoldResult,
   formatAgentScaffoldResult,
   formatScaffoldResult,
@@ -30,8 +34,27 @@ function hasFlag(args, flag) {
   return args.includes(flag);
 }
 
+let valueFlags = new Set([
+  '--env',
+  '--out'
+]);
+
 function withoutFlags(args) {
-  return args.filter(arg => !arg.startsWith('--'));
+  let positional = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    let arg = args[index];
+
+    if (!arg.startsWith('--')) {
+      positional.push(arg);
+      continue;
+    }
+
+    if (valueFlags.has(arg))
+      index += 1;
+  }
+
+  return positional;
 }
 
 function optionValue(args, name) {
@@ -40,7 +63,12 @@ function optionValue(args, name) {
   if (index === -1)
     return undefined;
 
-  return args[index + 1];
+  let value = args[index + 1];
+
+  if (!value || value.startsWith('--'))
+    throw new Error(`${name} requires a value`);
+
+  return value;
 }
 
 function usage() {
@@ -50,6 +78,12 @@ function usage() {
   cricket init agents [root] [--force]
   cricket inspect <appModule>
   cricket docs <appModule> [--out openapi.json]
+  cricket migrate latest <appModule> [--env name]
+  cricket migrate rollback <appModule> [--all] [--env name]
+  cricket migrate status <appModule> [--env name]
+  cricket migrate list <appModule> [--env name]
+  cricket migrate current-version <appModule> [--env name]
+  cricket migrate make <appModule> <name> [--env name]
   cricket trace <requestId>
 
 Examples:
@@ -57,7 +91,8 @@ Examples:
   cricket new domain project api/domains
   cricket init agents .
   cricket inspect api/index.js
-  cricket docs api/index.js --out openapi.json`;
+  cricket docs api/index.js --out openapi.json
+  cricket migrate latest api/index.js`;
 }
 
 /**
@@ -184,6 +219,33 @@ async function runTrace(args) {
 }
 
 /**
+ * Run a Knex migration command through the Cricket app database contract.
+ *
+ * @param {string[]} args - Raw CLI arguments after `cricket`.
+ * @returns {Promise<void>} Resolves after the migration command is printed.
+ */
+async function runMigrate(args) {
+  let positional = withoutFlags(args);
+  let [, command, appModule, name] = positional;
+
+  if (!command)
+    throw new Error('Migrate command is required');
+
+  if (!appModule)
+    throw new Error('App module is required');
+
+  let result = await runMigrationCommand({
+    command,
+    appModule,
+    name,
+    environment: optionValue(args, '--env'),
+    all: hasFlag(args, '--all')
+  });
+
+  console.log(formatMigrationResult(result));
+}
+
+/**
  * Dispatch the Cricket CLI entrypoint from argv.
  *
  * @param {string[]} [argv=process.argv.slice(2)] - Arguments passed to the CLI.
@@ -206,6 +268,9 @@ export async function runCli(argv = process.argv.slice(2)) {
 
   if (command === 'docs')
     return await runDocs(argv);
+
+  if (command === 'migrate')
+    return await runMigrate(argv);
 
   if (command === 'trace')
     return await runTrace(argv);
