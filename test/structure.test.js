@@ -323,6 +323,49 @@ describe('Cricket CLI', () => {
     assert.match(result.stdout, /Build -> build/);
   });
 
+  it('marks deprecated routes in inspect output', async () => {
+    let root = await tempRoot();
+    let appPath = path.join(root, 'app.js');
+    let cricketUrl = pathToFileURL(path.resolve('src/index.js')).href;
+
+    await fs.writeFile(appPath, `
+      import {
+        defineCricketApp,
+        defineEndpoint,
+        deprecateEndpoint,
+        ok
+      } from '${cricketUrl}';
+
+      let checkShas = deprecateEndpoint(defineEndpoint({
+        method: 'post',
+        path: '/sdk/check-shas',
+        handler() {
+          return ok({ success: true });
+        }
+      }), {
+        sunset: '2026-09-01',
+        replacement: 'POST /sdk/screenshots/batch',
+        reason: 'Use the batch screenshot upload flow instead.'
+      });
+
+      export let app = defineCricketApp({
+        endpoints: [checkShas],
+        models: []
+      });
+    `);
+
+    let result = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'inspect',
+      appPath
+    ]);
+
+    assert.match(result.stdout, /POST\s+\/sdk\/check-shas DEPRECATED \(postSdkCheckShas\)/);
+    assert.match(result.stdout, /sunset: 2026-09-01/);
+    assert.match(result.stdout, /replacement: POST \/sdk\/screenshots\/batch/);
+    assert.match(result.stdout, /reason: Use the batch screenshot upload flow instead\./);
+  });
+
   it('runs through a symlinked package bin', async () => {
     let root = await tempRoot();
     let binLink = path.join(root, 'cricket');

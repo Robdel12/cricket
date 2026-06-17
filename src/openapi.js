@@ -146,11 +146,16 @@ function endpointOperation(endpoint) {
     ...parametersFromSchema('query', endpoint.query)
   ];
   let requestBody = requestBodyFromSchema(endpoint.body);
+  let deprecation = endpoint.deprecation;
 
   return {
     ...(endpoint.summary ? { summary: endpoint.summary } : {}),
     ...(endpoint.description ? { description: endpoint.description } : {}),
     ...(endpoint.tags?.length ? { tags: endpoint.tags } : {}),
+    ...(deprecation ? {
+      deprecated: true,
+      'x-cricket-deprecation': deprecation
+    } : {}),
     operationId: operationIdFor(endpoint),
     ...(parameters.length ? { parameters } : {}),
     ...(requestBody ? { requestBody } : {}),

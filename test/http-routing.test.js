@@ -4,6 +4,7 @@ import request from 'supertest';
 
 import {
   createCricketRuntime,
+  deprecateEndpoint,
   defineCricketApp,
   defineEndpoint,
   defineRule,
@@ -543,5 +544,44 @@ describe('Cricket HTTP routing', () => {
       traceName: true,
       handler: () => ok({ success: true })
     }), /GET \/ok traceName must be a string/);
+
+    assert.throws(() => defineEndpoint({
+      method: 'get',
+      path: '/deprecated',
+      deprecation: {
+        reason: 'Use the new route.'
+      },
+      handler: () => ok({ success: true })
+    }), /Unsupported endpoint option deprecation/);
+
+    assert.throws(() => deprecateEndpoint(healthEndpoint('/old-health'), {
+      headers: 'yes'
+    }), /Endpoint deprecation headers must be a boolean/);
+  });
+
+  it('composes deprecation metadata around normal endpoint behavior', async () => {
+    let endpoint = deprecateEndpoint(defineEndpoint({
+      method: 'get',
+      path: '/old-health',
+      handler: () => ok({ success: true })
+    }), {
+      since: '2026-06-17',
+      replacement: 'GET /health',
+      reason: 'Use the health endpoint.'
+    });
+    let app = await createHttpApp({
+      endpoints: [endpoint]
+    });
+
+    let response = await request(app)
+      .get('/old-health');
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, { success: true });
+    assert.deepEqual(endpoint.deprecation, {
+      since: '2026-06-17',
+      replacement: 'GET /health',
+      reason: 'Use the health endpoint.'
+    });
   });
 });

@@ -38,6 +38,13 @@ let endpointOptionKeys = new Set([
   'rules',
   'handler'
 ]);
+let deprecationOptionKeys = new Set([
+  'since',
+  'sunset',
+  'replacement',
+  'reason',
+  'headers'
+]);
 
 /**
  * Normalize an HTTP method string to uppercase.
@@ -120,6 +127,109 @@ function assertKnownEndpointOptions(config) {
     if (!endpointOptionKeys.has(key))
       throw new Error(`Unsupported endpoint option ${key}`);
   }
+}
+
+function assertKnownDeprecationOptions(deprecation) {
+  for (let key of Object.keys(deprecation)) {
+    if (!deprecationOptionKeys.has(key))
+      throw new Error(`Unsupported endpoint deprecation option ${key}`);
+  }
+}
+
+function normalizedDeprecationText(value, name) {
+  if (value === undefined)
+    return undefined;
+
+  if (typeof value !== 'string' || !value.trim())
+    throw new Error(`Endpoint deprecation ${name} must be a non-empty string`);
+
+  return value;
+}
+
+function normalizedDeprecationHeaders(value) {
+  if (value === undefined)
+    return undefined;
+
+  if (typeof value !== 'boolean')
+    throw new Error('Endpoint deprecation headers must be a boolean');
+
+  return value;
+}
+
+/**
+ * Normalize the optional successor route for docs, inspect output, and optional headers.
+ *
+ * Strings are kept as user-facing text. Object replacements stay structured so
+ * generated surfaces can show method/path/operationId without parsing prose.
+ *
+ * @param {string|{ method?: string, path?: string, operationId?: string }} replacement
+ * @returns {string|{ method?: string, path?: string, operationId?: string }|undefined}
+ */
+function normalizedReplacement(replacement) {
+  if (replacement === undefined)
+    return undefined;
+
+  if (typeof replacement === 'string')
+    return normalizedDeprecationText(replacement, 'replacement');
+
+  if (!replacement || typeof replacement !== 'object')
+    throw new Error('Endpoint deprecation replacement must be a string or object');
+
+  let {
+    method,
+    path,
+    operationId
+  } = replacement;
+
+  if (method !== undefined && typeof method !== 'string')
+    throw new Error('Endpoint deprecation replacement method must be a string');
+  if (path !== undefined && typeof path !== 'string')
+    throw new Error('Endpoint deprecation replacement path must be a string');
+  if (operationId !== undefined && typeof operationId !== 'string')
+    throw new Error('Endpoint deprecation replacement operationId must be a string');
+  if (!method && !path && !operationId)
+    throw new Error('Endpoint deprecation replacement must name a method, path, or operationId');
+
+  return {
+    ...(method ? { method: normalizeEndpointMethod(method) } : {}),
+    ...(path ? { path } : {}),
+    ...(operationId ? { operationId } : {})
+  };
+}
+
+/**
+ * Normalize endpoint deprecation metadata into Cricket's public contract shape.
+ *
+ * A plain string is treated as the deprecation reason. Object input keeps only
+ * the fields Cricket knows how to project into OpenAPI, inspect, observability,
+ * and optional response headers.
+ *
+ * @param {string|object} deprecation
+ * @returns {{ since?: string, sunset?: string, replacement?: string|object, reason?: string, headers?: boolean }}
+ */
+function normalizeDeprecation(deprecation) {
+  if (typeof deprecation === 'string') {
+    return {
+      reason: normalizedDeprecationText(deprecation, 'reason')
+    };
+  }
+
+  if (!deprecation || typeof deprecation !== 'object')
+    throw new Error('Endpoint deprecation must be a string or object');
+
+  assertKnownDeprecationOptions(deprecation);
+
+  let normalized = {
+    since: normalizedDeprecationText(deprecation.since, 'since'),
+    sunset: normalizedDeprecationText(deprecation.sunset, 'sunset'),
+    replacement: normalizedReplacement(deprecation.replacement),
+    reason: normalizedDeprecationText(deprecation.reason, 'reason'),
+    headers: normalizedDeprecationHeaders(deprecation.headers)
+  };
+
+  return Object.fromEntries(
+    Object.entries(normalized).filter(([, value]) => value !== undefined)
+  );
 }
 
 /**
@@ -265,6 +375,26 @@ export function defineEndpoint(config) {
   };
 
   return endpoint;
+}
+
+/**
+ * Mark an endpoint as deprecated without changing its request/response behavior.
+ *
+ * Deprecation is endpoint metadata for docs, inspect output, observability, and
+ * optional response headers. It does not disable routing, validation, rules, or handlers.
+ *
+ * @param {object} endpoint - Endpoint returned by defineEndpoint().
+ * @param {string|object} deprecation - Deprecation reason or metadata.
+ * @returns {object} Endpoint copy with normalized deprecation metadata.
+ */
+export function deprecateEndpoint(endpoint, deprecation) {
+  if (!endpoint || typeof endpoint !== 'object')
+    throw new Error('Endpoint is required');
+
+  return {
+    ...endpoint,
+    deprecation: normalizeDeprecation(deprecation)
+  };
 }
 
 function parseEndpointResponse(endpoint, result) {

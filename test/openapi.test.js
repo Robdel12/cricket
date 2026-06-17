@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  deprecateEndpoint,
   defineEndpoint,
   defineModel,
   field,
@@ -165,6 +166,48 @@ describe('Cricket OpenAPI', () => {
     });
 
     assert.equal(docs.paths['/events'].get.parameters, undefined);
+  });
+
+  it('marks deprecated endpoints in generated OpenAPI', () => {
+    let endpoint = deprecateEndpoint(defineEndpoint({
+      method: 'post',
+      path: '/sdk/check-shas',
+      responses: {
+        200: z.object({
+          success: z.literal(true)
+        })
+      },
+      async handler() {
+        return {};
+      }
+    }), {
+      since: '2026-06-17',
+      sunset: '2026-09-01',
+      replacement: {
+        method: 'post',
+        path: '/sdk/screenshots/batch'
+      },
+      reason: 'Use the batch screenshot upload flow instead.'
+    });
+
+    let docs = generateOpenApi({
+      title: 'Example API',
+      version: '1.0.0',
+      endpoints: [endpoint]
+    });
+    let operation = docs.paths['/sdk/check-shas'].post;
+
+    assert.equal(operation.deprecated, true);
+    assert.deepEqual(operation['x-cricket-deprecation'], {
+      since: '2026-06-17',
+      sunset: '2026-09-01',
+      replacement: {
+        method: 'POST',
+        path: '/sdk/screenshots/batch'
+      },
+      reason: 'Use the batch screenshot upload flow instead.'
+    });
+    assert.equal(operation.responses[200].description, 'Success');
   });
 
 });

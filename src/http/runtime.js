@@ -169,6 +169,126 @@ function optionsResponse(allowedMethods) {
 }
 
 /**
+ * Check for a response header without caring how the app cased the name.
+ *
+ * @param {Record<string, any>} headers
+ * @param {string} name
+ * @returns {boolean}
+ */
+function hasHeader(headers = {}, name) {
+  let normalized = name.toLowerCase();
+
+  return Object.keys(headers).some(header => header.toLowerCase() === normalized);
+}
+
+/**
+ * Add a framework-owned response header unless the handler already set it.
+ *
+ * @param {Record<string, any>} headers
+ * @param {string} name
+ * @param {string|undefined} value
+ * @returns {Record<string, any>}
+ */
+function withDefaultHeader(headers, name, value) {
+  if (value === undefined || hasHeader(headers, name))
+    return headers;
+
+  return {
+    ...headers,
+    [name]: value
+  };
+}
+
+/**
+ * Format a deprecation sunset value for the HTTP Sunset header.
+ *
+ * @param {string|undefined} sunset
+ * @returns {string|undefined}
+ */
+function sunsetHeaderValue(sunset) {
+  if (!sunset)
+    return undefined;
+
+  let time = Date.parse(sunset);
+
+  if (Number.isNaN(time))
+    return undefined;
+
+  return new Date(time).toUTCString();
+}
+
+/**
+ * Infer the successor target used by the Link header.
+ *
+ * Structured replacements use their path. String replacements may be a URL,
+ * path, or readable operation text such as `POST /sdk/screenshots/batch`.
+ *
+ * @param {string|{ path?: string }|undefined} replacement
+ * @returns {string|undefined}
+ */
+function replacementLinkTarget(replacement) {
+  if (!replacement)
+    return undefined;
+
+  if (typeof replacement === 'object')
+    return replacement.path;
+
+  if (/^https?:\/\//.test(replacement) || replacement.startsWith('/'))
+    return replacement;
+
+  let pathMatch = replacement.match(/\s(\/\S+)$/);
+  return pathMatch?.[1];
+}
+
+/**
+ * Build the RFC-style successor Link header for a deprecated endpoint.
+ *
+ * @param {{ replacement?: string|object }} deprecation
+ * @returns {string|undefined}
+ */
+function deprecationLinkHeader(deprecation) {
+  let target = replacementLinkTarget(deprecation.replacement);
+
+  if (!target)
+    return undefined;
+
+  return `<${target}>; rel="successor-version"`;
+}
+
+/**
+ * Add opt-in deprecation response headers while preserving explicit handler headers.
+ *
+ * @param {object} response
+ * @param {object|undefined} deprecation
+ * @returns {object}
+ */
+function applyDeprecationHeaders(response, deprecation) {
+  if (deprecation?.headers !== true)
+    return response;
+
+  let headers = response?.headers ?? {};
+
+  headers = withDefaultHeader(headers, 'Deprecation', 'true');
+  headers = withDefaultHeader(headers, 'Sunset', sunsetHeaderValue(deprecation.sunset));
+  headers = withDefaultHeader(headers, 'Link', deprecationLinkHeader(deprecation));
+
+  return {
+    ...response,
+    headers
+  };
+}
+
+/**
+ * Return route event metadata for deprecated endpoints.
+ *
+ * @param {object} endpoint
+ * @returns {{ deprecation?: object }}
+ */
+function deprecationMetadata(endpoint) {
+  return endpoint.deprecation ? { deprecation: endpoint.deprecation } : {};
+}
+
+/**
  * Compose request middleware while counting only each middleware's own work.
  *
  * Middleware wraps the rest of the request, so naive duration tracking would
@@ -693,13 +813,15 @@ function createRuntimeHandler({
           requestLogger = routeLogger;
           logRuntimeEvent(routeLogger, 'info', 'http.route.matched', {
             request: safeRequestSnapshot(matchedRequest),
-            route
+            route,
+            ...deprecationMetadata(match.endpoint)
           });
           await emitObserved(observability, replay, () => ({
             type: 'route.matched',
             requestId,
             request: safeRequestSnapshot(matchedRequest),
-            route
+            route,
+            ...deprecationMetadata(match.endpoint)
           }));
           let matchedRequestContext = {
             ...nextRequestContext,
@@ -729,9 +851,11 @@ function createRuntimeHandler({
             )
           );
 
-          return await match.endpoint.handle(parsedRequest, requestContextForMatchedRequest.context, {
+          let response = await match.endpoint.handle(parsedRequest, requestContextForMatchedRequest.context, {
             timing
           });
+
+          return applyDeprecationHeaders(response, match.endpoint.deprecation);
         }
 
         let allowedMethods = await timing.time('routeMatchMs', () =>

@@ -106,8 +106,25 @@ function domainNameFor(domain, index) {
   return `domain${index + 1}`;
 }
 
-function operationLine(endpoint) {
-  return `${endpoint.method.padEnd(6)} ${endpoint.path}`;
+function routeLine(route) {
+  return `${route.method.padEnd(6)} ${route.path}${route.deprecation ? ' DEPRECATED' : ''}`;
+}
+
+/**
+ * Format the successor endpoint for human-readable inspect output.
+ *
+ * @param {string|{ method?: string, path?: string, operationId?: string }} replacement
+ * @returns {string}
+ */
+function deprecationReplacementLine(replacement) {
+  if (typeof replacement === 'string')
+    return replacement;
+
+  return [
+    replacement.method,
+    replacement.path,
+    replacement.operationId
+  ].filter(Boolean).join(' ');
 }
 
 function withPathPrefix(pathValue, prefix) {
@@ -199,6 +216,7 @@ export function createAppMap(contract) {
     routes: contract.endpoints.map(endpoint => ({
       ...routeIdentityFor(endpoint),
       path: withPathPrefix(endpoint.path, contract.prefix),
+      deprecation: endpoint.deprecation,
       rules: ruleNamesFor(endpoint),
       summary: endpoint.summary,
       tags: endpoint.tags
@@ -246,7 +264,13 @@ export function formatAppMap(appMap) {
 
   lines.push('', 'Routes');
   for (let route of appMap.routes) {
-    lines.push(`  ${operationLine(route)} (${route.operationId})`);
+    lines.push(`  ${routeLine(route)} (${route.operationId})`);
+    if (route.deprecation?.sunset)
+      lines.push(`    sunset: ${route.deprecation.sunset}`);
+    if (route.deprecation?.replacement)
+      lines.push(`    replacement: ${deprecationReplacementLine(route.deprecation.replacement)}`);
+    if (route.deprecation?.reason)
+      lines.push(`    reason: ${route.deprecation.reason}`);
     lines.push(`    rules: ${route.rules.join(', ') || 'none'}`);
   }
 

@@ -10,6 +10,7 @@ import request from 'supertest';
 import {
   created,
   createCricketRuntime,
+  deprecateEndpoint,
   defineCricketApp,
   defineEndpoint,
   generateOpenApi,
@@ -137,6 +138,139 @@ describe('Cricket HTTP runtime', () => {
     assert.equal(serializedEvents.includes('response-secret'), false);
     assert.equal(serializedEvents.includes('query-secret'), false);
     assert.equal(serializedEvents.includes('Launch Plan'), false);
+  });
+
+
+  it('serves deprecated endpoints with normal responses and route metadata', async () => {
+    let events = [];
+    let endpoint = deprecateEndpoint(defineEndpoint({
+      method: 'post',
+      path: '/sdk/check-shas',
+      handler() {
+        return ok({
+          success: true,
+          missing: []
+        });
+      }
+    }), {
+      since: '2026-06-17',
+      sunset: '2026-09-01',
+      replacement: {
+        method: 'post',
+        path: '/sdk/screenshots/batch'
+      },
+      reason: 'Use the batch screenshot upload flow instead.'
+    });
+    let runtime = await createCricketRuntime(defineCricketApp({
+      endpoints: [endpoint],
+      observability: {
+        observe(event) {
+          events.push(event);
+        }
+      }
+    }), {
+      logger() {}
+    });
+
+    let response = await request(runtime.app)
+      .post('/sdk/check-shas')
+      .send({ shas: [] });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, {
+      success: true,
+      missing: []
+    });
+    assert.equal(response.headers.deprecation, undefined);
+    assert.equal(response.headers.sunset, undefined);
+    assert.equal(response.headers.link, undefined);
+    assert.deepEqual(events.find(event => event.type === 'route.matched').deprecation, {
+      since: '2026-06-17',
+      sunset: '2026-09-01',
+      replacement: {
+        method: 'POST',
+        path: '/sdk/screenshots/batch'
+      },
+      reason: 'Use the batch screenshot upload flow instead.'
+    });
+    assert.equal(events.find(event => event.type === 'response.finished').response.status, 200);
+  });
+
+
+  it('adds deprecation headers when endpoint metadata opts in', async () => {
+    let endpoint = deprecateEndpoint(defineEndpoint({
+      method: 'post',
+      path: '/sdk/check-shas',
+      handler() {
+        return ok({
+          success: true
+        });
+      }
+    }), {
+      sunset: '2026-09-01',
+      replacement: {
+        method: 'post',
+        path: '/sdk/screenshots/batch'
+      },
+      headers: true
+    });
+    let runtime = await createCricketRuntime(defineCricketApp({
+      endpoints: [endpoint]
+    }), {
+      logger() {}
+    });
+
+    let response = await request(runtime.app)
+      .post('/sdk/check-shas')
+      .send({ shas: [] });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.deprecation, 'true');
+    assert.equal(response.headers.sunset, new Date('2026-09-01').toUTCString());
+    assert.equal(response.headers.link, '</sdk/screenshots/batch>; rel="successor-version"');
+    assert.deepEqual(response.body, {
+      success: true
+    });
+  });
+
+
+  it('keeps explicit deprecation headers from handlers', async () => {
+    let endpoint = deprecateEndpoint(defineEndpoint({
+      method: 'get',
+      path: '/legacy-health',
+      handler() {
+        return {
+          status: 200,
+          headers: {
+            Deprecation: 'false',
+            Sunset: 'Tue, 01 Sep 2026 00:00:00 GMT',
+            Link: '</manual-health>; rel="successor-version"'
+          },
+          body: {
+            success: true
+          }
+        };
+      }
+    }), {
+      sunset: '2026-09-01',
+      replacement: 'GET /health'
+    });
+    let runtime = await createCricketRuntime(defineCricketApp({
+      endpoints: [endpoint]
+    }), {
+      logger() {}
+    });
+
+    let response = await request(runtime.app)
+      .get('/legacy-health');
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.deprecation, 'false');
+    assert.equal(response.headers.sunset, 'Tue, 01 Sep 2026 00:00:00 GMT');
+    assert.equal(response.headers.link, '</manual-health>; rel="successor-version"');
+    assert.deepEqual(response.body, {
+      success: true
+    });
   });
 
 

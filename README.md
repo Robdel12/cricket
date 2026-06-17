@@ -425,7 +425,13 @@ them as a plain object so the next rule and handler receive them directly.
 Routes compose the HTTP contract.
 
 ```js
-import { created, defineEndpoint, z } from '@robdel12/cricket';
+import {
+  created,
+  defineEndpoint,
+  deprecateEndpoint,
+  ok,
+  z
+} from '@robdel12/cricket';
 import { Project } from './project.model.js';
 import { serializeProjectPublic } from './project.serializers.js';
 import { ProjectCreateInput } from './project.validations.js';
@@ -481,6 +487,49 @@ snapshot, and Cricket keeps phase transitions private inside the runtime.
 
 This is not a health endpoint or readiness system. Compose lifecycle state into
 your own product health checks when it matters.
+
+Deprecate an endpoint by wrapping the endpoint object. Deprecation is a signal,
+not behavior control: Cricket still routes the request, validates input, runs
+rules, and returns the handler response.
+
+```js
+export let checkShas = deprecateEndpoint(defineEndpoint({
+  method: 'post',
+  path: '/sdk/check-shas',
+  response: z.object({
+    success: z.literal(true)
+  }),
+  async handler({ input, services }) {
+    return ok(await services.sdk.checkShas(input.body));
+  }
+}), {
+  since: '2026-06-17',
+  sunset: '2026-09-01',
+  replacement: 'POST /sdk/screenshots/batch',
+  reason: 'Use the batch screenshot upload flow instead.'
+});
+```
+
+`docs` marks the operation with OpenAPI `deprecated: true` and keeps the details
+under `x-cricket-deprecation`. `inspect` labels the route and prints the sunset,
+replacement, and reason. Runtime observability gets the same metadata, which is
+usually the useful signal for product APIs.
+
+HTTP deprecation headers are opt-in. Use them when clients outside your product
+need migration hints from the response itself.
+
+```js
+export let publicLegacyRoute = deprecateEndpoint(endpoint, {
+  sunset: '2026-09-01',
+  replacement: 'GET /v2/projects/:slug',
+  reason: 'Use the v2 project route.',
+  headers: true
+});
+```
+
+When `headers` is true, Cricket adds `Deprecation`, `Sunset`, and replacement
+`Link` headers when it can infer a successor path, unless your handler already
+set those headers.
 
 ## Observability
 
@@ -624,6 +673,7 @@ import {
   startCricketApp,
   createCricketRuntime,
   defineEndpoint,
+  deprecateEndpoint,
   defineModel,
   defineRule,
   defineSerializer,
