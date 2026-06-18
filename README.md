@@ -675,7 +675,9 @@ test('creates a project through the API', async () => {
 `api` talks to a real local HTTP server on an ephemeral port. It has `get`,
 `post`, `put`, `patch`, `delete`, `head`, `options`, and `request` helpers.
 Request options are `{ headers, query, body, text, buffer, formData, redirect }`,
-and responses have `{ status, headers, body, text, requestId }`.
+and responses have `{ status, headers, body, text, requestId }`. JSON responses
+are parsed into `body`; non-JSON responses keep their bytes in `body` as a
+`Buffer` while also exposing `text`.
 
 `testState` exposes safe frozen data from Cricket's runtime:
 

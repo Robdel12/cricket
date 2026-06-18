@@ -81,7 +81,7 @@ function safeMetadata(value, seen = new WeakSet()) {
   return safe;
 }
 
-function logEnvelope({
+export function logEnvelope({
   context,
   event,
   level,

@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
 import { createCricketRuntime } from '../http/runtime.js';
-import { createTestClient } from './client.js';
+import { logEnvelope } from '../logger.js';
+import {
+  createTestClient,
+  testRequestIdHeader
+} from './client.js';
 import { createTestState } from './state.js';
 
 function observersFrom(config) {
@@ -18,7 +22,7 @@ function observersFrom(config) {
 }
 
 function requestIdFromHeader(context) {
-  let value = context.request.headers['x-cricket-test-request-id'];
+  let value = context.request.headers[testRequestIdHeader];
 
   return typeof value === 'string' && value ? value : undefined;
 }
@@ -48,20 +52,12 @@ function appWithTestObservability(app, testState) {
 
 function createTestLogger(testState, context = {}) {
   function log(level, event, metadata = {}) {
-    let safeMetadata = {
-      ...context,
-      ...metadata
-    };
-
-    testState.recordLog({
-      time: new Date().toISOString(),
-      level,
+    testState.recordLog(logEnvelope({
+      context,
       event,
-      ...(safeMetadata.requestId ? { requestId: safeMetadata.requestId } : {}),
-      ...(safeMetadata.route ? { route: safeMetadata.route } : {}),
-      ...(safeMetadata.span ? { span: safeMetadata.span } : {}),
-      metadata: safeMetadata
-    });
+      level,
+      metadata
+    }));
   }
 
   return {

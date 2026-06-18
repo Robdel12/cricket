@@ -138,6 +138,7 @@ describe('Cricket test harness', () => {
       assert.equal(trace.spans.some(span => span.name === 'createProject'), true);
       assert.equal(trace.spans.some(span => span.name === 'project.persist'), true);
       assert.equal(trace.logs.some(log => log.event === 'http.response.finished'), true);
+      assert.equal(trace.logs.every(log => log.metadata.authorization !== 'Bearer secret-token'), true);
 
       let serialized = JSON.stringify(testState.report());
 
