@@ -24,7 +24,8 @@
     "./knex": "./src/persistence/knex.js",
     "./logger": "./src/logger.js",
     "./openapi": "./src/openapi.js",
-    "./serializer": "./src/serializer.js"
+    "./serializer": "./src/serializer.js",
+    "./test": "./src/test/index.js"
   },
   "scripts": {
     "cricket": "node bin/cricket.js",

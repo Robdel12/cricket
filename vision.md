@@ -231,6 +231,23 @@ Default observability must be conservative: no raw auth headers, cookies, query
 values, request bodies, response bodies, `Set-Cookie` values, raw error
 objects, or open-ended trace dumps.
 
+## Test Harness
+
+Cricket's testing layer should stay a thin vertical integration over the
+runtime Cricket already owns. Tests should still be normal `node:test` files,
+but the framework can make real API tests easier by providing a real HTTP test
+client, safe request traces, structured logs, spans, and timings.
+
+The test harness should not become a hidden app lifecycle owner. It should not
+reset databases, fake auth, create factories, enforce speed budgets, or bypass
+endpoint handling. Apps own setup and data policy. Cricket owns the HTTP
+boundary, request traceability, and a small `cricket test` wrapper around
+Node's runner.
+
+Timing data is inspectability, not judgment. A test can assert that `handlerMs`,
+`validationMs`, or `totalMs` exists when that helps prove the framework path,
+but Cricket should report facts before it invents performance policy.
+
 ## Inspect vs OpenAPI
 
 OpenAPI is the public HTTP spec: paths, parameters, request bodies, responses,

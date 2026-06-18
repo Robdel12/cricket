@@ -850,6 +850,7 @@ function createRuntimeHandler({
               match.endpoint
             )
           );
+          observedRequest = parsedRequest;
 
           let response = await match.endpoint.handle(parsedRequest, requestContextForMatchedRequest.context, {
             timing
