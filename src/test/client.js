@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 let testRequestIdHeader = 'x-cricket-test-request-id';
 let bodylessMethods = new Set(['GET', 'HEAD']);
+let testFetch = globalThis.fetch.bind(globalThis);
 
 function listen(app) {
   return new Promise((resolve, reject) => {
@@ -149,7 +150,7 @@ export async function createTestClient(runtimeOrApp) {
 
     appendQuery(url, options.query);
 
-    let response = await fetch(url, {
+    let response = await testFetch(url, {
       method,
       headers,
       body,

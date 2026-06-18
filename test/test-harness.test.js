@@ -317,6 +317,40 @@ describe('Cricket test harness', () => {
     }
   });
 
+  it('keeps test transport isolated from app fetch mocks', async (t) => {
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/health',
+      handler() {
+        return ok({
+          healthy: true
+        });
+      }
+    });
+    let app = defineCricketApp({
+      endpoints: [endpoint]
+    });
+    let { api, cleanup } = await createTestRuntime(app);
+
+    try {
+      t.mock.method(globalThis, 'fetch', async () => ({
+        ok: true,
+        json: async () => ({
+          mocked: true
+        })
+      }));
+
+      let response = await api.get('/health');
+
+      assert.equal(response.status, 200);
+      assert.deepEqual(response.body, {
+        healthy: true
+      });
+    } finally {
+      await cleanup();
+    }
+  });
+
   it('sends multipart form data through the HTTP test client', async () => {
     let endpoint = defineEndpoint({
       method: 'post',
