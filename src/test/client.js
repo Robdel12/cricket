@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
 
 let testRequestIdHeader = 'x-cricket-test-request-id';
@@ -84,12 +85,13 @@ function requestBody(method, headers, options) {
 }
 
 async function parseBody(response) {
-  let text = await response.text();
+  let buffer = Buffer.from(await response.arrayBuffer());
+  let text = buffer.toString('utf8');
   let contentType = response.headers.get('content-type') ?? '';
 
   if (!isJsonContentType(contentType))
     return {
-      body: undefined,
+      body: buffer,
       text
     };
 

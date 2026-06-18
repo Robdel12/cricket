@@ -243,6 +243,37 @@ describe('Cricket test harness', () => {
     }
   });
 
+  it('preserves binary response bodies in HTTP tests', async () => {
+    let image = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/image.png',
+      handler() {
+        return {
+          status: 200,
+          headers: {
+            'content-type': 'image/png'
+          },
+          body: image
+        };
+      }
+    });
+    let app = defineCricketApp({
+      endpoints: [endpoint]
+    });
+    let { api, cleanup } = await createTestRuntime(app);
+
+    try {
+      let response = await api.get('/image.png');
+
+      assert.equal(response.status, 200);
+      assert.deepEqual(response.body, image);
+      assert.equal(response.text, image.toString('utf8'));
+    } finally {
+      await cleanup();
+    }
+  });
+
   it('keeps redirects inspectable by default', async () => {
     let endpoint = defineEndpoint({
       method: 'get',
