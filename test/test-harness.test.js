@@ -271,6 +271,52 @@ describe('Cricket test harness', () => {
     }
   });
 
+  it('preserves multiple Set-Cookie headers in HTTP tests', async () => {
+    let endpoint = defineEndpoint({
+      method: 'post',
+      path: '/session',
+      handler() {
+        return {
+          status: 200,
+          cookies: [
+            {
+              name: 'accessToken',
+              value: 'access-token',
+              options: {
+                httpOnly: true
+              }
+            },
+            {
+              name: 'refreshToken',
+              value: 'refresh-token',
+              options: {
+                httpOnly: true
+              }
+            }
+          ],
+          body: {
+            ok: true
+          }
+        };
+      }
+    });
+    let app = defineCricketApp({
+      endpoints: [endpoint]
+    });
+    let { api, cleanup } = await createTestRuntime(app);
+
+    try {
+      let response = await api.post('/session');
+
+      assert.equal(response.status, 200);
+      assert.equal(Array.isArray(response.headers['set-cookie']), true);
+      assert.equal(response.headers['set-cookie'].some(cookie => cookie.startsWith('accessToken=')), true);
+      assert.equal(response.headers['set-cookie'].some(cookie => cookie.startsWith('refreshToken=')), true);
+    } finally {
+      await cleanup();
+    }
+  });
+
   it('sends multipart form data through the HTTP test client', async () => {
     let endpoint = defineEndpoint({
       method: 'post',

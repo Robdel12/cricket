@@ -105,6 +105,16 @@ async function parseBody(response) {
   }
 }
 
+function responseHeaders(response) {
+  let headers = Object.fromEntries(response.headers.entries());
+  let setCookie = response.headers.getSetCookie?.();
+
+  if (setCookie?.length)
+    headers['set-cookie'] = setCookie;
+
+  return headers;
+}
+
 function isJsonContentType(contentType) {
   let mediaType = contentType.split(';')[0].trim().toLowerCase();
 
@@ -149,7 +159,7 @@ export async function createTestClient(runtimeOrApp) {
 
     return {
       status: response.status,
-      headers: Object.fromEntries(response.headers.entries()),
+      headers: responseHeaders(response),
       body: parsed.body,
       text: parsed.text,
       requestId
