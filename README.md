@@ -630,6 +630,83 @@ same events into that logger's shape.
 `trace` reads the same logs back on demand and renders request timings plus span
 records. Cricket does not store that data for you.
 
+## Testing
+
+Cricket tests are normal `node:test` files. The test helpers add a real Cricket
+runtime, a small HTTP client, and inspectable request state. They do not reset
+your database, fake auth, bypass endpoints, or replace Node's test runner.
+
+```js
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { createTestRuntime } from '@robdel12/cricket/test';
+import { app } from '../api/index.js';
+
+test('creates a project through the API', async () => {
+  let { api, cleanup, testState } = await createTestRuntime(app);
+
+  try {
+    let response = await api.post('/api/projects', {
+      headers: {
+        authorization: 'Bearer test-token'
+      },
+      body: {
+        name: 'Launch Plan'
+      }
+    });
+
+    assert.equal(response.status, 201);
+    assert.equal(response.body.name, 'Launch Plan');
+
+    let request = testState.request(response.requestId);
+
+    assert.equal(request.response.status, 201);
+    assert.equal(Number.isFinite(request.timings.totalMs), true);
+    assert.equal(Number.isFinite(request.timings.handlerMs), true);
+  } finally {
+    await cleanup();
+  }
+});
+```
+
+`createTestRuntime(app)` returns `{ api, runtime, testState, cleanup }`.
+
+`api` talks to a real local HTTP server on an ephemeral port. It has `get`,
+`post`, `put`, `patch`, `delete`, `head`, `options`, and `request` helpers.
+Request options are `{ headers, query, body, text, buffer }`, and responses have
+`{ status, headers, body, text, requestId }`.
+
+`testState` exposes safe frozen data from Cricket's runtime:
+
+- `report()` returns the current report object.
+- `events(filter?)` returns lifecycle events.
+- `logs(filter?)` returns structured log records.
+- `requests(filter?)` returns terminal request records.
+- `request(requestId)` returns one request with route, request, response,
+  timings, and replay.
+- `trace(requestId)` returns the request's events, logs, spans, and timings.
+- `clear()` clears only the collector. It does not touch app state.
+
+Timings are facts, not budgets. Use them when a test needs to prove a workflow
+used the expected lifecycle path, or when you want to assert that a timing field
+exists for later debugging. Cricket does not decide that your app is "too slow."
+
+The CLI wraps Node's runner with Cricket defaults:
+
+```sh
+pnpm cricket test
+pnpm cricket test test/projects.test.js --grep "creates a project"
+pnpm cricket test --json
+pnpm cricket test --output cricket-test-report.json
+```
+
+By default, `cricket test` discovers `api/**/*.test.js`, `src/**/*.test.js`, and
+`test/**/*.test.js`, then runs `node --test`. Use `--reporter cricket|spec|dot|tap`
+for human output, `--coverage` for Node's test coverage, `--json` for a Cricket
+report on stdout, and `--output <path>` to write the report while still printing
+human output.
+
 ## CLI
 
 ```sh
@@ -638,6 +715,7 @@ pnpm cricket new domain project api/domains
 pnpm cricket inspect api/index.js
 pnpm cricket docs api/index.js --out openapi.json
 pnpm cricket migrate latest api/index.js
+pnpm cricket test
 pnpm cricket init agents .
 ```
 
@@ -660,6 +738,9 @@ database environment.
 `trace` reads newline-delimited JSON logs from stdin and prints a
 human-readable request timeline for one `requestId`, including request timings
 and any recorded spans.
+
+`test` runs Node's built-in test runner with Cricket's file discovery and
+optional JSON report output.
 
 `init agents` writes lightweight guidance for people and agents working inside a
 Cricket app. It augments `AGENTS.md` and installs the repo-local skill at
@@ -693,4 +774,5 @@ import { defineCricketApp } from '@robdel12/cricket/app';
 import { loadDomains } from '@robdel12/cricket/domain';
 import { createCricketLogger, normalizeLogger } from '@robdel12/cricket/logger';
 import { defineSerializer } from '@robdel12/cricket/serializer';
+import { createTestRuntime } from '@robdel12/cricket/test';
 ```

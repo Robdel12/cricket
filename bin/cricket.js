@@ -22,6 +22,9 @@ import {
   runMigrationCommand
 } from '../src/persistence/migrations.js';
 import {
+  runTestCommand
+} from '../src/test/cli.js';
+import {
   formatAppScaffoldResult,
   formatAgentScaffoldResult,
   formatScaffoldResult,
@@ -84,6 +87,7 @@ function usage() {
   cricket migrate list <appModule> [--env name]
   cricket migrate current-version <appModule> [--env name]
   cricket migrate make <appModule> <name> [--env name]
+  cricket test [targets...] [--grep text] [--reporter cricket|spec|dot|tap] [--json] [--output report.json] [--coverage]
   cricket trace <requestId>
 
 Examples:
@@ -92,7 +96,9 @@ Examples:
   cricket init agents .
   cricket inspect api/index.js
   cricket docs api/index.js --out openapi.json
-  cricket migrate latest api/index.js`;
+  cricket migrate latest api/index.js
+  cricket test
+  cricket test test/http-runtime.test.js --grep "deprecated"`;
 }
 
 /**
@@ -271,6 +277,9 @@ export async function runCli(argv = process.argv.slice(2)) {
 
   if (command === 'migrate')
     return await runMigrate(argv);
+
+  if (command === 'test')
+    return await runTestCommand(argv.slice(1));
 
   if (command === 'trace')
     return await runTrace(argv);
