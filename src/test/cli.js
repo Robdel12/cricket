@@ -99,8 +99,9 @@ function isTestFile(filePath) {
 /**
  * Discover Cricket's conventional test files.
  *
- * App/domain tests are preferred first, followed by the normal `test/` folder.
- * If neither exists, Cricket leaves discovery to Node by passing no files.
+ * Cricket searches app, source, and test folders, then returns stable relative
+ * paths. If no conventional files exist, Cricket leaves discovery to Node by
+ * passing no files.
  *
  * @param {string} [cwd=process.cwd()]
  * @returns {Promise<string[]>}
@@ -201,10 +202,7 @@ function parseTapReport(tap, run) {
     version: 1,
     run,
     counts,
-    tests,
-    requests: [],
-    spans: [],
-    logs: []
+    tests
   };
 }
 
@@ -302,9 +300,6 @@ function nodeTestArgs({
  * @property {object} run - Run id and wall-clock timing.
  * @property {object} counts - Node test runner counts.
  * @property {object[]} tests - Parsed terminal test records.
- * @property {object[]} requests - Reserved for Cricket request records.
- * @property {object[]} spans - Reserved for Cricket trace spans.
- * @property {object[]} logs - Reserved for Cricket logs.
  */
 
 /**

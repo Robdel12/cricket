@@ -184,6 +184,43 @@ describe('Cricket test harness', () => {
     }
   });
 
+  it('keeps app logging while adding test log inspection', async () => {
+    let appLogs = [];
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/health',
+      handler({ logger }) {
+        logger.info('health.checked', {
+          healthy: true
+        });
+
+        return ok({
+          healthy: true
+        });
+      }
+    });
+    let app = defineCricketApp({
+      endpoints: [endpoint],
+      logger(event, metadata) {
+        appLogs.push({
+          event,
+          metadata
+        });
+      }
+    });
+    let { api, cleanup, testState } = await createTestRuntime(app);
+
+    try {
+      let response = await api.get('/health');
+
+      assert.equal(response.status, 200);
+      assert.equal(appLogs.some(log => log.event === 'health.checked'), true);
+      assert.equal(testState.logs().some(log => log.event === 'health.checked'), true);
+    } finally {
+      await cleanup();
+    }
+  });
+
   it('exports the public test runtime helper through the package subpath', async () => {
     let endpoint = defineEndpoint({
       method: 'get',
@@ -298,6 +335,41 @@ describe('Cricket test harness', () => {
 
       assert.equal(response.status, 302);
       assert.equal(response.headers.location, '/current');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('rejects body options for GET and HEAD test requests', async () => {
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/health',
+      handler() {
+        return ok({
+          healthy: true
+        });
+      }
+    });
+    let app = defineCricketApp({
+      endpoints: [endpoint]
+    });
+    let { api, cleanup } = await createTestRuntime(app);
+
+    try {
+      await assert.rejects(
+        () => api.get('/health', {
+          body: {
+            hidden: true
+          }
+        }),
+        /GET requests cannot include a body/
+      );
+      await assert.rejects(
+        () => api.head('/health', {
+          text: 'hidden'
+        }),
+        /HEAD requests cannot include a body/
+      );
     } finally {
       await cleanup();
     }

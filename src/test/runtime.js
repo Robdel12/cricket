@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
 import { createCricketRuntime } from '../http/runtime.js';
-import { logEnvelope } from '../logger.js';
+import {
+  logEnvelope,
+  resolveLogger
+} from '../logger.js';
 import {
   createTestClient,
   testRequestIdHeader
@@ -50,7 +53,11 @@ function appWithTestObservability(app, testState) {
   };
 }
 
-function createTestLogger(testState, context = {}) {
+function createTestLogger(testState, appLogger, context = {}) {
+  let logger = appLogger
+    ? resolveLogger(appLogger)
+    : undefined;
+
   function log(level, event, metadata = {}) {
     testState.recordLog(logEnvelope({
       context,
@@ -58,6 +65,7 @@ function createTestLogger(testState, context = {}) {
       level,
       metadata
     }));
+    logger?.[level]?.(event, metadata);
   }
 
   return {
@@ -78,11 +86,18 @@ function createTestLogger(testState, context = {}) {
     },
 
     child(metadata = {}) {
-      return createTestLogger(testState, {
+      return createTestLogger(testState, logger?.child?.(metadata), {
         ...context,
         ...metadata
       });
     }
+  };
+}
+
+function appWithTestLogger(app, testState) {
+  return {
+    ...app,
+    logger: createTestLogger(testState, app.logger)
   };
 }
 
@@ -110,9 +125,9 @@ export async function createTestRuntime(app, {
   baseUrl,
   testState = createTestState()
 } = {}) {
-  let runtime = await createCricketRuntime(appWithTestObservability(app, testState), {
-    baseUrl,
-    logger: createTestLogger(testState)
+  let testApp = appWithTestObservability(appWithTestLogger(app, testState), testState);
+  let runtime = await createCricketRuntime(testApp, {
+    baseUrl
   });
   let api = await createTestClient(runtime);
 

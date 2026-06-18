@@ -706,9 +706,9 @@ pnpm cricket test --output cricket-test-report.json
 By default, `cricket test` discovers `api/**/*.test.js`, `src/**/*.test.js`, and
 `test/**/*.test.js`, then runs `node --test`. Use `--reporter cricket|spec|dot|tap`
 for human output, `--coverage` for Node's test coverage, `--concurrency <number>`
-for suites that need serial or bounded execution, `--json` for a Cricket report
-on stdout, and `--output <path>` to write the report while still printing human
-output.
+for suites that need serial or bounded execution, `--json` for a Node test
+summary on stdout, and `--output <path>` to write that summary while still
+printing human output.
 
 ## CLI
 

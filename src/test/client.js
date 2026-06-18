@@ -3,6 +3,12 @@ import { randomUUID } from 'node:crypto';
 
 let testRequestIdHeader = 'x-cricket-test-request-id';
 let bodylessMethods = new Set(['GET', 'HEAD']);
+let bodyOptionNames = [
+  'body',
+  'buffer',
+  'formData',
+  'text'
+];
 let testFetch = globalThis.fetch.bind(globalThis);
 
 function listen(app) {
@@ -57,9 +63,17 @@ function hasHeader(headers, name) {
   return Object.keys(headers).some(header => header.toLowerCase() === lowerName);
 }
 
+function hasBodyOption(options) {
+  return bodyOptionNames.some(name => Object.hasOwn(options, name));
+}
+
 function requestBody(method, headers, options) {
-  if (bodylessMethods.has(method))
+  if (bodylessMethods.has(method)) {
+    if (hasBodyOption(options))
+      throw new Error(`${method} requests cannot include a body`);
+
     return undefined;
+  }
 
   if (Object.hasOwn(options, 'formData'))
     return options.formData;
