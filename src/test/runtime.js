@@ -102,14 +102,6 @@ function appWithTestLogger(app, testState) {
 }
 
 /**
- * @typedef {object} CricketTestRuntimeHarness
- * @property {import('./client.js').CricketTestClient} api - Real HTTP test client.
- * @property {object} runtime - Cricket runtime created for the app under test.
- * @property {object} testState - Inspectable logs, lifecycle events, requests, and traces.
- * @property {() => Promise<void>} cleanup - Stops the HTTP server and cleans up the runtime.
- */
-
-/**
  * Create a Cricket runtime wired for test inspection.
  *
  * The runtime remains a normal Cricket HTTP runtime. The test harness only adds
@@ -119,7 +111,7 @@ function appWithTestLogger(app, testState) {
  * @param {object} [options]
  * @param {string|URL} [options.baseUrl] - Module URL for domain loading.
  * @param {object} [options.testState] - Existing test state collector.
- * @returns {Promise<CricketTestRuntimeHarness>}
+ * @returns {Promise<object>} Runtime, HTTP client, test state, and cleanup helper.
  */
 export async function createTestRuntime(app, {
   baseUrl,
