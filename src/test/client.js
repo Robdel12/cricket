@@ -125,6 +125,40 @@ function isJsonContentType(contentType) {
 }
 
 /**
+ * @typedef {object} CricketTestRequestOptions
+ * @property {object} [headers] - Request headers sent through Node's HTTP stack.
+ * @property {object|URLSearchParams} [query] - Query params appended to the request path.
+ * @property {object} [body] - JSON body. Cricket sets `content-type` when needed.
+ * @property {FormData} [formData] - Multipart/form body.
+ * @property {Buffer|Uint8Array|string} [buffer] - Raw request body.
+ * @property {string} [text] - Plain-text request body.
+ * @property {string} [requestId] - Stable id used to correlate response, logs, and trace events.
+ * @property {RequestRedirect} [redirect='manual'] - Fetch redirect behavior.
+ */
+
+/**
+ * @typedef {object} CricketTestResponse
+ * @property {number} status
+ * @property {object} headers
+ * @property {*} body - Parsed JSON for JSON responses, otherwise a Buffer.
+ * @property {string} text - UTF-8 response text for assertions and debugging.
+ * @property {string} requestId - Request id attached by the test client.
+ */
+
+/**
+ * @typedef {object} CricketTestClient
+ * @property {(method: string, path: string, options?: CricketTestRequestOptions) => Promise<CricketTestResponse>} request
+ * @property {(path: string, options?: CricketTestRequestOptions) => Promise<CricketTestResponse>} get
+ * @property {(path: string, options?: CricketTestRequestOptions) => Promise<CricketTestResponse>} post
+ * @property {(path: string, options?: CricketTestRequestOptions) => Promise<CricketTestResponse>} put
+ * @property {(path: string, options?: CricketTestRequestOptions) => Promise<CricketTestResponse>} patch
+ * @property {(path: string, options?: CricketTestRequestOptions) => Promise<CricketTestResponse>} delete
+ * @property {(path: string, options?: CricketTestRequestOptions) => Promise<CricketTestResponse>} head
+ * @property {(path: string, options?: CricketTestRequestOptions) => Promise<CricketTestResponse>} options
+ * @property {() => Promise<void>} cleanup
+ */
+
+/**
  * Create a real HTTP client for a Cricket runtime.
  *
  * The client starts the runtime on a local ephemeral port and talks through
@@ -132,7 +166,7 @@ function isJsonContentType(contentType) {
  * response writing, and Node's HTTP boundary.
  *
  * @param {object|Function} runtimeOrApp - Cricket runtime object or app handler.
- * @returns {Promise<object>} HTTP helpers plus `cleanup()`.
+ * @returns {Promise<CricketTestClient>} HTTP helpers plus `cleanup()`.
  */
 export async function createTestClient(runtimeOrApp) {
   let server = await listen(runtimeApp(runtimeOrApp));

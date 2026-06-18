@@ -82,6 +82,19 @@ function spanRecords(eventItems) {
 }
 
 /**
+ * @typedef {object} CricketTestState
+ * @property {(event: object) => void} recordEvent - Store a Cricket lifecycle event.
+ * @property {(log: object) => void} recordLog - Store a structured Cricket log.
+ * @property {() => void} clear - Remove all retained events and logs.
+ * @property {(filter?: object) => object[]} events - Retained lifecycle events.
+ * @property {(filter?: object) => object[]} logs - Retained structured logs.
+ * @property {(filter?: object) => object[]} requests - Terminal request records.
+ * @property {(requestId: string) => object|undefined} request - One terminal request by id.
+ * @property {(requestId: string) => object} trace - Request-correlated spans, logs, and events.
+ * @property {() => object} report - JSON-safe run report.
+ */
+
+/**
  * Create an in-memory Cricket test collector.
  *
  * The collector stores safe runtime facts emitted by Cricket's HTTP lifecycle:
@@ -90,7 +103,7 @@ function spanRecords(eventItems) {
  * @param {object} [options]
  * @param {number} [options.maxEvents=1000] - Maximum lifecycle events retained.
  * @param {number} [options.maxLogs=1000] - Maximum structured logs retained.
- * @returns {object} Test state inspection API.
+ * @returns {CricketTestState} Test state inspection API.
  */
 export function createTestState({
   maxEvents = 1000,

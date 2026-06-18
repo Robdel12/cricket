@@ -297,6 +297,17 @@ function nodeTestArgs({
 }
 
 /**
+ * @typedef {object} CricketTestCommandReport
+ * @property {1} version
+ * @property {object} run - Run id and wall-clock timing.
+ * @property {object} counts - Node test runner counts.
+ * @property {object[]} tests - Parsed terminal test records.
+ * @property {object[]} requests - Reserved for Cricket request records.
+ * @property {object[]} spans - Reserved for Cricket trace spans.
+ * @property {object[]} logs - Reserved for Cricket logs.
+ */
+
+/**
  * Run Cricket's Node test runner wrapper.
  *
  * @param {string[]} [args=[]] - Arguments after `cricket test`.
@@ -304,7 +315,7 @@ function nodeTestArgs({
  * @param {string} [io.cwd=process.cwd()]
  * @param {object} [io.stdout=process.stdout]
  * @param {object} [io.stderr=process.stderr]
- * @returns {Promise<object>} Cricket test report.
+ * @returns {Promise<CricketTestCommandReport>} Cricket test report.
  */
 export async function runTestCommand(args = [], {
   cwd = process.cwd(),
