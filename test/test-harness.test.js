@@ -387,7 +387,7 @@ describe('Cricket test harness', () => {
     let previousExitCode = process.exitCode;
 
     try {
-      let report = await runTestCommand(['--json'], {
+      let report = await runTestCommand(['--json', '--concurrency', '1'], {
         cwd: root,
         stdout: stdout.stream,
         stderr: stderr.stream

@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
 let supportedReporters = new Set(['cricket', 'spec', 'dot', 'tap']);
-let valueFlags = new Set(['--grep', '--output', '--reporter']);
+let valueFlags = new Set(['--concurrency', '--grep', '--output', '--reporter']);
 let ignoredDirectories = new Set([
   '.git',
   'coverage',
@@ -263,6 +263,7 @@ async function readReportFile(reportPath) {
 }
 
 function nodeTestArgs({
+  concurrency,
   coverage,
   grep,
   reporter,
@@ -276,6 +277,9 @@ function nodeTestArgs({
 
   if (grep)
     args.push(`--test-name-pattern=${grep}`);
+
+  if (concurrency)
+    args.push(`--test-concurrency=${concurrency}`);
 
   if (reporter) {
     args.push(`--test-reporter=${reporter}`);
@@ -323,6 +327,7 @@ export async function runTestCommand(args = [], {
   let startedAt = new Date().toISOString();
   let reportPath = path.join(os.tmpdir(), `cricket-test-${randomUUID()}.tap`);
   let result = await runProcess(process.execPath, nodeTestArgs({
+    concurrency: optionValue(args, '--concurrency'),
     coverage: hasFlag(args, '--coverage'),
     grep: optionValue(args, '--grep'),
     reporter: json ? undefined : reporter,
