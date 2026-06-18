@@ -59,6 +59,9 @@ function requestBody(method, headers, options) {
   if (bodylessMethods.has(method))
     return undefined;
 
+  if (Object.hasOwn(options, 'formData'))
+    return options.formData;
+
   if (Object.hasOwn(options, 'buffer'))
     return options.buffer;
 
@@ -139,7 +142,8 @@ export async function createTestClient(runtimeOrApp) {
     let response = await fetch(url, {
       method,
       headers,
-      body
+      body,
+      redirect: options.redirect ?? 'manual'
     });
     let parsed = await parseBody(response);
 

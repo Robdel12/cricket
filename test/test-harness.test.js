@@ -243,6 +243,73 @@ describe('Cricket test harness', () => {
     }
   });
 
+  it('keeps redirects inspectable by default', async () => {
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/legacy',
+      handler() {
+        return {
+          status: 302,
+          headers: {
+            Location: '/current'
+          }
+        };
+      }
+    });
+    let app = defineCricketApp({
+      endpoints: [endpoint]
+    });
+    let { api, cleanup } = await createTestRuntime(app);
+
+    try {
+      let response = await api.get('/legacy');
+
+      assert.equal(response.status, 302);
+      assert.equal(response.headers.location, '/current');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('sends multipart form data through the HTTP test client', async () => {
+    let endpoint = defineEndpoint({
+      method: 'post',
+      path: '/uploads',
+      rawBody: {
+        maxBytes: 1024 * 1024
+      },
+      handler({ request }) {
+        return created({
+          contentType: request.headers['content-type'],
+          bytes: request.rawBody.length
+        });
+      }
+    });
+    let app = defineCricketApp({
+      endpoints: [endpoint]
+    });
+    let { api, cleanup } = await createTestRuntime(app);
+
+    try {
+      let formData = new FormData();
+
+      formData.append('title', 'Wall cloud');
+      formData.append('image', new Blob(['image-bytes'], {
+        type: 'image/png'
+      }), 'wall-cloud.png');
+
+      let response = await api.post('/uploads', {
+        formData
+      });
+
+      assert.equal(response.status, 201);
+      assert.match(response.body.contentType, /^multipart\/form-data; boundary=/);
+      assert.equal(response.body.bytes > 0, true);
+    } finally {
+      await cleanup();
+    }
+  });
+
   it('supports focused state collection without a runtime', () => {
     let testState = createTestState();
 
