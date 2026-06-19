@@ -2,32 +2,42 @@
 
 Cricket is a tiny Node API framework for sturdy contracts.
 
-The bet is that backend code stays easier to grow when every domain has the
-same plain structure, and when the HTTP runtime speaks the same language as the
-domain contracts. Models define durable data shape, validations protect input,
-normalizers translate outside data, serializers shape outgoing API data,
-services do product work, rules guard requests, and routes compose the pieces.
+The bet is simple: backend code stays easier to grow when every part of the
+system is plain, explicit, immutable by default, and easy to compose. Cricket
+should make the right shape obvious without turning app code into framework
+ceremony.
 
-Cricket owns HTTP directly. It does not wrap another web framework or keep a
-generic runtime boundary around just in case.
+## Principles
 
-## Core Shape
+**Plain functions win.** Models, normalizers, serializers, services, rules,
+routes, jobs, and middleware should be plain functions and plain objects.
 
-Cricket should enforce architecture through domain folders.
+**Data stays plain.** Cricket should not introduce model instances, hidden
+mutation, decorators, or ORM-style lifecycles.
+
+**Composition beats magic.** Prefer explicit inputs and outputs over containers,
+class hierarchies, auto-wiring by name, or hidden runtime behavior.
+
+**Contracts live at real boundaries.** Validate request input, durable row
+shape, normalized source data, job input, serializer output, and API responses.
+Do not add schemas for theater.
+
+**First-class does not mean hidden ownership.** Cricket can scaffold, load,
+inspect, document, and test a shape. Apps still own product policy, auth,
+tables, migrations, imports, queues, workers, health, and deployment.
+
+**Agents are users.** Predictable files, predictable exports, small functions,
+explicit dependencies, inspect output, OpenAPI output, and boundary tests make
+apps easier for humans and agents to change safely.
+
+## App Shape
+
+Cricket apps should be readable from the filesystem:
 
 ```text
 api/
   index.js
   domains/
-    project/
-      project.model.js
-      project.validations.js
-      project.normalizers.js
-      project.serializers.js
-      project.service.js
-      project.rules.js
-      project.routes.js
-      project.test.js
   middleware/
   services/
   workers/
@@ -35,326 +45,153 @@ api/
   dev/
 ```
 
-Those files are the expected shape:
-
-- `model` defines durable row contracts and public/private visibility.
-- `validations` defines reusable Zod schemas for request, source, and service
-  input contracts.
-- `normalizers` defines pure source-boundary projections for third-party,
-  legacy, webhook, queue, or import payloads.
-- `serializers` defines pure outgoing API projections.
-- `service` defines domain data and integration operations with explicit dependencies.
-- `rules` defines named guards for auth, existence, ownership, billing,
-  visibility, and business preconditions.
-- `routes` defines endpoints by composing schemas, rules, services,
-  serializers, response contracts, and HTTP metadata.
-- `test` proves endpoint behavior through the HTTP boundary.
-
-Apps can use only the files a domain earns. Cricket's happy path should keep
-the core files obvious, scaffolded, documented, and loaded when present. Tests
-are scaffolded next to the endpoint contract, but they are not part of runtime
-domain loading.
-
-## App Structure
-
-Cricket's core contract is the domain folder, but real apps have recurring
-responsibilities outside one domain. The recommended app shape gives that work
-a home without turning it into hidden framework behavior.
-
-First-class means scaffolded, documented, inspectable, and agent-readable. It
-does not mean Cricket owns product policy:
-
-- `api/index.js` is the normal Node entrypoint and visible Cricket app wiring.
-- `api/domains/` contains product API domains.
-- `api/middleware/` contains request middleware such as auth extraction,
-  request IDs, CORS, rate limits, raw webhooks, and frontend fallbacks.
-- `api/services/` contains app-wide capabilities that are not owned by one
-  domain, such as email, media storage, payment clients, caches, and external
-  clients.
-- `api/workers/` contains background worker entrypoints. Workers should start
-  Cricket workers and should not become a second product layer.
-- `api/migrations/` contains app-owned database migrations.
-- `api/dev/` contains local-only developer support code such as wait-for-db
-  helpers, fixture generators, local setup/reset helpers, and smoke-test
-  harnesses.
+`api/index.js` wires the app. `api/domains/` holds product behavior.
+`api/middleware/` owns HTTP edge behavior. `api/services/` holds shared
+capabilities. `api/workers/` starts background workers. `api/migrations/` holds
+database history. `api/dev/` is local support, not production runtime.
 
 This is guidance, not a cage. If an app earns another folder, it can have one.
-Cricket should provide rails around the common mess without pretending every app
-has the same shape.
+Cricket should provide rails around the common mess without pretending every
+app is the same.
 
-Cricket should not provide a `scripts/` junk drawer. If code affects product
-behavior, design it into a domain, app service, worker, middleware, or
-migration. If code is only local development support, keep it in `api/dev/` and
-keep it out of production runtime.
+## Domains
 
-## Domain Files
-
-### `*.model.js`
-
-Models own durable data contracts, visibility, and sensitive-field markers.
-
-Put persisted row fields here. Use `field.public(schema)` for fields that can
-leave through the default public contract, and `field.private(schema)` for
-fields that require an explicit named view and serializer. Fields default to
-`sensitive: false`; add `{ sensitive: true }` when logging and observability
-need to treat the field carefully.
-
-The sensitive marker exists because logging and observability should start from
-the same durable row contract instead of scattered redaction rules. Cricket only
-records whether a field needs handling; product-specific categories belong in
-app policy.
-
-`defineModel(...)` should derive strict `row`, `public`, and named view schemas.
-Models should not own request lifecycle contracts like create/update. Those
-belong in validations.
-
-Some domains do not own persisted data. They may skip `*.model.js` entirely or
-keep shared schema primitives there without a `defineModel(...)` export. Do not
-create fake tables or fake model contracts just to satisfy the framework.
-
-### `*.validations.js`
-
-Validations own input shape.
-
-Put Zod schemas here for request bodies, params, queries, source payloads,
-service inputs, and persistence inserts/updates when a named contract helps.
-Routes, rules, services, and normalizers import the schemas they use.
-
-Cricket should not create a hidden validation registry or auto-wire schemas by
-name.
-
-### `*.normalizers.js`
-
-Normalizers own source-boundary translation.
-
-Put pure `defineNormalizer(...)` functions here when data comes from a
-third-party API, CSV, webhook, queue payload, legacy system, or import feed. A
-normalizer turns source-shaped data into an app-owned object before services
-persist or reason over it.
-
-Normalizers should not fetch, write to the database, enqueue work, check auth,
-or know about HTTP. Cricket validates source and output schemas when the
-normalizer runs. Services and workers own side effects.
-
-### `*.serializers.js`
-
-Serializers own outgoing API shape.
-
-Put `defineSerializer(...)` projections here. They should accept plain objects
-and return plain objects. This is where private fields are dropped and
-endpoint-specific public shapes can be named. Cricket validates serializer
-output so leaks fail close to the source.
-
-### `*.service.js`
-
-Services own data and integration operations.
-
-Put database calls, transactions, writes, reads, cross-table workflows, and
-integration calls here. Services should accept explicit dependencies such as
-`db`, `trx`, `logger`, clients, ID generators, and config. They should return
-plain data, usually parsed through model schemas.
-
-Services should not depend on HTTP by default. If a service needs request data,
-pass the specific value it needs.
-
-### `*.rules.js`
-
-Rules own guards and preconditions.
-
-Put auth checks, existence checks, ownership checks, visibility checks, billing
-gates, feature limits, and business preconditions here. Rules may return the
-minimum request-local facts needed by later rules and handlers when loading
-those facts is part of the guard.
-
-A rule should answer "can this request continue?" If it starts doing the actual
-product operation, move that work into the service.
-
-### `*.routes.js`
-
-Routes own HTTP composition.
-
-Put endpoint definitions here: method, path, params, query, body, rules,
-handler, response schema, and OpenAPI metadata. Routes should read like a
-concise product flow: validate input, run rules, call services, serialize
-output.
-
-Deprecation is route metadata, not behavior control. Use a composable endpoint
-wrapper to mark supported-but-going-away routes so docs, inspect output,
-and observability can surface the same signal. HTTP deprecation headers should
-stay opt-in for public APIs that need wire-level migration hints. Cricket should
-not disable, redirect, or change validation for deprecated endpoints; deleting
-the route later remains an app-owned product decision.
-
-## Source Ingest Flow
+The domain folder is Cricket's core contract:
 
 ```text
-source client or worker
-  -> normalizer
-  -> validation contract
-  -> service
-  -> database, queue, or app-owned side effect
+project.model.js
+project.validations.js
+project.normalizers.js
+project.serializers.js
+project.service.js
+project.rules.js
+project.routes.js
+project.jobs.js
+project.test.js
 ```
 
-Normalizers keep outside-system weirdness at the boundary. Services still own
-fetching, transactions, persistence, retries, and downstream work.
+Each file has one job:
+
+- `model` defines durable row contracts, visibility, and sensitive fields.
+- `validations` defines reusable body, params, query, source, and service input
+  schemas.
+- `normalizers` turns outside data into app-owned data.
+- `serializers` shapes outgoing API data.
+- `service` does data and integration work.
+- `rules` handles auth, existence, ownership, billing, and business guards.
+- `routes` composes HTTP behavior.
+- `jobs` defines validated asynchronous work.
+- `test` proves behavior at the API or worker boundary.
+
+Domains can use only the files they earn. Optional files stay optional, but the
+standard names should stay predictable.
+
+## Runtime
+
+Cricket owns its HTTP runtime. It should not wrap another web framework or pass
+foreign request/response objects through app code as an escape hatch.
+
+The runtime should pass one consistent capability shape through setup,
+middleware, rules, handlers, services, jobs, workers, shutdown hooks, logs, and
+traces:
+
+- `logger`
+- `trace`
+- `lifecycle`
+- `services`
+- `db` when Cricket owns the database handle
+- request or job identity
+
+Apps may read lifecycle state, but product health remains app-owned. A Cricket
+runtime can say it is starting, ready, shutting down, or stopped. It should not
+decide whether your product is healthy enough to receive traffic.
+
+## Data
+
+Cricket is not an ORM.
+
+It blesses Knex as the database path and can own the runtime handle, migration
+CLI, and named database environments. Apps still own table design, migrations,
+indexes, transactions, query strategy, and product data policy.
+
+`api/migrations/` is the convention. Cricket should not run migrations on server
+start or invent a second database abstraction.
+
+## Jobs
+
+Jobs are Cricket contracts for background work.
+
+A job should be an immutable envelope with validated input, explicit context,
+queue metadata, retry policy, observable execution, and a plain `run` function.
+Job code should receive the same app capabilities as HTTP handlers: services,
+logger, trace, lifecycle, jobs, and progress.
+
+Redis coordinates hot execution: queues, wakeups, leases, attempts, idempotency,
+and short-lived progress. The app database keeps product truth. Cricket's
+`cricket_jobs` table is an execution ledger for debugging and operators, not a
+domain state model.
+
+Failure handling is first-class because retries are where framework truth and
+product truth drift. Retry policy decides whether Cricket schedules another
+attempt. `jobFailure({ retrying, exhausted })` lets app code sync product
+records after that decision without knowing Redis internals.
 
 ## Observability
 
-Cricket should provide one observability story.
+Cricket should provide one conservative observability story.
 
-The default logger is framework-owned, structured, and stdout-first. Apps can
-configure it or provide a compatible logger, but Cricket should still pass one
-logger shape through setup, middleware, context, rules, handlers, services,
-startup, shutdown, and error handling.
+Logs are structured and stdout-first. Traces are safe, scalar, and tied to a
+request or job. Timing data explains where time went; it should not become a
+heavy observability product.
 
-The runtime owns request IDs, job run IDs, safe snapshots, route/job identity,
-replay artifacts, and always-on request/job timings. Those timings should stay
-tiny and monotonic so the default path explains where time went without turning
-into a heavy observability subsystem.
+Cricket should never emit raw auth headers, cookies, query values, request
+bodies, response bodies, `Set-Cookie` values, raw error objects, or open-ended
+trace dumps by default.
 
-HTTP and worker runtimes share lifecycle state: starting, ready, shutting down,
-and stopped. Apps may read that state through the lifecycle capability, but
-they still own product health, readiness, and deploy checks.
+`cricket trace` is a log renderer, not a storage backend or dashboard.
 
-Redis should coordinate hot job execution: queue membership, leases, wakeups,
-attempt nudges, idempotency locks, and short-lived progress events. The app
-database should hold two separate kinds of truth: app-owned product records for
-domain status/result, and a Cricket-owned `cricket_jobs` ledger for framework
-execution history. That ledger is useful for debugging, recovery, audit, and
-operator visibility, but it must not become the product state model.
+## Testing
 
-Job failure handling should be first-class because retries are where framework
-truth and product truth can drift. Retry policy decides whether Cricket should
-schedule another attempt. Failure handlers run after that decision, with the
-same services/logger/trace/lifecycle capabilities as normal job code, so apps
-can sync their own records without knowing Redis or queue driver internals.
-Handler failures are observable, but they must never replace the original job
-failure.
+Cricket's test layer should stay a thin vertical integration over the runtime it
+already owns.
 
-Deeper spans should be explicit. Apps can use `trace.span(name, metadata, fn)`
-for meaningful workflow stages, and the trace data should stay request-scoped,
-safe, and scalar. Database timing can exist at explicit repository or Knex
-boundaries, but Cricket should keep SQL values, bind values, row data, and
-secrets out of trace payloads.
+Tests should still be normal `node:test` files. Cricket can provide a real HTTP
+client, worker hooks, safe request/job traces, structured logs, spans, timings,
+and a small `cricket test` wrapper.
 
-Request and job logs should carry the facts Cricket already knows. CLI tools
-can read the emitted log lines to trace one request by `requestId`.
-`cricket trace` is a log renderer, not a storage backend or dashboard product.
+Cricket should not reset databases, fake auth, create factories, enforce speed
+budgets, or bypass endpoint handling. Apps own setup and data policy.
 
-Default observability must be conservative: no raw auth headers, cookies, query
-values, request bodies, response bodies, `Set-Cookie` values, raw error
-objects, or open-ended trace dumps.
+## Inspect And Documentation
 
-## Test Harness
+OpenAPI is the public HTTP spec.
 
-Cricket's testing layer should stay a thin vertical integration over the
-runtime it already owns. Tests should still be normal `node:test` files, but
-the framework can make real API and job tests easier with a real HTTP test
-client, worker runtime hooks, safe request/job traces, structured logs, spans,
-and timings.
+`cricket inspect` is the framework topology map: domains, models, sensitive
+fields, rules, services, jobs, routes, operation IDs, database posture, and
+observability posture.
 
-The test harness should not become a hidden app lifecycle owner. It should not
-reset databases, fake auth, create factories, enforce speed budgets, or bypass
-endpoint handling. Apps own setup and data policy. Cricket owns the HTTP
-boundary, request/job traceability, and a small `cricket test` wrapper around
-Node's runner.
-
-Timing data is inspectability, not judgment. A test can assert that `handlerMs`,
-`validationMs`, or `totalMs` exists when that helps prove the framework path,
-but Cricket should report facts before it invents performance policy.
-
-## Inspect vs OpenAPI
-
-OpenAPI is the public HTTP spec: paths, parameters, request bodies, responses,
-schemas, and operation IDs.
-
-`cricket inspect` is the framework topology map: domains, models,
-sensitive-field markers, rules, services, jobs, routes, operation IDs, and
-observability posture. Keep these separate. Clients get a clean spec. Humans
-and agents get the framework shape.
-
-## Design Principles
-
-**Plain functions win.** Keep models, serializers, rules, services, endpoints,
-and middleware as functions and POJOs.
-
-**Plain objects stay plain.** Cricket should not introduce model instances,
-hidden mutation, decorators, or ORM-style lifecycles.
-
-**Functional composition over framework ceremony.** Compose small functions with
-explicit inputs and outputs. Avoid magic containers and class hierarchies.
-
-**Strong contracts at real boundaries.** Validate request input, durable row
-shape, normalized source data, serializer output, and outgoing API responses.
-Do not add schemas for theater.
-
-**First-class does not mean hidden ownership.** Cricket can scaffold
-`normalizers`, `middleware/`, `services/`, `workers/`, `migrations/`, `dev/`,
-jobs, and domain tests without taking over auth policy, imports, migrations,
-product data policy, local tooling, or deployment.
-
-**Folder structure is the convention and the enforcement.** The framework should
-auto-load the expected domain files and make missing pieces obvious during
-scaffold, inspect, docs, or startup work.
-
-**Escape hatches stay Cricket-shaped.** Request data, response primitives,
-streams, cookies, files, and close hooks are real tools. Keep them explicit in
-Cricket contracts instead of exposing a foreign transport object.
-
-**Agents are first-class users.** Predictable files, predictable exports, small
-functions, explicit dependencies, OpenAPI output, and HTTP-boundary tests make
-the code easier for LLM agents to extend safely.
-
-## What Cricket Is Not
-
-Cricket is not an ORM. It blesses Knex as the database path and can own the
-runtime handle plus migration CLI, but the app still owns migrations, table
-design, query strategy, indexes, and product-specific data behavior.
-
-`api/migrations/` is the convention. Apps should put their migration history
-there and let `defineCricketApp({ database })` power runtime setup and
-`cricket migrate`. Cricket can resolve named database environments from that
-same app contract, but it should not run migrations on server start or invent a
-second database abstraction.
-
-Cricket is not a generic backend platform. It is opinionated about API
-architecture, but it should stay small and plain.
-
-Cricket is not a validation-only helper. Zod is the contract layer, but the
-bigger win is the whole route/service/rule/serializer/model/runtime shape.
-
-Cricket is not a codegen-heavy CLI. The CLI should create structure and
-orientation, not write product behavior.
-
-Cricket is not a web-framework wrapper. It owns its HTTP runtime.
+Keep those separate. Clients get a clean API spec. Humans and agents get the
+framework shape.
 
 ## CLI And Agents
 
-The CLI should make the right shape the easiest path:
+The CLI should create structure and orientation, not product behavior.
 
-```sh
-pnpm cricket init app .
-pnpm cricket new domain project api/domains
-pnpm cricket inspect api/index.js
-pnpm cricket docs api/index.js --out openapi.json
-pnpm cricket migrate status api/index.js
-pnpm cricket init agents .
-```
+`cricket new domain` scaffolds the standard domain files. `cricket init app`
+scaffolds the small app shell. `cricket init agents` ships project guidance and
+a local Cricket skill so agents learn the same architecture humans use.
 
-`cricket new domain` should scaffold the standard files. Command output should
-explain the next useful step. That helps humans and gives agents a durable
-checklist.
+The generated guidance is documentation. Keep it current when Cricket's public
+contract changes.
 
-`cricket init app` should scaffold the small recommended app shell: entrypoint,
-domains, middleware, services, workers, migrations, and local dev support. It
-should not create a config file, jobs folder, scripts folder, or runtime
-abstraction.
+## What Cricket Is Not
 
-`cricket init agents` should ship project guidance that teaches the same
-architecture humans use: domains by folder, schemas at boundaries, services for
-data work, rules for guards, serializers for outgoing API shape, middleware
-for HTTP edge work, and tests through the HTTP API.
+Cricket is not an ORM, generic backend platform, validation-only helper,
+codegen-heavy CLI, or web-framework wrapper.
 
+It is the small framework around the shape: immutable contracts, functional
+composition, explicit runtime capabilities, and boring files that make sturdy
+Node APIs easier to build.
 
 ## Product Feel
 
