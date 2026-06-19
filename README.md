@@ -644,6 +644,7 @@ capabilities your HTTP handlers already get.
 ```js
 import {
   createJobLedgerTable,
+  createCricketJobs,
   defineJob,
   redisQueue,
   retry,
@@ -709,6 +710,26 @@ await jobs.enqueue(generateReport, {
     requestId,
     source: 'report.requested',
     priority: 50
+  }
+});
+```
+
+Producer entrypoints can enqueue without starting a worker:
+
+```js
+let producer = await createCricketJobs({
+  jobs: [generateReport],
+  queues: {
+    redis: {
+      url: process.env.REDIS_URL
+    }
+  }
+});
+
+await producer.jobs.enqueue(generateReport, input, {
+  context: {
+    requestId,
+    source: 'report.requested'
   }
 });
 ```
@@ -899,6 +920,7 @@ import {
 } from '@robdel12/cricket';
 
 import {
+  createCricketJobs,
   createJobLedgerTable,
   redisQueue,
   retry,

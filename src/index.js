@@ -84,6 +84,7 @@ export {
 
 export {
   concurrency,
+  createCricketJobs,
   createJobLedgerTable,
   defineJob,
   redisQueue,

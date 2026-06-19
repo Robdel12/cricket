@@ -27,6 +27,25 @@ function safeError(error) {
   };
 }
 
+function createLedgerRecorder({
+  ledger,
+  logger
+}) {
+  return async function recordLedger(action, envelope, write) {
+    try {
+      await write(ledger);
+    } catch (error) {
+      logger?.warn?.('job.ledger_failed', {
+        action,
+        envelopeId: envelope.id,
+        jobName: envelope.name,
+        queueName: envelope.queueName,
+        error: safeError(error)
+      });
+    }
+  };
+}
+
 function createProgressCapability(driver, recordLedger, envelope, emitJobEvent) {
   return {
     async update(progress) {
@@ -97,6 +116,80 @@ async function createDriver(queues = {}, jobList = []) {
   return createTestQueueDriver();
 }
 
+function createJobsCapability({
+  driver,
+  recordLedger
+}) {
+  let jobsCapability = {
+    plan: planJobEnvelope,
+
+    async enqueue(job, input, options = {}) {
+      let envelope = planJobEnvelope(job, input, options);
+      let result = await driver.enqueue(envelope);
+
+      if (result.enqueued)
+        await recordLedger('queued', envelope, ledger => ledger.queued(envelope));
+
+      return result;
+    },
+
+    async enqueueMany(job, inputs, options = {}) {
+      let results = [];
+
+      for (let input of inputs)
+        results.push(await jobsCapability.enqueue(job, input, options));
+
+      return results;
+    }
+  };
+
+  return jobsCapability;
+}
+
+/**
+ * Create a producer-side Cricket jobs capability.
+ *
+ * Use this in app runtimes that need to enqueue job envelopes without starting
+ * a worker loop. It shares the same queue driver and optional ledger behavior
+ * as `startCricketWorker`.
+ *
+ * @param {object} [options]
+ * @param {object[]} [options.jobs] - Job contracts used to initialize queue names.
+ * @param {object} [options.ledger] - Job ledger options.
+ * @param {object} [options.ledger.db] - Knex database handle for ledger writes.
+ * @param {string} [options.ledger.tableName='cricket_jobs'] - Ledger table name.
+ * @param {object} [options.logger] - Logger used for best-effort ledger warnings.
+ * @param {object} [options.queues] - Queue driver configuration.
+ * @returns {Promise<object>} Producer controls, driver, ledger, and jobs capability.
+ */
+export async function createCricketJobs({
+  jobs = [],
+  ledger: ledgerOptions = {},
+  logger,
+  queues = {}
+} = {}) {
+  let jobList = toArray(jobs);
+  let driver = await createDriver(queues, jobList);
+  let ledger = createJobLedger(ledgerOptions);
+  let recordLedger = createLedgerRecorder({
+    ledger,
+    logger
+  });
+  let jobsCapability = createJobsCapability({
+    driver,
+    recordLedger
+  });
+
+  return {
+    driver,
+    ledger,
+    jobs: jobsCapability,
+    cleanup: async () => {
+      await driver.cleanup?.();
+    }
+  };
+}
+
 /**
  * Start a Cricket worker runtime for registered jobs.
  *
@@ -131,6 +224,10 @@ export async function startCricketWorker(cricketApp, {
     db: runtime.dependencies.db,
     ...ledgerOptions
   });
+  let recordLedger = createLedgerRecorder({
+    ledger,
+    logger: runtime.logger
+  });
   let byName = jobsByName(jobList);
 
   async function emitJobEvent(type, envelope, metadata = {}) {
@@ -145,42 +242,10 @@ export async function startCricketWorker(cricketApp, {
     });
   }
 
-  async function recordLedger(action, envelope, write) {
-    try {
-      await write(ledger);
-    } catch (error) {
-      runtime.logger.warn('job.ledger_failed', {
-        action,
-        envelopeId: envelope.id,
-        jobName: envelope.name,
-        queueName: envelope.queueName,
-        error: safeError(error)
-      });
-    }
-  }
-
-  let jobsCapability = {
-    plan: planJobEnvelope,
-
-    async enqueue(job, input, options = {}) {
-      let envelope = planJobEnvelope(job, input, options);
-      let result = await driver.enqueue(envelope);
-
-      if (result.enqueued)
-        await recordLedger('queued', envelope, ledger => ledger.queued(envelope));
-
-      return result;
-    },
-
-    async enqueueMany(job, inputs, options = {}) {
-      let results = [];
-
-      for (let input of inputs)
-        results.push(await jobsCapability.enqueue(job, input, options));
-
-      return results;
-    }
-  };
+  let jobsCapability = createJobsCapability({
+    driver,
+    recordLedger
+  });
 
   async function runClaim(claim) {
     let envelope = claim.envelope;

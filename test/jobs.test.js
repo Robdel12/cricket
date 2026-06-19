@@ -8,6 +8,7 @@ import knex from 'knex';
 
 import {
   concurrency,
+  createCricketJobs,
   createJobLedgerTable,
   defineCricketApp,
   defineJob,
@@ -25,6 +26,7 @@ import { createRedisQueueDriver } from '../src/jobs/drivers/redis.js';
 import { createTestState } from '../src/test/index.js';
 import {
   createJobLedgerTable as createPackagedJobLedgerTable,
+  createCricketJobs as createPackagedCricketJobs,
   defineJob as definePackagedJob,
   redisQueue as packagedRedisQueue
 } from '@robdel12/cricket/jobs';
@@ -414,6 +416,73 @@ describe('Cricket jobs', () => {
     }
   });
 
+  it('enqueues from a producer-side Cricket jobs capability', async () => {
+    let job = reportJob();
+    let producer = await createCricketJobs({
+      jobs: [job],
+      queues: {
+        test: true
+      }
+    });
+
+    try {
+      let result = await producer.jobs.enqueue(job, {
+        reportId: 'report_producer',
+        accountId: 'acct_producer',
+        templateId: 'template_producer'
+      });
+      let claim = await producer.driver.claim();
+
+      assert.equal(result.enqueued, true);
+      assert.equal(claim.envelope.name, 'reports.generate');
+      assert.equal(claim.envelope.idempotencyKey, 'report_producer');
+    } finally {
+      await producer.cleanup();
+    }
+  });
+
+  it('keeps producer enqueue best-effort when the ledger write fails', async () => {
+    let job = reportJob();
+    let warnings = [];
+    let db = () => ({
+      async insert() {
+        throw new Error('missing cricket_jobs table');
+      }
+    });
+    let producer = await createCricketJobs({
+      jobs: [job],
+      ledger: {
+        db
+      },
+      logger: {
+        warn(event, metadata) {
+          warnings.push({
+            event,
+            metadata
+          });
+        }
+      },
+      queues: {
+        test: true
+      }
+    });
+
+    try {
+      let result = await producer.jobs.enqueue(job, {
+        reportId: 'report_producer_without_ledger',
+        accountId: 'acct_producer_without_ledger',
+        templateId: 'template_producer_without_ledger'
+      });
+      let claim = await producer.driver.claim();
+
+      assert.equal(result.enqueued, true);
+      assert.equal(claim.envelope.idempotencyKey, 'report_producer_without_ledger');
+      assert.ok(warnings.some(warning => warning.event === 'job.ledger_failed'));
+    } finally {
+      await producer.cleanup();
+    }
+  });
+
   it('records job execution in the Cricket job ledger when the app has a database', async () => {
     let database = await createLedgerDatabase();
     let job = reportJob();
@@ -618,6 +687,7 @@ describe('Cricket jobs', () => {
 
     assert.equal(job.name, 'emails.send');
     assert.equal(job.queue.name, 'emails');
+    assert.equal(typeof createPackagedCricketJobs, 'function');
     assert.equal(typeof createPackagedJobLedgerTable, 'function');
   });
 });

@@ -27,6 +27,7 @@ export {
 } from './state.js';
 
 export {
+  createCricketJobs,
   startCricketWorker
 } from './runtime.js';
 
