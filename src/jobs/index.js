@@ -27,6 +27,11 @@ export {
 } from './retry.js';
 
 export {
+  cronSchedule,
+  planCronSchedule
+} from './schedule.js';
+
+export {
   state
 } from './state.js';
 

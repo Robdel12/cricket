@@ -127,9 +127,14 @@ Job code should receive the same app capabilities as HTTP handlers: services,
 logger, trace, lifecycle, jobs, and progress.
 
 Redis coordinates hot execution: queues, wakeups, leases, attempts, idempotency,
-and short-lived progress. The app database keeps product truth. Cricket's
-`cricket_jobs` table is an execution ledger for debugging and operators, not a
-domain state model.
+delayed availability, schedule materialization, and short-lived progress. The
+app database keeps product truth. Cricket's `cricket_jobs` table is an
+execution ledger for debugging and operators, not a domain state model.
+
+Scheduled work should stay inside the job contract. Apps define the cron,
+timezone, enablement rule, and input for each due slot. Cricket uses a thin cron
+parser for schedule math, then materializes due slots into normal immutable job
+envelopes. No app-owned cron sidecars.
 
 Failure handling is first-class because retries are where framework truth and
 product truth drift. Retry policy decides whether Cricket schedules another

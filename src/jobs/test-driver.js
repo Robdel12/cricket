@@ -1,6 +1,11 @@
 import { frozenPlain } from '../immutable.js';
 
 function duplicateFor(items, envelope) {
+  let duplicateId = items.find(item => item.envelope.id === envelope.id);
+
+  if (duplicateId)
+    return duplicateId;
+
   if (!envelope.idempotencyKey)
     return undefined;
 
@@ -14,6 +19,10 @@ function duplicateFor(items, envelope) {
 
 function itemFor(items, envelope) {
   return items.find(candidate => candidate.envelope.id === envelope.id);
+}
+
+function availableNow(envelope, now) {
+  return new Date(envelope.availableAt ?? envelope.createdAt) <= new Date(now ?? envelope.createdAt);
 }
 
 /**
@@ -52,7 +61,7 @@ export function createTestQueueDriver() {
 
       items.push({
         envelope,
-        status: 'queued',
+        status: availableNow(envelope) ? 'queued' : 'delayed',
         attempts: 0,
         progress: []
       });
@@ -131,14 +140,76 @@ export function createTestQueueDriver() {
       record('retry_scheduled', envelope);
     },
 
-    async registerSchedule(job, {
-      enabled
+    async promoteDelayed({
+      now = new Date()
     } = {}) {
-      schedules.push({
+      let promoted = [];
+
+      for (let item of items) {
+        if (item.status !== 'delayed' || !availableNow(item.envelope, now))
+          continue;
+
+        item.status = 'queued';
+        promoted.push(item.envelope);
+        record('delay_promoted', item.envelope);
+      }
+
+      return frozenPlain(promoted);
+    },
+
+    async registerSchedule(job, {
+      enabled,
+      lastRunAt,
+      nextRunAt
+    } = {}) {
+      let existing = schedules.find(schedule => schedule.key === job.schedule.key);
+      let nextSchedule = {
         key: job.schedule.key,
         jobName: job.name,
-        enabled
-      });
+        cron: job.schedule.cron,
+        timezone: job.schedule.timezone,
+        enabled,
+        lastRunAt,
+        nextRunAt
+      };
+
+      if (existing)
+        Object.assign(existing, nextSchedule);
+      else
+        schedules.push(nextSchedule);
+    },
+
+    async scheduleState(job) {
+      let schedule = schedules.find(candidate => candidate.key === job.schedule.key);
+      return schedule ? frozenPlain(schedule) : undefined;
+    },
+
+    async updateSchedule(job, values = {}) {
+      let schedule = schedules.find(candidate => candidate.key === job.schedule.key);
+
+      if (schedule)
+        Object.assign(schedule, values);
+    },
+
+    async materializeSchedule(envelope, {
+      slotId
+    }) {
+      let duplicate = items.find(item => item.slotId === slotId);
+
+      if (duplicate)
+        return frozenPlain({
+          enqueued: false,
+          duplicate: true,
+          envelope: duplicate.envelope
+        });
+
+      let result = await this.enqueue(envelope);
+      let item = itemFor(items, result.envelope);
+
+      if (item)
+        item.slotId = slotId;
+
+      return result;
     },
 
     snapshot() {

@@ -46,6 +46,7 @@
     "access": "public"
   },
   "dependencies": {
+    "cron-parser": "^5.5.0",
     "knex": "^3.2.10",
     "zod": "^4.4.3"
   },

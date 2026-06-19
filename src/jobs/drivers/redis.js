@@ -237,6 +237,14 @@ function scheduleKey(prefix, key) {
   return keyFor(prefix, 'schedule', key);
 }
 
+function scheduleSlotKey(prefix, slotId) {
+  return keyFor(prefix, 'schedule', 'slot', slotId);
+}
+
+function delayedKey(prefix) {
+  return keyFor(prefix, 'delayed');
+}
+
 function duplicateKeyFor(prefix, envelope) {
   if (!envelope.idempotencyKey)
     return undefined;
@@ -314,8 +322,21 @@ export async function createRedisQueueDriver({
     await callRedis('HSET', runKey(prefix, id), 'status', status, ...args);
   }
 
+  function isAvailable(envelope, now) {
+    return new Date(envelope.availableAt ?? envelope.createdAt) <= new Date(now ?? envelope.createdAt);
+  }
+
   return {
     async enqueue(envelope) {
+      let existingEnvelope = await readEnvelope(envelope.id);
+
+      if (existingEnvelope)
+        return frozenPlain({
+          enqueued: false,
+          duplicate: true,
+          envelope: existingEnvelope
+        });
+
       let duplicateKey = duplicateKeyFor(prefix, envelope);
 
       if (duplicateKey) {
@@ -332,10 +353,17 @@ export async function createRedisQueueDriver({
       addQueueName(queues, envelope.queueName);
 
       await callRedis('SET', envelopeKey(prefix, envelope.id), JSON.stringify(envelope));
-      await updateRunStatus(envelope.id, 'queued', 'attempts', '0');
-      await callRedis('RPUSH', queueKey(prefix, envelope.queueName), envelope.id);
+      await updateRunStatus(envelope.id, isAvailable(envelope) ? 'queued' : 'delayed', 'attempts', '0');
+
+      if (isAvailable(envelope))
+        await callRedis('RPUSH', queueKey(prefix, envelope.queueName), envelope.id);
+      else
+        await callRedis('ZADD', delayedKey(prefix), new Date(envelope.availableAt).getTime(), envelope.id);
+
       await writeEvent('queued', envelope);
-      await wakeWorker(envelope);
+
+      if (isAvailable(envelope))
+        await wakeWorker(envelope);
 
       return frozenPlain({
         enqueued: true,
@@ -401,6 +429,33 @@ export async function createRedisQueueDriver({
       await wakeWorker(envelope);
     },
 
+    async promoteDelayed({
+      now = new Date()
+    } = {}) {
+      let ids = await callRedis('ZRANGEBYSCORE', delayedKey(prefix), '-inf', new Date(now).getTime());
+      let promoted = [];
+
+      for (let id of ids ?? []) {
+        let removed = await callRedis('ZREM', delayedKey(prefix), id);
+
+        if (!removed)
+          continue;
+
+        let envelope = await readEnvelope(id);
+
+        if (!envelope)
+          continue;
+
+        await updateRunStatus(envelope.id, 'queued');
+        await callRedis('RPUSH', queueKey(prefix, envelope.queueName), envelope.id);
+        await writeEvent('delay_promoted', envelope);
+        await wakeWorker(envelope);
+        promoted.push(envelope);
+      }
+
+      return frozenPlain(promoted);
+    },
+
     async waitForWork() {
       let result = await callRedis('BLPOP', wakeupsKey(prefix), '0');
 
@@ -408,23 +463,68 @@ export async function createRedisQueueDriver({
     },
 
     async registerSchedule(job, {
-      enabled
+      enabled,
+      lastRunAt,
+      nextRunAt
     } = {}) {
       let scheduleKeyValue = scheduleKey(prefix, job.schedule.key);
 
-      if (!enabled && job.schedule.removeWhenDisabled) {
-        await callRedis('DEL', scheduleKeyValue);
-        return;
-      }
+      let existingText = await callRedis('GET', scheduleKeyValue);
+      let existing = existingText ? JSON.parse(existingText) : {};
 
       await callRedis('SET', scheduleKeyValue, JSON.stringify({
+        ...existing,
         key: job.schedule.key,
         jobName: job.name,
         cron: job.schedule.cron,
         timezone: job.schedule.timezone,
         enabled: enabled !== false,
-        runOnStartup: job.schedule.runOnStartup === true
+        runOnStartup: job.schedule.runOnStartup === true,
+        lastRunAt: existing.lastRunAt ?? lastRunAt,
+        nextRunAt: nextRunAt ?? existing.nextRunAt
       }));
+    },
+
+    async scheduleState(job) {
+      let text = await callRedis('GET', scheduleKey(prefix, job.schedule.key));
+      return text ? frozenPlain(JSON.parse(text)) : undefined;
+    },
+
+    async updateSchedule(job, values = {}) {
+      let scheduleKeyValue = scheduleKey(prefix, job.schedule.key);
+      let text = await callRedis('GET', scheduleKeyValue);
+      let existing = text ? JSON.parse(text) : {
+        key: job.schedule.key,
+        jobName: job.name
+      };
+
+      await callRedis('SET', scheduleKeyValue, JSON.stringify({
+        ...existing,
+        ...values
+      }));
+    },
+
+    async materializeSchedule(envelope, {
+      slotId
+    }) {
+      let slotKey = scheduleSlotKey(prefix, slotId);
+      let didSet = await callRedis('SET', slotKey, envelope.id, 'NX', 'EX', '60');
+
+      if (didSet !== 'OK') {
+        let existingId = await callRedis('GET', slotKey);
+
+        return frozenPlain({
+          enqueued: false,
+          duplicate: true,
+          envelope: existingId ? await readEnvelope(existingId) : envelope
+        });
+      }
+
+      let result = await this.enqueue(envelope);
+
+      await callRedis('DEL', slotKey);
+
+      return result;
     },
 
     async cleanup() {

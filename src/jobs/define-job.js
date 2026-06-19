@@ -53,9 +53,6 @@ function assertSchedule(schedule) {
   if (schedule.enabled !== undefined && typeof schedule.enabled !== 'function')
     throw new Error('schedule enabled must be a function');
 
-  if (schedule.removeWhenDisabled !== undefined && typeof schedule.removeWhenDisabled !== 'boolean')
-    throw new Error('schedule removeWhenDisabled must be a boolean');
-
   if (schedule.runOnStartup !== undefined && typeof schedule.runOnStartup !== 'boolean')
     throw new Error('schedule runOnStartup must be a boolean');
 }

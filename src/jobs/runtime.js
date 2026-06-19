@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import { createCricketRuntime } from '../http/runtime.js';
 import { createTrace } from '../trace.js';
@@ -7,6 +8,10 @@ import { jobResultFailed } from './errors.js';
 import { planJobEnvelope } from './envelope.js';
 import { createRedisQueueDriver } from './drivers/redis.js';
 import { createJobLedger } from './ledger.js';
+import {
+  planCronSchedule,
+  previousCronRun
+} from './schedule.js';
 import { createTestQueueDriver } from './test-driver.js';
 
 function toArray(value) {
@@ -120,10 +125,21 @@ function failureContext({
   };
 }
 
-function scheduleContext(runtime) {
+function timestamp(value) {
+  let date = value instanceof Date ? value : new Date(value);
+  return date.toISOString();
+}
+
+function scheduleContext(runtime, {
+  now,
+  scheduledFor
+} = {}) {
   return {
+    now,
+    scheduledFor,
     env: process.env,
-    services: runtime.services
+    services: runtime.services,
+    lifecycle: runtime.lifecycle
   };
 }
 
@@ -147,13 +163,17 @@ async function createDriver(queues = {}, jobList = []) {
 
 function createJobsCapability({
   driver,
-  recordLedger
+  recordLedger,
+  clock
 }) {
   let jobsCapability = {
     plan: planJobEnvelope,
 
     async enqueue(job, input, options = {}) {
-      let envelope = planJobEnvelope(job, input, options);
+      let envelope = planJobEnvelope(job, input, {
+        ...options,
+        now: options.now ?? clock.now
+      });
       let result = await driver.enqueue(envelope);
 
       if (result.enqueued)
@@ -183,6 +203,7 @@ function createJobsCapability({
  * as `startCricketWorker`.
  *
  * @param {object} [options]
+ * @param {object} [options.clock] - Clock used for deterministic enqueue and schedule tests.
  * @param {object[]} [options.jobs] - Job contracts used to initialize queue names.
  * @param {object} [options.ledger] - Job ledger options.
  * @param {object} [options.ledger.db] - Knex database handle for ledger writes.
@@ -192,6 +213,9 @@ function createJobsCapability({
  * @returns {Promise<object>} Producer controls, driver, ledger, and jobs capability.
  */
 export async function createCricketJobs({
+  clock = {
+    now: () => new Date()
+  },
   jobs = [],
   ledger: ledgerOptions = {},
   logger,
@@ -206,7 +230,8 @@ export async function createCricketJobs({
   });
   let jobsCapability = createJobsCapability({
     driver,
-    recordLedger
+    recordLedger,
+    clock
   });
 
   return {
@@ -229,6 +254,7 @@ export async function createCricketJobs({
  * @param {object} cricketApp - App returned by `defineCricketApp`.
  * @param {object} [options]
  * @param {string|URL} [options.baseUrl] - Module URL used to resolve domain paths.
+ * @param {object} [options.clock] - Clock used for deterministic enqueue and schedule tests.
  * @param {object[]} [options.jobs] - Additional job contracts to register.
  * @param {object} [options.ledger] - Job ledger options.
  * @param {string} [options.ledger.tableName='cricket_jobs'] - Ledger table name.
@@ -237,6 +263,9 @@ export async function createCricketJobs({
  */
 export async function startCricketWorker(cricketApp, {
   baseUrl,
+  clock = {
+    now: () => new Date()
+  },
   jobs = [],
   ledger: ledgerOptions = {},
   queues = {}
@@ -266,6 +295,10 @@ export async function startCricketWorker(cricketApp, {
       ...(metadata.jobRunId ? { jobRunId: metadata.jobRunId } : {}),
       envelopeId: envelope.id,
       queueName: envelope.queueName,
+      scheduleKey: envelope.scheduleKey,
+      scheduledFor: envelope.scheduledFor,
+      availableAt: envelope.availableAt,
+      trigger: envelope.trigger,
       requestId: envelope.context?.requestId,
       ...metadata
     });
@@ -273,7 +306,8 @@ export async function startCricketWorker(cricketApp, {
 
   let jobsCapability = createJobsCapability({
     driver,
-    recordLedger
+    recordLedger,
+    clock
   });
 
   async function runClaim(claim) {
@@ -290,6 +324,8 @@ export async function startCricketWorker(cricketApp, {
       envelopeId: envelope.id,
       queueName: envelope.queueName,
       attempt: claim.attempt,
+      ...(envelope.scheduleKey ? { scheduleKey: envelope.scheduleKey } : {}),
+      ...(envelope.scheduledFor ? { scheduledFor: envelope.scheduledFor } : {}),
       ...(jobRun.requestId ? { requestId: jobRun.requestId } : {})
     });
     let replay = runtime.observability.createReplay();
@@ -301,7 +337,9 @@ export async function startCricketWorker(cricketApp, {
         jobName: job.name,
         jobRunId: jobRun.jobRunId,
         envelopeId: envelope.id,
-        queueName: envelope.queueName
+        queueName: envelope.queueName,
+        ...(envelope.scheduleKey ? { scheduleKey: envelope.scheduleKey } : {}),
+        ...(envelope.scheduledFor ? { scheduledFor: envelope.scheduledFor } : {})
       }
     });
     let progress = createProgressCapability(driver, recordLedger, envelope, emitJobEvent);
@@ -424,6 +462,10 @@ export async function startCricketWorker(cricketApp, {
   } = {}) {
     let results = [];
 
+    await driver.promoteDelayed?.({
+      now: clock.now()
+    });
+
     while (true) {
       let claim = await driver.claim();
 
@@ -444,22 +486,133 @@ export async function startCricketWorker(cricketApp, {
   }
 
   async function startSchedule(job) {
+    let now = clock.now();
     let enabled = job.schedule.enabled
-      ? job.schedule.enabled(scheduleContext(runtime))
+      ? job.schedule.enabled(scheduleContext(runtime, {
+        now
+      }))
       : true;
+    let state = await driver.scheduleState?.(job);
+    let lastRunAt = state?.lastRunAt ?? previousCronRun(job.schedule, now);
+    let plan = planCronSchedule(job.schedule, {
+      lastRunAt,
+      now,
+      limit: 1
+    });
 
     await driver.registerSchedule?.(job, {
-      enabled
+      enabled,
+      lastRunAt,
+      nextRunAt: plan.nextRunAt
     });
 
     if (!enabled || !job.schedule.runOnStartup)
       return;
 
-    await jobsCapability.enqueue(job, job.schedule.input(scheduleContext(runtime)), {
+    let scheduledFor = timestamp(now);
+
+    await jobsCapability.enqueue(job, job.schedule.input(scheduleContext(runtime, {
+      now,
+      scheduledFor
+    })), {
       context: {
         source: `schedule:${job.schedule.key}`
-      }
+      },
+      scheduleKey: job.schedule.key,
+      scheduledFor,
+      trigger: 'startup'
     });
+  }
+
+  async function tickSchedules({
+    now = clock.now(),
+    limit = 10
+  } = {}) {
+    let materialized = [];
+
+    for (let job of jobList) {
+      if (!job.schedule)
+        continue;
+
+      let enabled = job.schedule.enabled
+        ? job.schedule.enabled(scheduleContext(runtime, {
+          now
+        }))
+        : true;
+
+      if (!enabled)
+        continue;
+
+      let state = await driver.scheduleState?.(job);
+      let lastRunAt = state?.lastRunAt ?? previousCronRun(job.schedule, now);
+      let plan = planCronSchedule(job.schedule, {
+        lastRunAt,
+        now,
+        limit
+      });
+
+      for (let slot of plan.due) {
+        let envelope = jobsCapability.plan(job, job.schedule.input(scheduleContext(runtime, {
+          now,
+          scheduledFor: slot.scheduledFor
+        })), {
+          context: {
+            source: `schedule:${job.schedule.key}`
+          },
+          now: () => now,
+          scheduleKey: job.schedule.key,
+          scheduledFor: slot.scheduledFor,
+          trigger: 'cron',
+          createId: () => `jobenv_${slot.slotId.replace(/[^a-zA-Z0-9_:-]/g, '_')}`
+        });
+        let result = driver.materializeSchedule
+          ? await driver.materializeSchedule(envelope, {
+            slotId: slot.slotId
+          })
+          : await driver.enqueue(envelope);
+
+        if (result.enqueued)
+          await recordLedger('queued', result.envelope, ledger => ledger.queued(result.envelope));
+
+        materialized.push(result);
+      }
+
+      await driver.updateSchedule?.(job, {
+        lastRunAt: plan.due.at(-1)?.scheduledFor ?? lastRunAt,
+        nextRunAt: plan.nextRunAt,
+        missed: plan.missed
+      });
+    }
+
+    await driver.promoteDelayed?.({
+      now
+    });
+
+    return materialized;
+  }
+
+  async function run({
+    intervalMs = 1_000,
+    signal,
+    throwOnError = false
+  } = {}) {
+    while (!signal?.aborted) {
+      await tickSchedules();
+      await drain({
+        throwOnError
+      });
+
+      try {
+        await sleep(intervalMs, undefined, {
+          signal
+        });
+      } catch (error) {
+        if (error?.name === 'AbortError')
+          return;
+
+        throw error;
+      }
+    }
   }
 
   for (let job of jobList) {
@@ -480,7 +633,11 @@ export async function startCricketWorker(cricketApp, {
     driver,
     ledger,
     jobs: jobsCapability,
+    schedules: {
+      tick: tickSchedules
+    },
     drain,
+    run,
     cleanup
   };
 }

@@ -18,6 +18,10 @@ function ledgerRowForEnvelope(envelope, now) {
     request_id: envelope.context?.requestId,
     source: envelope.context?.source,
     priority: envelope.priority,
+    schedule_key: envelope.scheduleKey,
+    scheduled_for: envelope.scheduledFor,
+    available_at: envelope.availableAt,
+    trigger: envelope.trigger,
     status: 'queued',
     attempts: 0,
     input: textValue(envelope.input),
@@ -66,6 +70,10 @@ export async function createJobLedgerTable(db, {
     table.string('request_id');
     table.string('source');
     table.integer('priority');
+    table.string('schedule_key');
+    table.string('scheduled_for');
+    table.string('available_at');
+    table.string('trigger');
     table.string('status').notNullable();
     table.integer('attempts').notNullable().defaultTo(0);
     table.text('input').notNullable();
@@ -86,6 +94,8 @@ export async function createJobLedgerTable(db, {
     table.index(['queue_name']);
     table.index(['idempotency_key']);
     table.index(['request_id']);
+    table.index(['schedule_key']);
+    table.index(['scheduled_for']);
   });
 }
 

@@ -84,10 +84,12 @@ export {
 
 export {
   concurrency,
+  cronSchedule,
   createCricketJobs,
   createJobLedgerTable,
   defineJob,
   jobFailure,
+  planCronSchedule,
   redisQueue,
   retry,
   startCricketWorker,

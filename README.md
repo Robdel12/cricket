@@ -645,6 +645,7 @@ capabilities your HTTP handlers already get.
 import {
   createJobLedgerTable,
   createCricketJobs,
+  cronSchedule,
   defineJob,
   jobFailure,
   redisQueue,
@@ -731,6 +732,19 @@ await jobs.enqueue(generateReport, {
 });
 ```
 
+Delay a one-off job with `runAt` when the work should become available later.
+`delayMs` is a convenience for relative delays.
+
+```js
+await jobs.enqueue(generateReport, input, {
+  runAt: new Date('2026-06-19T14:00:00.000Z')
+});
+
+await jobs.enqueue(generateReport, input, {
+  delayMs: 30_000
+});
+```
+
 Producer entrypoints can enqueue without starting a worker:
 
 ```js
@@ -751,6 +765,44 @@ await producer.jobs.enqueue(generateReport, input, {
 });
 ```
 
+Scheduled jobs are normal jobs with schedule metadata. Cricket uses
+`cron-parser` for cron and timezone math, then materializes due slots into the
+same immutable envelopes as manually enqueued work.
+
+```js
+export let dailyDigest = defineJob({
+  name: 'maintenance.dailyDigest',
+
+  input: z.object({
+    runDate: z.string()
+  }),
+
+  queue: redisQueue({
+    name: 'maintenance',
+    idempotencyKey: ({ input }) => `daily-digest:${input.runDate}`
+  }),
+
+  schedule: cronSchedule({
+    key: 'daily-digest',
+    cron: '15 4 * * *',
+    timezone: 'America/Chicago',
+    input: ({ scheduledFor }) => ({
+      runDate: scheduledFor.slice(0, 10)
+    }),
+    enabled: ({ env }) => env.ENABLE_DAILY_DIGEST === 'true'
+  }),
+
+  async run({ input, services }) {
+    return services.maintenance.dailyDigest(input);
+  }
+});
+```
+
+The app owns the policy: the cron expression, the timezone, whether the
+schedule is enabled, and the job input for a due slot. Cricket owns the
+mechanics: due-slot planning, Redis coordination, delayed promotion, immutable
+envelopes, retries, failure handling, logs, traces, progress, and the ledger.
+
 Worker entrypoints stay small:
 
 ```js
@@ -758,7 +810,7 @@ import { startCricketWorker } from '@robdel12/cricket/jobs';
 import { app } from '../index.js';
 import { generateReport } from '../domains/reports/reports.jobs.js';
 
-await startCricketWorker(app, {
+let worker = await startCricketWorker(app, {
   baseUrl: new URL('../index.js', import.meta.url),
   queues: {
     redis: {
@@ -769,12 +821,34 @@ await startCricketWorker(app, {
     generateReport
   ]
 });
+
+await worker.run();
 ```
 
 Job `run` functions receive `services`, `logger`, `trace`, `lifecycle`, `jobs`,
 and `progress`. Failure handlers receive the same app capabilities, plus the
 original `error`, a safe `failure` snapshot, the immutable `envelope`, and the
 current `attempt`. They never receive Redis objects.
+
+Tests can drive schedules without waiting on wall time:
+
+```js
+let worker = await startCricketWorker(app, {
+  jobs: [dailyDigest],
+  queues: {
+    test: true
+  },
+  clock: {
+    now: () => new Date('2026-06-19T09:16:00.000Z')
+  }
+});
+
+await worker.schedules.tick();
+await worker.drain();
+```
+
+That runs through the worker boundary: schedule tick, envelope materialization,
+queue claim, `run`, events, traces, and ledger writes.
 
 `retry` decides whether Cricket should try again. `failure` is for app-owned
 state sync after Cricket has made that decision. `retrying` runs after Cricket
@@ -785,10 +859,11 @@ that matters.
 
 When the app has a Cricket database, workers also write a framework-owned
 `cricket_jobs` ledger row for each envelope. The ledger is execution history:
-status, attempts, queue metadata, request/source context, latest progress,
-result or error, and timestamps. It is not product state, and Cricket does not
-create the table at worker startup. Ledger write failures are logged as
-`job.ledger_failed` and do not change queue execution.
+status, attempts, queue metadata, request/source context, schedule identity,
+availability time, latest progress, result or error, and timestamps. It is not
+product state, and Cricket does not create the table at worker startup. Ledger
+write failures are logged as `job.ledger_failed` and do not change queue
+execution.
 
 Add it in a normal app migration:
 

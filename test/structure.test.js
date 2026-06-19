@@ -197,6 +197,7 @@ describe('Cricket CLI', () => {
     assert.match(agents, /api\/dev/);
     assert.match(agents, /lifecycle/);
     assert.match(agents, /defineJob/);
+    assert.match(agents, /cronSchedule/);
     assert.match(agents, /createCricketJobs/);
     assert.match(agents, /startCricketWorker/);
     assert.match(agents, /jobFailure/);
@@ -207,6 +208,7 @@ describe('Cricket CLI', () => {
     assert.match(skill, /normalizers/);
     assert.match(skill, /\*\.jobs\.js/);
     assert.match(skill, /defineJob/);
+    assert.match(skill, /cronSchedule/);
     assert.match(skill, /createCricketJobs/);
     assert.match(skill, /startCricketWorker/);
     assert.match(skill, /jobFailure/);

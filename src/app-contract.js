@@ -71,6 +71,15 @@ function failurePhasesFor(job) {
 }
 
 function jobSummaryFor(job) {
+  let scheduleDetails = job.schedule
+    ? {
+      key: job.schedule.key,
+      cron: job.schedule.cron,
+      timezone: job.schedule.timezone,
+      runOnStartup: job.schedule.runOnStartup === true
+    }
+    : undefined;
+
   return {
     name: job.name,
     queue: job.queue?.name,
@@ -78,7 +87,8 @@ function jobSummaryFor(job) {
     retry: job.retry?.type ?? 'none',
     failure: failurePhasesFor(job),
     concurrency: toArray(job.concurrency).map(policy => policy.type),
-    schedule: job.schedule?.key
+    schedule: job.schedule?.key,
+    ...(scheduleDetails ? { scheduleDetails } : {})
   };
 }
 
@@ -298,7 +308,14 @@ export function formatAppMap(appMap) {
     lines.push(`    retry: ${job.retry}`);
     lines.push(`    failure: ${job.failure.join(', ') || 'none'}`);
     lines.push(`    concurrency: ${job.concurrency.join(', ') || 'none'}`);
-    lines.push(`    schedule: ${job.schedule ?? 'none'}`);
+    if (job.scheduleDetails) {
+      lines.push(`    schedule: ${job.schedule}`);
+      lines.push(`      cron: ${job.scheduleDetails.cron}`);
+      lines.push(`      timezone: ${job.scheduleDetails.timezone}`);
+      lines.push(`      runOnStartup: ${job.scheduleDetails.runOnStartup}`);
+    } else {
+      lines.push('    schedule: none');
+    }
   }
 
   lines.push('', 'Routes');
