@@ -362,6 +362,47 @@ describe('Cricket jobs', () => {
     }
   });
 
+  it('can drain worker failures without stopping the worker process', async () => {
+    let testState = createTestState();
+    let job = defineJob({
+      name: 'reports.fail',
+      input: z.object({
+        reportId: z.string()
+      }),
+      queue: redisQueue({
+        name: 'reports',
+        idempotencyKey: ({ input }) => input.reportId
+      }),
+      async run() {
+        throw new Error('renderer unavailable');
+      }
+    });
+    let worker = await startCricketWorker(createTestApp(testState), {
+      jobs: [job],
+      queues: {
+        test: true
+      }
+    });
+
+    try {
+      await worker.jobs.enqueue(job, {
+        reportId: 'report_failed'
+      });
+
+      assert.deepEqual(await worker.drain({ throwOnError: false }), [
+        {
+          error: {
+            name: 'Error',
+            message: 'renderer unavailable'
+          }
+        }
+      ]);
+      assert.ok(testState.jobs().some(event => event.type === 'job.failed'));
+    } finally {
+      await worker.cleanup();
+    }
+  });
+
   it('shows jobs in the Cricket app map', () => {
     let job = reportJob();
     let appMap = createAppMap(defineCricketApp({

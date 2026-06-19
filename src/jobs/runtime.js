@@ -350,7 +350,9 @@ export async function startCricketWorker(cricketApp, {
     }
   }
 
-  async function drain() {
+  async function drain({
+    throwOnError = true
+  } = {}) {
     let results = [];
 
     while (true) {
@@ -359,7 +361,16 @@ export async function startCricketWorker(cricketApp, {
       if (!claim)
         return results;
 
-      results.push(await runClaim(claim));
+      try {
+        results.push(await runClaim(claim));
+      } catch (error) {
+        if (throwOnError)
+          throw error;
+
+        results.push({
+          error: safeError(error)
+        });
+      }
     }
   }
 
