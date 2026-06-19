@@ -114,6 +114,11 @@ function createFakeRedis() {
     async lpop(key) {
       return list(key).shift() ?? null;
     },
+    async blpop(key) {
+      let value = list(key).shift() ?? null;
+
+      return value ? [key, value] : null;
+    },
     async del(key) {
       strings.delete(key);
       hashes.delete(key);
@@ -401,6 +406,7 @@ describe('Cricket jobs', () => {
       assert.equal(duplicate.duplicate, true);
       assert.equal(claim.envelope.name, 'reports.generate');
       assert.equal(claim.attempt, 1);
+      assert.equal(await driver.waitForWork(), 'reports');
 
       await driver.progress(claim.envelope, {
         current: 1,

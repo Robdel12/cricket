@@ -260,7 +260,7 @@ function addQueueName(queues, queueName) {
  *
  * Redis stores Cricket-owned coordination structures: immutable envelopes,
  * queue lists, run hashes, leases, progress streams, schedule metadata, and
- * wakeup publications. App-owned product records stay outside the driver.
+ * wakeup tokens. App-owned product records stay outside the driver.
  *
  * @param {object} [options]
  * @param {object} [options.client] - Existing Redis client-like object.
@@ -299,6 +299,10 @@ export async function createRedisQueueDriver({
     };
 
     await callRedis('RPUSH', eventsKey(prefix, envelope.id), JSON.stringify(event));
+  }
+
+  async function wakeWorker(envelope) {
+    await callRedis('RPUSH', wakeupsKey(prefix), envelope.queueName);
     await callRedis('PUBLISH', wakeupsKey(prefix), envelope.queueName);
   }
 
@@ -327,6 +331,7 @@ export async function createRedisQueueDriver({
       await updateRunStatus(envelope.id, 'queued', 'attempts', '0');
       await callRedis('RPUSH', queueKey(prefix, envelope.queueName), envelope.id);
       await writeEvent('queued', envelope);
+      await wakeWorker(envelope);
 
       return frozenPlain({
         enqueued: true,
@@ -389,6 +394,13 @@ export async function createRedisQueueDriver({
       await updateRunStatus(envelope.id, 'queued');
       await callRedis('RPUSH', queueKey(prefix, envelope.queueName), envelope.id);
       await writeEvent('retry_scheduled', envelope);
+      await wakeWorker(envelope);
+    },
+
+    async waitForWork() {
+      let result = await callRedis('BLPOP', wakeupsKey(prefix), '0');
+
+      return result?.[1] ?? undefined;
     },
 
     async registerSchedule(job, {
