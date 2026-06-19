@@ -70,6 +70,10 @@ obvious in every change.
   product logic in the app.
 - The CLI scaffolds the preferred domain shape. Keep it thin: structure,
   orientation, and commands.
+- The CLI-scaffolded agent guidance is documentation. When public framework
+  contracts change, update the `cricket init agents` templates in
+  `src/structure.js` and the scaffold tests alongside `README.md`, `vision.md`,
+  and examples.
 - Treat LLM/agent readability as a first-class design concern: predictable
   filenames, predictable exports, small pure functions, explicit dependencies,
   and tests through the API boundary.
@@ -95,3 +99,7 @@ and what remains app responsibility.
 
 Update examples when public contracts change. The examples are part of the API
 surface here, and stale examples will mislead the next real-app pass.
+
+Update `cricket init agents` guidance when the agent workflow changes. The
+generated `AGENTS.md` block and `.agents/skills/cricket-api/SKILL.md` are part
+of Cricket's docs surface, not incidental CLI output.

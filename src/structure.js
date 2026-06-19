@@ -436,6 +436,7 @@ worker, and deploy readiness.
 - \`*.service.js\` owns data and integration operations.
 - \`*.rules.js\` owns auth, existence, ownership, and business preconditions.
 - \`*.routes.js\` owns endpoint contracts.
+- \`*.jobs.js\` owns background job contracts for validated asynchronous work.
 - \`*.test.js\` tests endpoint behavior through HTTP.
 
 The folder is the domain. Keep services boring, rules named, and routes thin.
@@ -450,6 +451,26 @@ If code affects product behavior, start in the domain that owns it. Reach for an
 app service, worker, middleware, or migration only when the responsibility is
 actually shared, asynchronous, HTTP-edge, or schema-changing. Keep \`dev/\`
 local-only.
+
+## Jobs
+
+Use \`defineJob\` for asynchronous work that needs validated input, retry policy,
+Redis coordination, and the same services/logger/trace/lifecycle shape as HTTP.
+Keep job contracts in domain-local \`*.jobs.js\` files when the work belongs to
+one domain.
+
+Redis is hot coordination: queue membership, leases, wakeups, attempts, and
+progress. App tables keep product truth. Add Cricket's \`cricket_jobs\` ledger in
+a normal app migration when you want execution history, but do not use it as the
+domain state model.
+
+Use \`jobFailure({ retrying, exhausted })\` when product records need to follow
+retry decisions. The handlers run after Cricket has scheduled a retry or marked
+the envelope failed, and they receive app capabilities instead of Redis objects.
+
+Use \`createCricketJobs\` in producers that only enqueue work. Use
+\`startCricketWorker\` in \`api/workers/\` entrypoints that execute work. Worker
+loops, deploy checks, and product health remain app-owned.
 ${agentGuidanceEnd}
 `;
 }
@@ -466,7 +487,7 @@ function trackScaffoldResult(result, buckets) {
 let agentFiles = {
   '.agents/skills/cricket-api/SKILL.md': `---
 name: cricket-api
-description: Work in a Cricket Node API app with predictable domain files, validations, normalizers, serializers, app middleware/services/workers/migrations, Zod contracts, Knex services, and OpenAPI generation.
+description: Work in a Cricket Node API app with predictable domain files, validations, normalizers, serializers, jobs, app middleware/services/workers/migrations, Zod contracts, Knex services, and OpenAPI generation.
 ---
 
 # Cricket API Skill
@@ -479,12 +500,35 @@ Start with \`pnpm cricket inspect api/index.js\`, then read \`api/index.js\` and
 
 ## App Folders
 
-- Cricket owns the architecture, HTTP runtime, job runtime, logger, trace, and read-only runtime lifecycle. The app owns product behavior, auth policy, data work, worker entrypoints, health semantics, and deployment.
+- Cricket owns the architecture, HTTP runtime, job runtime, logger, trace, and read-only runtime lifecycle. The app owns product behavior, auth policy, data work, worker entrypoints, product health, and deployment.
 - \`api/middleware/\` is for request middleware, not domain authorization.
 - \`api/services/\` is for narrow app-wide capabilities not owned by one domain.
 - \`api/workers/\` is for background worker entrypoints that start Cricket workers.
 - \`api/migrations/\` is app-owned migration history for the app's Cricket database contract.
 - \`api/dev/\` is for local-only development support. If code touches product behavior, move that behavior into a real service, worker, migration, or domain.
+
+## Domain Files
+
+- Put durable row contracts in \`*.model.js\`.
+- Put request, source, and service input schemas in \`*.validations.js\`.
+- Put pure source-boundary projections in \`*.normalizers.js\`.
+- Put outgoing API projections in \`*.serializers.js\`.
+- Put data and integration operations in \`*.service.js\`.
+- Put auth, existence, ownership, and business checks in \`*.rules.js\`.
+- Put endpoint contracts in \`*.routes.js\`.
+- Put asynchronous job contracts in \`*.jobs.js\`.
+
+The folder is the domain. Optional files stay optional, but standard filenames should stay predictable.
+
+## Jobs
+
+Use \`defineJob\` when work should leave the request path and still keep Cricket's contract shape: validated input, immutable envelopes, retry policy, structured logs, traces, services, lifecycle, and progress.
+
+Redis coordinates hot execution. App-owned tables keep product truth. The \`cricket_jobs\` table is a Cricket execution ledger for debugging and operator visibility, not the domain state model.
+
+Use \`jobFailure({ retrying, exhausted })\` to sync product records after Cricket has made the retry decision. Do not inspect Redis from job code or failure handlers.
+
+Use \`createCricketJobs\` for producer entrypoints that enqueue work without starting a worker. Use \`startCricketWorker\` from \`api/workers/\` to execute work. Keep worker loops, readiness checks, and deployment behavior explicit in the app.
 
 ## Change Flow
 
@@ -494,9 +538,10 @@ Start with \`pnpm cricket inspect api/index.js\`, then read \`api/index.js\` and
 4. Shape API output in \`*.serializers.js\`.
 5. Keep data and integration work in services.
 6. Put auth, existence, and ownership checks in rules.
-7. Keep endpoint handlers focused on composition.
-8. Generate OpenAPI and check the contract diff.
-9. Add or update the domain-local \`*.test.js\` and test through HTTP for endpoint behavior.
+7. Put asynchronous contracts in \`*.jobs.js\` when the behavior runs outside the request path.
+8. Keep endpoint handlers and job handlers focused on composition.
+9. Generate OpenAPI and check the contract diff when HTTP contracts changed.
+10. Add or update the domain-local \`*.test.js\`. Test HTTP behavior through HTTP, and test job behavior through the Cricket worker boundary.
 
 ## Commands
 
@@ -509,7 +554,7 @@ pnpm cricket new domain project api/domains
 pnpm test
 \`\`\`
 
-After scaffolding a domain, make sure the app's \`domains\` value points at the domain root, add the table migration in \`api/migrations/\` if this domain persists data, then regenerate OpenAPI.
+After scaffolding a domain, make sure the app's \`domains\` value points at the domain root, add table migrations in \`api/migrations/\` when the domain persists data, and regenerate OpenAPI when HTTP contracts changed. If you add Cricket jobs with a database-backed app, add the \`cricket_jobs\` ledger migration deliberately instead of relying on worker startup.
 `
 };
 
