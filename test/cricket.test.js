@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import knex from 'knex';
 import request from 'supertest';
 
@@ -559,7 +560,41 @@ describe('Cricket core', () => {
     });
   });
 
+  it('loads jobs from standard domain folders', async () => {
+    let root = await tempRoot();
+    let domainRoot = path.join(root, 'radar-jobs');
 
+    await fs.mkdir(domainRoot);
+    await fs.writeFile(path.join(domainRoot, 'radar-jobs.jobs.js'), `
+      import {
+        defineJob,
+        redisQueue,
+        z
+      } from '${pathToFileURL(path.resolve('src/index.js')).href}';
+
+      export let renderRadar = defineJob({
+        name: 'radar.render',
+        input: z.object({
+          jobId: z.string()
+        }),
+        queue: redisQueue({
+          name: 'radar-render',
+          idempotencyKey: ({ input }) => input.jobId
+        }),
+        async run() {
+          return { ok: true };
+        }
+      });
+    `);
+
+    let domains = await loadDomains(root);
+    let [domain] = domains;
+
+    assert.equal(domains.length, 1);
+    assert.equal(domain.name, 'radarJobs');
+    assert.equal(domain.jobs.length, 1);
+    assert.equal(domain.jobs[0].name, 'radar.render');
+  });
   it('rejects endpoint paths that do not start with a slash', async () => {
     await assert.rejects(
       createCricketRuntime(defineCricketApp({

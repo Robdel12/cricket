@@ -11,7 +11,8 @@ export let domainFileTypes = [
   'serializers',
   'service',
   'rules',
-  'routes'
+  'routes',
+  'jobs'
 ];
 
 function toArray(value) {
@@ -163,6 +164,7 @@ async function loadDomainFolder(domainPath) {
 
   let models = modules.model ? collectExported(modules.model, isModelContract) : [];
   let endpoints = modules.routes ? collectExported(modules.routes, isEndpointContract) : [];
+  let jobs = modules.jobs ? collectExported(modules.jobs, isJobContract) : [];
   let services = {};
 
   if (modules.service) {
@@ -178,6 +180,7 @@ async function loadDomainFolder(domainPath) {
     fileStem,
     models,
     endpoints,
+    jobs,
     validations: modules.validations ?? {},
     normalizers: modules.normalizers ?? {},
     rules: modules.rules ?? {},
