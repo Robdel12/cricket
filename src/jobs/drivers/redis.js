@@ -125,6 +125,11 @@ async function createRespClient(url) {
   let pending = [];
   let buffer = Buffer.alloc(0);
 
+  function rejectPending(error) {
+    while (pending.length)
+      pending.shift().reject(error);
+  }
+
   socket.on('data', chunk => {
     buffer = Buffer.concat([buffer, chunk]);
 
@@ -145,6 +150,8 @@ async function createRespClient(url) {
       pending.shift().resolve(decodeRedisValue(response.value));
     }
   });
+  socket.on('error', error => rejectPending(error));
+  socket.on('close', () => rejectPending(new Error('Redis connection closed')));
 
   await once(socket, 'connect');
 
@@ -170,11 +177,8 @@ async function createRespClient(url) {
   return {
     command: sendCommand,
     async quit() {
-      try {
-        await sendCommand('QUIT');
-      } finally {
-        socket.end();
-      }
+      socket.end();
+      socket.destroy();
     }
   };
 }
