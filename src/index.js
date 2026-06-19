@@ -87,6 +87,7 @@ export {
   createCricketJobs,
   createJobLedgerTable,
   defineJob,
+  jobFailure,
   redisQueue,
   retry,
   startCricketWorker,

@@ -223,6 +223,14 @@ domain status/result, and a Cricket-owned `cricket_jobs` ledger for framework
 execution history. That ledger is useful for debugging, recovery, audit, and
 operator visibility, but it must not become the product state model.
 
+Job failure handling should be first-class because retries are where framework
+truth and product truth can drift. Retry policy decides whether Cricket should
+schedule another attempt. Failure handlers run after that decision, with the
+same services/logger/trace/lifecycle capabilities as normal job code, so apps
+can sync their own records without knowing Redis or queue driver internals.
+Handler failures are observable, but they must never replace the original job
+failure.
+
 Deeper spans should be explicit. Apps can use `trace.span(name, metadata, fn)`
 for meaningful workflow stages, and the trace data should stay request-scoped,
 safe, and scalar. Database timing can exist at explicit repository or Knex

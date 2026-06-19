@@ -3,6 +3,7 @@ import {
 } from '../immutable.js';
 import { assertKnownOptions } from '../options.js';
 import { isZodSchema } from '../schema.js';
+import { isJobFailureContract } from './failure.js';
 
 let jobOptionKeys = new Set([
   'name',
@@ -11,6 +12,7 @@ let jobOptionKeys = new Set([
   'result',
   'queue',
   'retry',
+  'failure',
   'concurrency',
   'state',
   'schedule',
@@ -58,6 +60,11 @@ function assertSchedule(schedule) {
     throw new Error('schedule runOnStartup must be a boolean');
 }
 
+function assertFailure(failure) {
+  if (failure !== undefined && !isJobFailureContract(failure))
+    throw new Error('defineJob failure must be a jobFailure contract');
+}
+
 export function isJobContract(value) {
   return value &&
     typeof value === 'object' &&
@@ -80,6 +87,7 @@ export function isJobContract(value) {
  * @param {object} [options.result] - Zod schema for the job result.
  * @param {object} [options.queue] - Queue contract, usually `redisQueue(...)`.
  * @param {object} [options.retry] - Retry policy, usually `retry.exponential(...)`.
+ * @param {object} [options.failure] - Failure handlers, usually `jobFailure(...)`.
  * @param {object|object[]} [options.concurrency] - Concurrency policy or policies.
  * @param {object} [options.state] - Inspect metadata for where product truth lives.
  * @param {object} [options.schedule] - Schedule metadata that produces normal envelopes.
@@ -96,6 +104,7 @@ export function defineJob(options = {}) {
     result,
     queue,
     retry,
+    failure,
     concurrency,
     state,
     schedule,
@@ -117,6 +126,7 @@ export function defineJob(options = {}) {
     throw new Error('defineJob run must be a function');
 
   assertSchedule(schedule);
+  assertFailure(failure);
 
   let job = {
     kind: 'cricket.job',
@@ -137,6 +147,9 @@ export function defineJob(options = {}) {
 
   if (retry)
     job.retry = retry;
+
+  if (failure)
+    job.failure = failure;
 
   if (state)
     job.state = state;

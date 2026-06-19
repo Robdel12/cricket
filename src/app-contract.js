@@ -63,12 +63,20 @@ function ruleNamesFor(endpoint) {
   );
 }
 
+function failurePhasesFor(job) {
+  return [
+    job.failure?.retrying ? 'retrying' : undefined,
+    job.failure?.exhausted ? 'exhausted' : undefined
+  ].filter(Boolean);
+}
+
 function jobSummaryFor(job) {
   return {
     name: job.name,
     queue: job.queue?.name,
     state: job.state?.mode,
     retry: job.retry?.type ?? 'none',
+    failure: failurePhasesFor(job),
     concurrency: toArray(job.concurrency).map(policy => policy.type),
     schedule: job.schedule?.key
   };
@@ -288,6 +296,7 @@ export function formatAppMap(appMap) {
     lines.push(`    queue: ${job.queue ?? 'none'}`);
     lines.push(`    state: ${job.state ?? 'none'}`);
     lines.push(`    retry: ${job.retry}`);
+    lines.push(`    failure: ${job.failure.join(', ') || 'none'}`);
     lines.push(`    concurrency: ${job.concurrency.join(', ') || 'none'}`);
     lines.push(`    schedule: ${job.schedule ?? 'none'}`);
   }

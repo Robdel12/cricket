@@ -12,6 +12,7 @@ import {
   createJobLedgerTable,
   defineCricketApp,
   defineJob,
+  jobFailure,
   redisQueue,
   retry,
   startCricketWorker,
@@ -28,6 +29,7 @@ import {
   createJobLedgerTable as createPackagedJobLedgerTable,
   createCricketJobs as createPackagedCricketJobs,
   defineJob as definePackagedJob,
+  jobFailure as packagedJobFailure,
   redisQueue as packagedRedisQueue
 } from '@robdel12/cricket/jobs';
 
@@ -186,7 +188,7 @@ function createTestApp(testState) {
   });
 }
 
-function reportJob(events = []) {
+function reportJob(events = [], options = {}) {
   return defineJob({
     name: 'reports.generate',
     input: z.object({
@@ -213,6 +215,7 @@ function reportJob(events = []) {
       delayMs: 10,
       when: ({ error }) => error.retryable !== false
     }),
+    ...(options.failure ? { failure: options.failure } : {}),
     concurrency: [
       concurrency.partition({
         key: ({ input }) => `account:${input.accountId}`,
@@ -403,8 +406,256 @@ describe('Cricket jobs', () => {
     }
   });
 
+  it('runs retrying failure handlers after Cricket schedules retry work', async () => {
+    let productEvents = [];
+    let attempts = 0;
+    let job = defineJob({
+      name: 'reports.retry',
+      input: z.object({
+        reportId: z.string()
+      }),
+      result: z.object({
+        status: z.enum(['completed'])
+      }),
+      queue: redisQueue({
+        name: 'reports',
+        idempotencyKey: ({ input }) => input.reportId
+      }),
+      retry: retry.exponential({
+        attempts: 2,
+        delayMs: 10
+      }),
+      failure: jobFailure({
+        async retrying({ input, attempt, failure, services }) {
+          productEvents.push(services.reports.markRetrying({
+            reportId: input.reportId,
+            attempt,
+            reason: failure.message
+          }));
+        },
+        async exhausted() {
+          productEvents.push({
+            status: 'unexpected'
+          });
+        }
+      }),
+      async run() {
+        attempts += 1;
+
+        if (attempts === 1)
+          throw new Error('renderer warming up');
+
+        return {
+          status: 'completed'
+        };
+      }
+    });
+    let worker = await startCricketWorker(defineCricketApp({
+      logger() {},
+      services() {
+        return {
+          reports: {
+            markRetrying(event) {
+              return {
+                status: 'queued',
+                ...event
+              };
+            }
+          }
+        };
+      }
+    }), {
+      jobs: [job],
+      queues: {
+        test: true
+      }
+    });
+
+    try {
+      await worker.jobs.enqueue(job, {
+        reportId: 'report_retry'
+      });
+
+      assert.deepEqual(await worker.drain(), [
+        undefined,
+        {
+          status: 'completed'
+        }
+      ]);
+      assert.deepEqual(productEvents, [
+        {
+          status: 'queued',
+          reportId: 'report_retry',
+          attempt: 1,
+          reason: 'renderer warming up'
+        }
+      ]);
+      assert.deepEqual(worker.driver.snapshot().events.map(event => event.type), [
+        'queued',
+        'claimed',
+        'retry_scheduled',
+        'claimed',
+        'completed'
+      ]);
+    } finally {
+      await worker.cleanup();
+    }
+  });
+
+  it('runs exhausted failure handlers after Cricket marks final failures', async () => {
+    let productEvents = [];
+    let job = defineJob({
+      name: 'reports.exhaust',
+      input: z.object({
+        reportId: z.string()
+      }),
+      queue: redisQueue({
+        name: 'reports',
+        idempotencyKey: ({ input }) => input.reportId
+      }),
+      failure: jobFailure({
+        async exhausted({ input, attempt, failure, services }) {
+          productEvents.push(services.reports.markFailed({
+            reportId: input.reportId,
+            attempt,
+            reason: failure.message
+          }));
+        }
+      }),
+      async run() {
+        throw new Error('renderer offline');
+      }
+    });
+    let worker = await startCricketWorker(defineCricketApp({
+      logger() {},
+      services() {
+        return {
+          reports: {
+            markFailed(event) {
+              return {
+                status: 'failed',
+                ...event
+              };
+            }
+          }
+        };
+      }
+    }), {
+      jobs: [job],
+      queues: {
+        test: true
+      }
+    });
+
+    try {
+      await worker.jobs.enqueue(job, {
+        reportId: 'report_exhausted'
+      });
+
+      assert.deepEqual(await worker.drain({ throwOnError: false }), [
+        {
+          error: {
+            name: 'Error',
+            message: 'renderer offline'
+          }
+        }
+      ]);
+      assert.deepEqual(productEvents, [
+        {
+          status: 'failed',
+          reportId: 'report_exhausted',
+          attempt: 1,
+          reason: 'renderer offline'
+        }
+      ]);
+      assert.equal(worker.driver.snapshot().items[0].status, 'failed');
+    } finally {
+      await worker.cleanup();
+    }
+  });
+
+  it('keeps failure handler errors from replacing the original job error', async () => {
+    let testState = createTestState();
+    let logs = [];
+    let job = defineJob({
+      name: 'reports.handlerFail',
+      input: z.object({
+        reportId: z.string()
+      }),
+      queue: redisQueue({
+        name: 'reports',
+        idempotencyKey: ({ input }) => input.reportId
+      }),
+      failure: jobFailure({
+        async exhausted() {
+          throw new Error('product sync failed');
+        }
+      }),
+      async run() {
+        throw new Error('renderer offline');
+      }
+    });
+    let worker = await startCricketWorker(defineCricketApp({
+      observability: {
+        observe(event) {
+          testState.recordEvent(event);
+        }
+      },
+      logger: {
+        info() {},
+        warn() {},
+        error(event, metadata) {
+          logs.push({
+            event,
+            metadata
+          });
+        },
+        child() {
+          return this;
+        }
+      }
+    }), {
+      jobs: [job],
+      queues: {
+        test: true
+      }
+    });
+
+    try {
+      await worker.jobs.enqueue(job, {
+        reportId: 'report_handler_failure'
+      });
+
+      assert.deepEqual(await worker.drain({ throwOnError: false }), [
+        {
+          error: {
+            name: 'Error',
+            message: 'renderer offline'
+          }
+        }
+      ]);
+      assert.ok(logs.some(log =>
+        log.event === 'job.failure_handler_failed' &&
+        log.metadata.phase === 'exhausted' &&
+        log.metadata.originalError.message === 'renderer offline'
+      ));
+      assert.ok(testState.events().some(event =>
+        event.type === 'job.failure_handler_failed' &&
+        event.phase === 'exhausted' &&
+        event.error.message === 'product sync failed'
+      ));
+    } finally {
+      await worker.cleanup();
+    }
+  });
+
   it('shows jobs in the Cricket app map', () => {
-    let job = reportJob();
+    let job = reportJob([], {
+      failure: jobFailure({
+        async retrying() {},
+        async exhausted() {}
+      })
+    });
     let appMap = createAppMap(defineCricketApp({
       jobs: [job]
     }));
@@ -415,6 +666,7 @@ describe('Cricket jobs', () => {
     assert.match(output, /reports\.generate/);
     assert.match(output, /queue: reports/);
     assert.match(output, /state: derived/);
+    assert.match(output, /failure: retrying, exhausted/);
   });
 
   it('stores runnable envelopes in Cricket-owned Redis structures', async () => {
@@ -734,6 +986,7 @@ describe('Cricket jobs', () => {
 
     assert.equal(job.name, 'emails.send');
     assert.equal(job.queue.name, 'emails');
+    assert.equal(typeof packagedJobFailure, 'function');
     assert.equal(typeof createPackagedCricketJobs, 'function');
     assert.equal(typeof createPackagedJobLedgerTable, 'function');
   });

@@ -91,6 +91,35 @@ function jobRunContext(envelope, jobRunId) {
   };
 }
 
+function failureContext({
+  envelope,
+  error,
+  attempt,
+  jobRun,
+  runtime,
+  logger,
+  trace,
+  jobsCapability,
+  progress
+}) {
+  return {
+    input: envelope.input,
+    context: envelope.context,
+    error,
+    failure: safeError(error),
+    envelope,
+    attempt,
+    jobRunId: jobRun.jobRunId,
+    requestId: jobRun.requestId,
+    services: runtime.services,
+    logger,
+    trace,
+    lifecycle: runtime.lifecycle,
+    jobs: jobsCapability,
+    progress
+  };
+}
+
 function scheduleContext(runtime) {
   return {
     env: process.env,
@@ -277,6 +306,44 @@ export async function startCricketWorker(cricketApp, {
     });
     let progress = createProgressCapability(driver, recordLedger, envelope, emitJobEvent);
 
+    async function runFailureHandler(phase, error) {
+      let handler = job.failure?.[phase];
+
+      if (!handler)
+        return;
+
+      let originalError = safeError(error);
+
+      try {
+        await trace.span(`job.failure.${phase} ${job.name}`, {}, () => handler(failureContext({
+          envelope,
+          error,
+          attempt: claim.attempt,
+          jobRun,
+          runtime,
+          logger,
+          trace,
+          jobsCapability,
+          progress
+        })));
+      } catch (handlerError) {
+        let failure = safeError(handlerError);
+
+        await emitJobEvent('job.failure_handler_failed', envelope, {
+          jobRunId: jobRun.jobRunId,
+          attempt: claim.attempt,
+          phase,
+          error: failure,
+          originalError
+        });
+        logger.error('job.failure_handler_failed', {
+          phase,
+          error: handlerError,
+          originalError
+        });
+      }
+    }
+
     await recordLedger('started', envelope, ledger => ledger.started(envelope, {
       attempt: claim.attempt,
       jobRunId: jobRun.jobRunId
@@ -328,6 +395,7 @@ export async function startCricketWorker(cricketApp, {
         logger.warn('job.retry_scheduled', {
           error
         });
+        await runFailureHandler('retrying', error);
         return undefined;
       }
 
@@ -346,6 +414,7 @@ export async function startCricketWorker(cricketApp, {
       logger.error('job.failed', {
         error
       });
+      await runFailureHandler('exhausted', error);
       throw error;
     }
   }

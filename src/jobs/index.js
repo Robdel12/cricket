@@ -7,6 +7,10 @@ export {
 } from './envelope.js';
 
 export {
+  jobFailure
+} from './failure.js';
+
+export {
   createJobLedgerTable
 } from './ledger.js';
 

@@ -646,6 +646,7 @@ import {
   createJobLedgerTable,
   createCricketJobs,
   defineJob,
+  jobFailure,
   redisQueue,
   retry,
   startCricketWorker,
@@ -680,6 +681,22 @@ export let generateReport = defineJob({
     delayMs: 2_000,
     maxDelayMs: 60_000,
     when: ({ error }) => error.retryable !== false
+  }),
+
+  failure: jobFailure({
+    async retrying({ input, failure, services }) {
+      await services.reports.markQueued({
+        reportId: input.reportId,
+        reason: failure.message
+      });
+    },
+
+    async exhausted({ input, failure, services }) {
+      await services.reports.markFailed({
+        reportId: input.reportId,
+        reason: failure.message
+      });
+    }
   }),
 
   state: state.derived({
@@ -755,7 +772,16 @@ await startCricketWorker(app, {
 ```
 
 Job `run` functions receive `services`, `logger`, `trace`, `lifecycle`, `jobs`,
-and `progress`. They never receive Redis objects.
+and `progress`. Failure handlers receive the same app capabilities, plus the
+original `error`, a safe `failure` snapshot, the immutable `envelope`, and the
+current `attempt`. They never receive Redis objects.
+
+`retry` decides whether Cricket should try again. `failure` is for app-owned
+state sync after Cricket has made that decision. `retrying` runs after Cricket
+has scheduled the next attempt. `exhausted` runs after Cricket has marked the
+envelope failed. If a failure handler throws, Cricket logs
+`job.failure_handler_failed` and keeps the original job error as the failure
+that matters.
 
 When the app has a Cricket database, workers also write a framework-owned
 `cricket_jobs` ledger row for each envelope. The ledger is execution history:
@@ -922,6 +948,7 @@ import {
 import {
   createCricketJobs,
   createJobLedgerTable,
+  jobFailure,
   redisQueue,
   retry,
   startCricketWorker,
