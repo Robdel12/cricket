@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url';
 
 import {
   collectEndpoints,
+  collectJobs,
   collectModels,
   loadDomains
 } from './domain.js';
@@ -26,13 +27,16 @@ export function defineCricketApp(options = {}) {
   let domains = options.domains ?? [];
   let loadedDomains = hasLoadedDomains(domains);
   let hasExplicitEndpoints = Object.hasOwn(options, 'endpoints');
+  let hasExplicitJobs = Object.hasOwn(options, 'jobs');
   let hasExplicitModels = Object.hasOwn(options, 'models');
-  let endpoints = hasExplicitEndpoints
-    ? options.endpoints
-    : (loadedDomains ? collectEndpoints(domains) : undefined);
-  let models = hasExplicitModels
-    ? options.models
-    : (loadedDomains ? collectModels(domains) : undefined);
+  let collectedDomains = loadedDomains ? {
+    endpoints: collectEndpoints(domains),
+    jobs: collectJobs(domains),
+    models: collectModels(domains)
+  } : {};
+  let endpoints = hasExplicitEndpoints ? options.endpoints : collectedDomains.endpoints;
+  let jobs = hasExplicitJobs ? options.jobs : collectedDomains.jobs;
+  let models = hasExplicitModels ? options.models : collectedDomains.models;
   let allowedHosts = options.allowedHosts;
   let prefix = options.prefix ?? '';
   let trustProxy = options.trustProxy ?? false;
@@ -48,6 +52,7 @@ export function defineCricketApp(options = {}) {
     trustProxy,
     middleware,
     ...(endpoints === undefined ? {} : { endpoints }),
+    ...(jobs === undefined ? {} : { jobs }),
     ...(models === undefined ? {} : { models })
   };
 }
@@ -66,14 +71,16 @@ export async function resolveCricketApp(app, {
   let domains = await loadDomains(app.domains, {
     baseUrl: app.baseUrl ?? baseUrl
   });
+  let hasExplicitEndpoints = Object.hasOwn(app, 'endpoints');
+  let hasExplicitJobs = Object.hasOwn(app, 'jobs');
+  let hasExplicitModels = Object.hasOwn(app, 'models');
 
   return {
     ...app,
     domains,
-    endpoints: flattenRoutes(
-      Object.hasOwn(app, 'endpoints') ? app.endpoints : collectEndpoints(domains)
-    ),
-    models: Object.hasOwn(app, 'models') ? app.models : collectModels(domains)
+    endpoints: flattenRoutes(hasExplicitEndpoints ? app.endpoints : collectEndpoints(domains)),
+    jobs: hasExplicitJobs ? app.jobs : collectJobs(domains),
+    models: hasExplicitModels ? app.models : collectModels(domains)
   };
 }
 

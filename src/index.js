@@ -81,3 +81,13 @@ export {
   applyRules,
   defineRule
 } from './rule.js';
+
+export {
+  concurrency,
+  createJobLedgerTable,
+  defineJob,
+  redisQueue,
+  retry,
+  startCricketWorker,
+  state
+} from './jobs/index.js';

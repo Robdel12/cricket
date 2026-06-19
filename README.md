@@ -4,7 +4,7 @@ Tiny contracts for sturdy Node APIs.
 
 Cricket gives Node APIs the backend shape that stays pleasant as the API grows:
 Zod models, pure normalizers, pure serializers, boring services, named rules,
-thin routes, OpenAPI generation, and a normal Node entrypoint.
+thin routes, first-class jobs, OpenAPI generation, and a normal Node entrypoint.
 
 It is intentionally plain JavaScript. No model instances, no hidden mutation, no
 ORM lifecycle. Your app passes POJOs around, composes functions, and keeps side
@@ -19,8 +19,8 @@ pnpm add @robdel12/cricket
 Cricket owns the HTTP runtime. It routes requests, parses bodies, validates
 contracts, runs rules, writes responses, and handles startup and shutdown.
 
-Your app still owns its database schema, migrations, auth policy, queues,
-external clients, workers, and deployment.
+Your app still owns its database schema, migrations, auth policy, product
+services, external clients, worker entrypoints, and deployment.
 
 ## Core Concepts
 
@@ -42,6 +42,11 @@ app
 
   outside-source data
     -> domains.normalizers   third-party, CSV, webhook, queue, import, legacy projections
+
+  background work
+    -> jobs                  validated immutable envelopes
+      -> Redis               hot coordination
+      -> services            app-owned product work
 ```
 
 ## Domain Shape
@@ -86,7 +91,7 @@ api/
 | `domains/` | Product API behavior. | App-wide clients and app-level middleware. |
 | `middleware/` | Request middleware: auth extraction, request IDs, CORS, rate limits, raw webhooks, frontend fallbacks. | Domain authorization; put that in `*.rules.js`. |
 | `services/` | Narrow shared capabilities: email, media storage, payment clients, caches, external clients. | Domain-specific product logic. |
-| `workers/` | Background entrypoints that call services. | A second product layer. |
+| `workers/` | Background entrypoints that start Cricket workers. | A second product layer. |
 | `migrations/` | App-owned Knex migrations for `cricket migrate`. | Product data policy or query design. |
 | `dev/` | Local-only helpers, fixture builders, reset/setup scripts, smoke-test harnesses. | Production runtime or product behavior. |
 
@@ -630,6 +635,128 @@ same events into that logger's shape.
 `trace` reads the same logs back on demand and renders request timings plus span
 records. Cricket does not store that data for you.
 
+## Jobs
+
+Jobs are Cricket contracts for background work. Use them when work needs a
+validated input shape, retry policy, queue coordination, and the same runtime
+capabilities your HTTP handlers already get.
+
+```js
+import {
+  createJobLedgerTable,
+  defineJob,
+  redisQueue,
+  retry,
+  startCricketWorker,
+  state
+} from '@robdel12/cricket/jobs';
+import { z } from 'zod';
+
+export let generateReport = defineJob({
+  name: 'reports.generate',
+
+  input: z.object({
+    reportId: z.string(),
+    accountId: z.string(),
+    templateId: z.string()
+  }),
+
+  context: z.object({
+    requestId: z.string().optional(),
+    source: z.string().optional(),
+    priority: z.number().int().default(0)
+  }).default({}),
+
+  queue: redisQueue({
+    name: 'reports',
+    idempotencyKey: ({ input }) => input.reportId,
+    partition: ({ input }) => `account:${input.accountId}`,
+    priority: ({ context }) => context.priority
+  }),
+
+  retry: retry.exponential({
+    attempts: 3,
+    delayMs: 2_000,
+    maxDelayMs: 60_000,
+    when: ({ error }) => error.retryable !== false
+  }),
+
+  state: state.derived({
+    from: ['accounts', 'reports', 'templates']
+  }),
+
+  async run({ input, services, trace, progress }) {
+    await progress.update({ current: 1, total: 1 });
+
+    return trace.span('reports.generate', {
+      accountId: input.accountId
+    }, () => services.reports.generate(input));
+  }
+});
+```
+
+Enqueueing a job creates an immutable envelope. Redis stores Cricket-owned
+queue structures for hot coordination. Your app-owned records and services keep
+product truth.
+
+```js
+await jobs.enqueue(generateReport, {
+  reportId,
+  accountId,
+  templateId
+}, {
+  context: {
+    requestId,
+    source: 'report.requested',
+    priority: 50
+  }
+});
+```
+
+Worker entrypoints stay small:
+
+```js
+import { startCricketWorker } from '@robdel12/cricket/jobs';
+import { app } from '../index.js';
+import { generateReport } from '../domains/reports/reports.jobs.js';
+
+await startCricketWorker(app, {
+  baseUrl: new URL('../index.js', import.meta.url),
+  queues: {
+    redis: {
+      url: process.env.REDIS_URL
+    }
+  },
+  jobs: [
+    generateReport
+  ]
+});
+```
+
+Job `run` functions receive `services`, `logger`, `trace`, `lifecycle`, `jobs`,
+and `progress`. They never receive Redis objects.
+
+When the app has a Cricket database, workers also write a framework-owned
+`cricket_jobs` ledger row for each envelope. The ledger is execution history:
+status, attempts, queue metadata, request/source context, latest progress,
+result or error, and timestamps. It is not product state, and Cricket does not
+create the table at worker startup. Ledger write failures are logged as
+`job.ledger_failed` and do not change queue execution.
+
+Add it in a normal app migration:
+
+```js
+import { createJobLedgerTable } from '@robdel12/cricket/jobs';
+
+export async function up(db) {
+  await createJobLedgerTable(db);
+}
+
+export async function down(db) {
+  await db.schema.dropTable('cricket_jobs');
+}
+```
+
 ## Testing
 
 Cricket tests are normal `node:test` files. The test helpers add a real Cricket
@@ -688,6 +815,8 @@ are parsed into `body`; non-JSON responses keep their bytes in `body` as a
 - `request(requestId)` returns one request with route, request, response,
   timings, and replay.
 - `trace(requestId)` returns the request's events, logs, spans, and timings.
+- `jobs(filter?)` returns job runtime events.
+- `job(jobRunId)` returns one job run with events, logs, and spans.
 - `clear()` clears only the collector. It does not touch app state.
 
 Timings are facts, not budgets. Use them when a test needs to prove a workflow
@@ -730,7 +859,8 @@ pnpm cricket init agents .
 `--force` is passed.
 
 `inspect` prints the loaded domains, model sensitive-field markers, rules,
-services, route operation IDs, and observability posture for an app module.
+services, jobs, route operation IDs, and observability posture for an app
+module.
 
 `docs` writes OpenAPI from the same app module your server runs.
 
@@ -756,6 +886,7 @@ import {
   defineCricketApp,
   startCricketApp,
   createCricketRuntime,
+  defineJob,
   defineEndpoint,
   deprecateEndpoint,
   defineModel,
@@ -766,6 +897,14 @@ import {
   createKnexRepository,
   z
 } from '@robdel12/cricket';
+
+import {
+  createJobLedgerTable,
+  redisQueue,
+  retry,
+  startCricketWorker,
+  state
+} from '@robdel12/cricket/jobs';
 ```
 
 Public subpaths are also available:

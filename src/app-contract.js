@@ -2,10 +2,6 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import {
-  collectEndpoints,
-  collectModels
-} from './domain.js';
 import { routeIdentityFor } from './route-identity.js';
 import { resolveCricketApp } from './app.js';
 import { generateOpenApi } from './openapi.js';
@@ -65,6 +61,21 @@ function ruleNamesFor(endpoint) {
   return toArray(endpoint.rules).map(rule =>
     rule.ruleName ?? rule.name ?? 'anonymous'
   );
+}
+
+function jobSummaryFor(job) {
+  return {
+    name: job.name,
+    queue: job.queue?.name,
+    state: job.state?.mode,
+    retry: job.retry?.type ?? 'none',
+    concurrency: toArray(job.concurrency).map(policy => policy.type),
+    schedule: job.schedule?.key
+  };
+}
+
+function jobCountFor(domain) {
+  return toArray(domain.jobs ?? domain.job).filter(job => job?.kind === 'cricket.job').length;
 }
 
 function observabilitySummaryFor(contract) {
@@ -144,6 +155,7 @@ function appContractFromResolvedApp(resolvedApp) {
     observability: resolvedApp.observability,
     domains: resolvedApp.domains ?? [],
     endpoints: resolvedApp.endpoints ?? [],
+    jobs: resolvedApp.jobs ?? [],
     models: resolvedApp.models ?? []
   };
 }
@@ -195,11 +207,16 @@ export async function loadAppContract(modulePath) {
  * @returns {object} Plain app map for text output or future JSON output.
  */
 export function createAppMap(contract) {
+  let domains = toArray(contract.domains);
+  let jobs = toArray(contract.jobs);
+  let models = toArray(contract.models);
+  let routes = toArray(contract.endpoints);
+
   return {
     name: contract.name,
     database: databaseSummaryFor(contract),
     observability: observabilitySummaryFor(contract),
-    domains: contract.domains.map((domain, index) => ({
+    domains: domains.map((domain, index) => ({
       name: domainNameFor(domain, index),
       models: toArray(domain.models ?? domain.model).map(modelSummaryFor),
       validations: schemaKeysFor(domain.validations),
@@ -207,13 +224,15 @@ export function createAppMap(contract) {
       rules: ruleKeysFor(domain.rules),
       serializers: functionKeysFor(domain.serializers),
       endpoints: toArray(domain.endpoints ?? domain.endpoint).length,
+      jobs: jobCountFor(domain),
       services: serviceKeysFor(domain)
     })),
-    models: contract.models.map(model => ({
+    jobs: jobs.map(jobSummaryFor),
+    models: models.map(model => ({
       name: model.name,
       table: model.table
     })),
-    routes: contract.endpoints.map(endpoint => ({
+    routes: routes.map(endpoint => ({
       ...routeIdentityFor(endpoint),
       path: withPathPrefix(endpoint.path, contract.prefix),
       deprecation: endpoint.deprecation,
@@ -259,7 +278,18 @@ export function formatAppMap(appMap) {
     lines.push(`    rules: ${domain.rules.join(', ') || 'none'}`);
     lines.push(`    serializers: ${domain.serializers.join(', ') || 'none'}`);
     lines.push(`    endpoints: ${domain.endpoints}`);
+    lines.push(`    jobs: ${domain.jobs}`);
     lines.push(`    services: ${domain.services.join(', ') || 'none'}`);
+  }
+
+  lines.push('', 'Jobs');
+  for (let job of appMap.jobs) {
+    lines.push(`  ${job.name}`);
+    lines.push(`    queue: ${job.queue ?? 'none'}`);
+    lines.push(`    state: ${job.state ?? 'none'}`);
+    lines.push(`    retry: ${job.retry}`);
+    lines.push(`    concurrency: ${job.concurrency.join(', ') || 'none'}`);
+    lines.push(`    schedule: ${job.schedule ?? 'none'}`);
   }
 
   lines.push('', 'Routes');

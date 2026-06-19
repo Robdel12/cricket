@@ -21,6 +21,7 @@
     ".": "./src/index.js",
     "./app": "./src/app.js",
     "./domain": "./src/domain.js",
+    "./jobs": "./src/jobs/index.js",
     "./knex": "./src/persistence/knex.js",
     "./logger": "./src/logger.js",
     "./openapi": "./src/openapi.js",

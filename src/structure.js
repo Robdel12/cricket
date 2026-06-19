@@ -416,15 +416,15 @@ Cricket owns the architecture. Your app owns the behavior.
 - \`api/domains/\` contains product API domains.
 - \`api/middleware/\` contains request middleware such as auth extraction, request IDs, rate limits, raw webhooks, CORS, and frontend fallbacks.
 - \`api/services/\` contains narrow app-wide capabilities that are not owned by one domain.
-- \`api/workers/\` contains background worker entrypoints that call services.
+- \`api/workers/\` contains background worker entrypoints that start Cricket workers.
 - \`api/migrations/\` contains app-owned database migrations for \`cricket migrate\`.
 - \`api/dev/\` contains local-only developer support code. It is not product architecture and must not be required by production runtime.
 
-First-class means scaffolded, documented, inspectable, and easy for agents to follow. It does not mean Cricket secretly owns auth policy, table design, queues, local tooling, or deployment.
+First-class means scaffolded, documented, inspectable, and agent-readable. It does not mean Cricket owns auth policy, table design, product data policy, local tooling, or deployment.
 
 Cricket passes runtime capabilities such as \`lifecycle\`, \`logger\`, \`services\`,
-and \`trace\` through setup, middleware, context, handlers, and shutdown hooks.
-Product health checks may read \`lifecycle\`, but they still own database, queue,
+and \`trace\` through setup, middleware, context, handlers, workers, and shutdown
+hooks. Product health checks may read \`lifecycle\`, but they still own database,
 worker, and deploy readiness.
 
 ## Domain Shape
@@ -479,10 +479,10 @@ Start with \`pnpm cricket inspect api/index.js\`, then read \`api/index.js\` and
 
 ## App Folders
 
-- Cricket owns the architecture, HTTP runtime, logger, trace, and read-only runtime lifecycle. The app owns product behavior, auth policy, data work, queues, workers, health semantics, and deployment.
+- Cricket owns the architecture, HTTP runtime, job runtime, logger, trace, and read-only runtime lifecycle. The app owns product behavior, auth policy, data work, worker entrypoints, health semantics, and deployment.
 - \`api/middleware/\` is for request middleware, not domain authorization.
 - \`api/services/\` is for narrow app-wide capabilities not owned by one domain.
-- \`api/workers/\` is for background worker entrypoints that call services.
+- \`api/workers/\` is for background worker entrypoints that start Cricket workers.
 - \`api/migrations/\` is app-owned migration history for the app's Cricket database contract.
 - \`api/dev/\` is for local-only development support. If code touches product behavior, move that behavior into a real service, worker, migration, or domain.
 

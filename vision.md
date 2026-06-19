@@ -58,11 +58,11 @@ domain loading.
 ## App Structure
 
 Cricket's core contract is the domain folder, but real apps have recurring
-responsibilities outside one domain. The recommended app shape gives those jobs
-a home without turning them into hidden framework behavior.
+responsibilities outside one domain. The recommended app shape gives that work
+a home without turning it into hidden framework behavior.
 
 First-class means scaffolded, documented, inspectable, and agent-readable. It
-does not mean Cricket secretly owns product policy:
+does not mean Cricket owns product policy:
 
 - `api/index.js` is the normal Node entrypoint and visible Cricket app wiring.
 - `api/domains/` contains product API domains.
@@ -71,8 +71,8 @@ does not mean Cricket secretly owns product policy:
 - `api/services/` contains app-wide capabilities that are not owned by one
   domain, such as email, media storage, payment clients, caches, and external
   clients.
-- `api/workers/` contains background worker entrypoints. Workers call services;
-  they should not become a second product layer.
+- `api/workers/` contains background worker entrypoints. Workers should start
+  Cricket workers and should not become a second product layer.
 - `api/migrations/` contains app-owned database migrations.
 - `api/dev/` contains local-only developer support code such as wait-for-db
   helpers, fixture generators, local setup/reset helpers, and smoke-test
@@ -207,15 +207,21 @@ configure it or provide a compatible logger, but Cricket should still pass one
 logger shape through setup, middleware, context, rules, handlers, services,
 startup, shutdown, and error handling.
 
-The HTTP runtime owns request IDs, safe snapshots, route identity, replay
-artifacts, and always-on request timings. Those timings should stay tiny and
-monotonic so the default path explains where time went without turning into a
-heavy observability subsystem.
+The runtime owns request IDs, job run IDs, safe snapshots, route/job identity,
+replay artifacts, and always-on request/job timings. Those timings should stay
+tiny and monotonic so the default path explains where time went without turning
+into a heavy observability subsystem.
 
-The HTTP runtime also owns its own lifecycle state: starting, ready, shutting
-down, and stopped. Apps may read that state through the lifecycle capability,
-but they should compose their own product health, readiness, workers, queues,
-and deploy checks outside the framework.
+HTTP and worker runtimes share lifecycle state: starting, ready, shutting down,
+and stopped. Apps may read that state through the lifecycle capability, but
+they still own product health, readiness, and deploy checks.
+
+Redis should coordinate hot job execution: queue membership, leases, wakeups,
+attempt nudges, idempotency locks, and short-lived progress events. The app
+database should hold two separate kinds of truth: app-owned product records for
+domain status/result, and a Cricket-owned `cricket_jobs` ledger for framework
+execution history. That ledger is useful for debugging, recovery, audit, and
+operator visibility, but it must not become the product state model.
 
 Deeper spans should be explicit. Apps can use `trace.span(name, metadata, fn)`
 for meaningful workflow stages, and the trace data should stay request-scoped,
@@ -223,9 +229,9 @@ safe, and scalar. Database timing can exist at explicit repository or Knex
 boundaries, but Cricket should keep SQL values, bind values, row data, and
 secrets out of trace payloads.
 
-Request logs should carry the facts Cricket already knows, and CLI tools should
-read the emitted log lines to trace one request by `requestId`. `cricket trace`
-is a log renderer, not a storage backend or dashboard product.
+Request and job logs should carry the facts Cricket already knows. CLI tools
+can read the emitted log lines to trace one request by `requestId`.
+`cricket trace` is a log renderer, not a storage backend or dashboard product.
 
 Default observability must be conservative: no raw auth headers, cookies, query
 values, request bodies, response bodies, `Set-Cookie` values, raw error
@@ -234,14 +240,15 @@ objects, or open-ended trace dumps.
 ## Test Harness
 
 Cricket's testing layer should stay a thin vertical integration over the
-runtime Cricket already owns. Tests should still be normal `node:test` files,
-but the framework can make real API tests easier by providing a real HTTP test
-client, safe request traces, structured logs, spans, and timings.
+runtime it already owns. Tests should still be normal `node:test` files, but
+the framework can make real API and job tests easier with a real HTTP test
+client, worker runtime hooks, safe request/job traces, structured logs, spans,
+and timings.
 
 The test harness should not become a hidden app lifecycle owner. It should not
 reset databases, fake auth, create factories, enforce speed budgets, or bypass
 endpoint handling. Apps own setup and data policy. Cricket owns the HTTP
-boundary, request traceability, and a small `cricket test` wrapper around
+boundary, request/job traceability, and a small `cricket test` wrapper around
 Node's runner.
 
 Timing data is inspectability, not judgment. A test can assert that `handlerMs`,
@@ -254,9 +261,9 @@ OpenAPI is the public HTTP spec: paths, parameters, request bodies, responses,
 schemas, and operation IDs.
 
 `cricket inspect` is the framework topology map: domains, models,
-sensitive-field markers, rules, services, routes, operation IDs, and
-observability posture. Keep these separate so clients get a clean spec and
-humans/agents get the framework shape.
+sensitive-field markers, rules, services, jobs, routes, operation IDs, and
+observability posture. Keep these separate. Clients get a clean spec. Humans
+and agents get the framework shape.
 
 ## Design Principles
 
@@ -275,8 +282,8 @@ Do not add schemas for theater.
 
 **First-class does not mean hidden ownership.** Cricket can scaffold
 `normalizers`, `middleware/`, `services/`, `workers/`, `migrations/`, `dev/`,
-and domain tests without taking over auth policy, imports, migrations, queues,
-local tooling, or deployment.
+jobs, and domain tests without taking over auth policy, imports, migrations,
+product data policy, local tooling, or deployment.
 
 **Folder structure is the convention and the enforcement.** The framework should
 auto-load the expected domain files and make missing pieces obvious during

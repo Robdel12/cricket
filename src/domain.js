@@ -2,6 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { isJobContract } from './jobs/define-job.js';
+
 export let domainFileTypes = [
   'model',
   'validations',
@@ -256,6 +258,18 @@ export function collectEndpoints(domains) {
 export function collectModels(domains) {
   return domains.flatMap(domain =>
     toArray(domain.models ?? domain.model)
+  );
+}
+
+/**
+ * Collect job contracts from plain domain modules.
+ *
+ * @param {Array<object>} domains - Domain modules with `jobs` or `job`.
+ * @returns {Array<object>} Flattened job list.
+ */
+export function collectJobs(domains) {
+  return domains.flatMap(domain =>
+    toArray(domain.jobs ?? domain.job).filter(isJobContract)
   );
 }
 
