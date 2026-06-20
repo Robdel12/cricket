@@ -427,7 +427,7 @@ describe('Cricket HTTP runtime', () => {
     assert.equal(cleanupCalled, true);
   });
 
-  it('rejects setup-provided db dependencies when Cricket owns the database', async () => {
+  it('rejects setup-provided db dependencies when Cricket provides the database', async () => {
     let cricketApp = defineCricketApp({
       database: {
         client: 'sqlite3',

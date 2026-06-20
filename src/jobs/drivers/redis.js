@@ -270,9 +270,9 @@ function addQueueName(queues, queueName) {
 /**
  * Create a Redis-backed Cricket queue driver.
  *
- * Redis stores Cricket-owned coordination structures: immutable envelopes,
+ * Redis stores Cricket job coordination structures: immutable envelopes,
  * queue lists, run hashes, leases, progress streams, schedule metadata, and
- * wakeup tokens. App-owned product records stay outside the driver.
+ * wakeup tokens. Product records stay outside the driver.
  *
  * @param {object} [options]
  * @param {object} [options.client] - Existing Redis client-like object.

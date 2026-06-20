@@ -16,10 +16,10 @@ effects at the edges.
 pnpm add @robdel12/cricket
 ```
 
-Cricket owns the HTTP runtime. It routes requests, parses bodies, validates
+Cricket provides the HTTP runtime. It routes requests, parses bodies, validates
 contracts, runs rules, writes responses, and handles startup and shutdown.
 
-Your app still owns its database schema, migrations, auth policy, product
+Your app still defines its database schema, migrations, auth policy, product
 services, external clients, worker entrypoints, and deployment.
 
 ## Core Concepts
@@ -46,7 +46,7 @@ app
   background work
     -> jobs                  validated immutable envelopes
       -> Redis               hot coordination
-      -> services            app-owned product work
+      -> services            product work
 ```
 
 ## Domain Shape
@@ -83,7 +83,7 @@ api/
   middleware/   request middleware
   services/     app-wide services
   workers/      background workers
-  migrations/   app-owned database migrations
+  migrations/   app database migrations
   dev/          local-only developer support
 ```
 
@@ -93,7 +93,7 @@ api/
 | `middleware/` | Request middleware: auth extraction, request IDs, CORS, rate limits, raw webhooks, frontend fallbacks. | Domain authorization; put that in `*.rules.js`. |
 | `services/` | Narrow shared capabilities: email, media storage, payment clients, caches, external clients. | Domain-specific product logic. |
 | `workers/` | Background entrypoints that start Cricket workers. | A second product layer. |
-| `migrations/` | App-owned Knex migrations for `cricket migrate`. | Product data policy or query design. |
+| `migrations/` | App Knex migrations for `cricket migrate`. | Product data policy or query design. |
 | `dev/` | Local-only helpers, fixture builders, reset/setup scripts, smoke-test harnesses. | Production runtime or product behavior. |
 
 If code affects product behavior, design it into a domain, app service, worker,
@@ -269,7 +269,7 @@ does not auto-wire validations by name.
 
 ## Normalizer
 
-Normalizers translate outside-world payloads into app-owned shapes.
+Normalizers translate outside-world payloads into app shapes.
 
 ```js
 import { defineNormalizer, z } from '@robdel12/cricket';
@@ -482,7 +482,7 @@ lifecycle, logger, services, and trace are already there. Add app-specific facts
 
 ## Runtime Lifecycle
 
-Cricket exposes the HTTP runtime state it already owns through `lifecycle`.
+Cricket exposes HTTP runtime state through `lifecycle`.
 Apps can read `lifecycle.phase()`, `lifecycle.status()`,
 `lifecycle.isReady()`, `lifecycle.isShuttingDown()`, and
 `lifecycle.isStopped()` from setup, services, middleware, context, handlers, and
@@ -715,9 +715,8 @@ export let generateReport = defineJob({
 });
 ```
 
-Enqueueing a job creates an immutable envelope. Redis stores Cricket-owned
-queue structures for hot coordination. Your app-owned records and services keep
-product truth.
+Enqueueing a job creates an immutable envelope. Redis stores queue metadata for
+hot coordination. Your app records and services keep product truth.
 
 ```js
 await jobs.enqueue(generateReport, {
@@ -799,8 +798,8 @@ export let dailyDigest = defineJob({
 });
 ```
 
-The app owns the policy: the cron expression, the timezone, whether the
-schedule is enabled, and the job input for a due slot. Cricket owns the
+Your app defines the policy: the cron expression, the timezone, whether the
+schedule is enabled, and the job input for a due slot. Cricket handles the
 mechanics: due-slot planning, Redis coordination, delayed promotion, immutable
 envelopes, retries, failure handling, logs, traces, progress, and the ledger.
 
@@ -851,15 +850,15 @@ await worker.drain();
 That runs through the worker boundary: schedule tick, envelope materialization,
 queue claim, `run`, events, traces, and ledger writes.
 
-`retry` decides whether Cricket should try again. `failure` is for app-owned
+`retry` decides whether Cricket should try again. `failure` is for app
 state sync after Cricket has made that decision. `retrying` runs after Cricket
 has scheduled the next attempt. `exhausted` runs after Cricket has marked the
 envelope failed. If a failure handler throws, Cricket logs
 `job.failure_handler_failed` and keeps the original job error as the failure
 that matters.
 
-When the app has a Cricket database, workers also write a framework-owned
-`cricket_jobs` ledger row for each envelope. The ledger is execution history:
+When the app has a Cricket database, workers also write a `cricket_jobs` ledger
+row for each envelope. The ledger is execution history:
 status, attempts, queue metadata, request/source context, schedule identity,
 availability time, latest progress, result or error, and timestamps. It is not
 product state, and Cricket does not create the table at worker startup. Ledger

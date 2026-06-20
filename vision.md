@@ -75,7 +75,7 @@ Each file has one job:
 - `model` defines durable row contracts, visibility, and sensitive fields.
 - `validations` defines reusable body, params, query, source, and service input
   schemas.
-- `normalizers` turns outside data into app-owned data.
+- `normalizers` turns outside data into app data.
 - `serializers` shapes outgoing API data.
 - `service` does data and integration work.
 - `rules` handles auth, existence, ownership, billing, and business guards.
@@ -88,7 +88,7 @@ standard names should stay predictable.
 
 ## Runtime
 
-Cricket owns its HTTP runtime. It should not wrap another web framework or pass
+Cricket provides its HTTP runtime. It should not wrap another web framework or pass
 foreign request/response objects through app code as an escape hatch.
 
 The runtime should pass one consistent capability shape through setup,
@@ -99,10 +99,10 @@ traces:
 - `trace`
 - `lifecycle`
 - `services`
-- `db` when Cricket owns the database handle
+- `db` when Cricket provides the database handle
 - request or job identity
 
-Apps may read lifecycle state, but product health remains app-owned. A Cricket
+Apps may read lifecycle state, but product health remains app responsibility. A Cricket
 runtime can say it is starting, ready, shutting down, or stopped. It should not
 decide whether your product is healthy enough to receive traffic.
 
@@ -110,9 +110,9 @@ decide whether your product is healthy enough to receive traffic.
 
 Cricket is not an ORM.
 
-It blesses Knex as the database path and can own the runtime handle, migration
-CLI, and named database environments. Apps still own table design, migrations,
-indexes, transactions, query strategy, and product data policy.
+It blesses Knex as the database path and can provide the runtime handle,
+migration CLI, and named database environments. Apps still define table design,
+migrations, indexes, transactions, query strategy, and product data policy.
 
 `api/migrations/` is the convention. Cricket should not run migrations on server
 start or invent a second database abstraction.
@@ -134,7 +134,7 @@ execution ledger for debugging and operators, not a domain state model.
 Scheduled work should stay inside the job contract. Apps define the cron,
 timezone, enablement rule, and input for each due slot. Cricket uses a thin cron
 parser for schedule math, then materializes due slots into normal immutable job
-envelopes. No app-owned cron sidecars.
+envelopes. No separate app cron sidecars.
 
 Failure handling is first-class because retries are where framework truth and
 product truth drift. Retry policy decides whether Cricket schedules another

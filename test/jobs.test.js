@@ -732,7 +732,7 @@ describe('Cricket jobs', () => {
     assert.match(output, /timezone: America\/Chicago/);
   });
 
-  it('stores runnable envelopes in Cricket-owned Redis structures', async () => {
+  it('stores runnable envelopes in Redis coordination structures', async () => {
     let redis = createFakeRedis();
     let job = reportJob();
     let driver = await createRedisQueueDriver({

@@ -25,7 +25,7 @@ function copyPlain(value, seen = new WeakMap()) {
 /**
  * Recursively freeze an object graph in place.
  *
- * Use this when Cricket owns the object being frozen. For caller-owned values,
+ * Use this when Cricket creates the object being frozen. For caller values,
  * prefer `frozenPlain` so the original object is not mutated.
  *
  * @param {*} value - Value to freeze.

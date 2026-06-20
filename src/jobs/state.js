@@ -15,14 +15,14 @@ let derivedKeys = new Set([
  * Inspect-only state metadata builders for Cricket jobs.
  *
  * State metadata explains where product truth lives. Cricket does not infer or
- * mutate app-owned tables from these contracts.
+ * mutate app tables from these contracts.
  */
 export let state = Object.freeze({
   /**
-   * Declare that one app-owned row represents job truth.
+   * Declare that one app row represents job truth.
    *
    * @param {object} options - Record state options.
-   * @param {string} options.table - App-owned table name.
+   * @param {string} options.table - App table name.
    * @param {string|Function} options.id - Static id or function that computes it.
    * @returns {object} Frozen state metadata.
    */
@@ -43,10 +43,10 @@ export let state = Object.freeze({
   },
 
   /**
-   * Declare that product truth is derived from app-owned records.
+   * Declare that product truth is derived from app records.
    *
    * @param {object} options - Derived state options.
-   * @param {string[]} options.from - App-owned records or concepts involved.
+   * @param {string[]} options.from - App records or concepts involved.
    * @returns {object} Frozen state metadata.
    */
   derived(options = {}) {

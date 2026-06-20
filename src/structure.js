@@ -410,17 +410,17 @@ function createAgentGuidanceContent() {
 
 ## App Shape
 
-Cricket owns the architecture. Your app owns the behavior.
+Cricket provides the architecture. Your app defines the behavior.
 
 - \`api/index.js\` is the normal Node entrypoint and visible Cricket app wiring.
 - \`api/domains/\` contains product API domains.
 - \`api/middleware/\` contains request middleware such as auth extraction, request IDs, rate limits, raw webhooks, CORS, and frontend fallbacks.
 - \`api/services/\` contains narrow app-wide capabilities that are not owned by one domain.
 - \`api/workers/\` contains background worker entrypoints that start Cricket workers.
-- \`api/migrations/\` contains app-owned database migrations for \`cricket migrate\`.
+- \`api/migrations/\` contains app database migrations for \`cricket migrate\`.
 - \`api/dev/\` contains local-only developer support code. It is not product architecture and must not be required by production runtime.
 
-First-class means scaffolded, documented, inspectable, and agent-readable. It does not mean Cricket owns auth policy, table design, product data policy, local tooling, or deployment.
+First-class means scaffolded, documented, inspectable, and agent-readable. It does not mean Cricket takes over auth policy, table design, product data policy, local tooling, or deployment.
 
 Cricket passes runtime capabilities such as \`lifecycle\`, \`logger\`, \`services\`,
 and \`trace\` through setup, middleware, context, handlers, workers, and shutdown
@@ -466,7 +466,7 @@ truth. Add Cricket's \`cricket_jobs\` ledger in a normal app migration when you
 want execution history, but do not use it as the domain state model.
 
 Use \`cronSchedule\` for recurring work. Schedules live on job contracts, not in
-app-owned cron sidecars. Test schedules through the worker boundary with a fixed
+separate app cron sidecars. Test schedules through the worker boundary with a fixed
 clock and \`worker.schedules.tick()\`.
 
 Use \`jobFailure({ retrying, exhausted })\` when product records need to follow
@@ -475,8 +475,8 @@ the envelope failed, and they receive app capabilities instead of Redis objects.
 
 Use \`createCricketJobs\` in producers that only enqueue work. Use
 \`startCricketWorker\` in \`api/workers/\` entrypoints that execute work, then
-\`worker.run()\` for the Cricket-owned job loop. Deploy checks and product
-health remain app-owned.
+\`worker.run()\` for the job loop. Deploy checks and product health remain app
+responsibility.
 ${agentGuidanceEnd}
 `;
 }
@@ -506,11 +506,11 @@ Start with \`pnpm cricket inspect api/index.js\`, then read \`api/index.js\` and
 
 ## App Folders
 
-- Cricket owns the architecture, HTTP runtime, job runtime, logger, trace, and read-only runtime lifecycle. The app owns product behavior, auth policy, data work, worker entrypoints, product health, and deployment.
+- Cricket provides the architecture, HTTP runtime, job runtime, logger, trace, and read-only runtime lifecycle. The app defines product behavior, auth policy, data work, worker entrypoints, product health, and deployment.
 - \`api/middleware/\` is for request middleware, not domain authorization.
 - \`api/services/\` is for narrow app-wide capabilities not owned by one domain.
 - \`api/workers/\` is for background worker entrypoints that start Cricket workers.
-- \`api/migrations/\` is app-owned migration history for the app's Cricket database contract.
+- \`api/migrations/\` is migration history for the app's Cricket database contract.
 - \`api/dev/\` is for local-only development support. If code touches product behavior, move that behavior into a real service, worker, migration, or domain.
 
 ## Domain Files
@@ -530,13 +530,13 @@ The folder is the domain. Optional files stay optional, but standard filenames s
 
 Use \`defineJob\` when work should leave the request path and still keep Cricket's contract shape: validated input, immutable envelopes, retry policy, structured logs, traces, services, lifecycle, jobs, and progress.
 
-Redis coordinates hot execution: queues, wakeups, leases, attempts, delayed availability, schedule materialization, and progress. App-owned tables keep product truth. The \`cricket_jobs\` table is a Cricket execution ledger for debugging and operator visibility, not the domain state model.
+Redis coordinates hot execution: queues, wakeups, leases, attempts, delayed availability, schedule materialization, and progress. App tables keep product truth. The \`cricket_jobs\` table is a Cricket execution ledger for debugging and operator visibility, not the domain state model.
 
-Use \`cronSchedule\` for recurring work. Keep schedules in \`*.jobs.js\`, drive them through \`startCricketWorker\`, and test them with fixed clocks plus \`worker.schedules.tick()\`. Do not add app-owned cron sidecars for Cricket jobs.
+Use \`cronSchedule\` for recurring work. Keep schedules in \`*.jobs.js\`, drive them through \`startCricketWorker\`, and test them with fixed clocks plus \`worker.schedules.tick()\`. Do not add separate app cron sidecars for Cricket jobs.
 
 Use \`jobFailure({ retrying, exhausted })\` to sync product records after Cricket has made the retry decision. Do not inspect Redis from job code or failure handlers.
 
-Use \`createCricketJobs\` for producer entrypoints that enqueue work without starting a worker. Use \`startCricketWorker\` from \`api/workers/\` to execute work, then \`worker.run()\` for the Cricket-owned job loop. Keep readiness checks and deployment behavior explicit in the app.
+Use \`createCricketJobs\` for producer entrypoints that enqueue work without starting a worker. Use \`startCricketWorker\` from \`api/workers/\` to execute work, then \`worker.run()\` for the job loop. Keep readiness checks and deployment behavior explicit in the app.
 
 ## Change Flow
 

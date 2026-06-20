@@ -48,7 +48,7 @@ async function updateOrInsert(db, tableName, envelope, values) {
 }
 
 /**
- * Create the framework-owned Cricket jobs ledger table.
+ * Create the Cricket jobs ledger table.
  *
  * Use this helper from an app migration. Cricket does not create the table on
  * worker startup, because database changes should stay explicit and reviewable.

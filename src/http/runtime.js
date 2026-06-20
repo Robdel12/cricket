@@ -182,7 +182,7 @@ function hasHeader(headers = {}, name) {
 }
 
 /**
- * Add a framework-owned response header unless the handler already set it.
+ * Add a framework response header unless the handler already set it.
  *
  * @param {Record<string, any>} headers
  * @param {string} name

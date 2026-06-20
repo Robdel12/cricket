@@ -23,7 +23,7 @@ obvious in every change.
 - Prefer plain functions and explicit inputs/outputs over classes.
 - Preserve Cricket's functional data style: plain objects in, plain objects out,
   no model instances, no hidden mutation, no ORM-ish object lifecycle.
-- Cricket owns its HTTP runtime. Do not wrap another web framework or add
+- Cricket provides its HTTP runtime. Do not wrap another web framework or add
   transport-shaped escape hatches.
 - Avoid `setTimeout`, polling waits, and timing-dependent behavior.
 
@@ -54,17 +54,17 @@ obvious in every change.
   bring back `*.domain.js` manifest files or make optional files mandatory.
 - `api/middleware/` is for request middleware. `api/services/` is for shared
   app capabilities. `api/workers/` is for background entrypoints.
-  `api/migrations/` is app-owned database change history. `api/dev/` is
+  `api/migrations/` is app database change history. `api/dev/` is
   local-only support.
 - If code affects product behavior, design it into a domain, app service,
   worker, middleware, or migration. Do not create generic junk drawers.
-- Logging is framework-owned. Apps may configure or extend the logger, but the
+- Logging is part of the framework. Apps may configure or extend the logger, but the
   runtime should pass one Cricket logger shape through setup, services, rules,
   handlers, middleware, startup, shutdown, and errors.
-- Runtime lifecycle state is framework-owned. Apps may read `lifecycle` from
+- Runtime lifecycle state is part of the framework. Apps may read `lifecycle` from
   setup, services, middleware, context, handlers, and shutdown hooks, but
-  product health, queues, workers, and deploy checks stay app-owned.
-- HTTP runtime files live in `src/http/` and must stay Cricket-owned.
+  product health, queues, workers, and deploy checks stay app responsibility.
+- HTTP runtime files live in `src/http/` and must stay framework code.
   Persistence helpers live in `src/persistence/`.
 - The Knex helper is not an ORM. Keep table design, migrations, mapping, and
   product logic in the app.
@@ -94,8 +94,8 @@ Use `$testing-philosophy`.
 ## Docs
 
 When changing framework behavior, update `README.md` for user-facing usage and
-`vision.md` for direction/tradeoffs. Keep docs candid about what Cricket owns
-and what remains app responsibility.
+`vision.md` for direction/tradeoffs. Keep docs candid about what Cricket
+provides and what remains app responsibility.
 
 Update examples when public contracts change. The examples are part of the API
 surface here, and stale examples will mislead the next real-app pass.
