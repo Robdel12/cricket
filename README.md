@@ -2,13 +2,12 @@
 
 Tiny contracts for sturdy Node APIs.
 
-Cricket gives Node APIs the backend shape that stays pleasant as the API grows:
-Zod models, pure normalizers, pure serializers, boring services, named rules,
-thin routes, first-class jobs, OpenAPI generation, and a normal Node entrypoint.
+Cricket gives Node APIs the backend shape that stays pleasant as the app grows:
+plain JavaScript, Zod contracts, predictable domain files, thin routes, boring
+services, first-class jobs, OpenAPI generation, and a normal Node entrypoint.
 
-It is intentionally plain JavaScript. No model instances, no hidden mutation, no
-ORM lifecycle. Your app passes POJOs around, composes functions, and keeps side
-effects at the edges.
+No model instances. No hidden mutation. No ORM lifecycle. Your app passes plain
+objects around, composes functions, and keeps side effects at the edges.
 
 ## Install
 
@@ -16,63 +15,42 @@ effects at the edges.
 pnpm add @robdel12/cricket
 ```
 
-Cricket provides the HTTP runtime. It routes requests, parses bodies, validates
-contracts, runs rules, writes responses, and handles startup and shutdown.
+## Adopt Cricket
 
-Your app still defines its database schema, migrations, auth policy, product
-services, external clients, worker entrypoints, and deployment.
+Start by scaffolding the app shape and the agent guidance:
 
-## Core Concepts
-
-Cricket treats an API as a request-to-response transform, with side effects kept
-at explicit boundaries.
-
-```text
-app
-  request
-    -> middleware before     HTTP edge transforms requestContext
-      -> domains.routes      match endpoint or fallback
-        -> validations       trusted input shape
-        -> rules             request permission + loaded facts
-        -> handler/services  app work + side effects
-        -> serializers       API output shape
-      -> response draft
-    <- middleware after      response headers, cookies, logging, timing
-  response
-
-  outside-source data
-    -> domains.normalizers   third-party, CSV, webhook, queue, import, legacy projections
-
-  background work
-    -> jobs                  validated immutable envelopes
-      -> Redis               hot coordination
-      -> services            product work
+```sh
+pnpm cricket init app .
+pnpm cricket init agents .
+pnpm cricket inspect api/index.js
+pnpm cricket docs api/index.js --out openapi.json
 ```
 
-## Domain Shape
+`init app` creates the folders Cricket expects. `init agents` adds an
+`AGENTS.md` section and a small local skill suite under `.agents/skills/`:
 
-Use one folder per domain.
+- `cricket` teaches the framework shape, domain pattern, and change flow.
+- `cricket-jobs` teaches jobs, schedules, retries, workers, and the ledger.
+- `cricket-observability` teaches logging, tracing, lifecycle, and debugging.
+- `cricket-testing` teaches HTTP-boundary tests, worker-boundary job tests, and
+  Cricket test state.
 
-```text
-api/domains/project/
-  project.model.js        durable Zod contracts
-  project.validations.js  request/source input contracts
-  project.normalizers.js  third-party/source payload projections
-  project.serializers.js  response schemas and projections
-  project.service.js      data and product operations
-  project.rules.js        auth, existence, ownership, business guards
-  project.routes.js       endpoint contracts
-  project.jobs.js         background job contracts
-  project.test.js         HTTP-boundary endpoint tests
-```
+That skill suite is part of Cricket's docs surface. It exists because Cricket is
+meant to be easy for agents to use correctly while humans drive the product
+decisions.
 
-The folder is the domain. Cricket auto-loads the standard files from your domain
-root, then wires the files that exist. Models, validations, normalizers,
-serializers, services, rules, routes, and jobs are standard homes, not mandatory
-paperwork.
+## Principles
 
-Extra files are fine when a domain needs them. Keep the standard files as the
-map.
+- Keep data plain: objects in, objects out.
+- Keep side effects at clear boundaries: services, handlers, jobs, middleware,
+  migrations, and external clients.
+- Keep contracts at real edges: requests, responses, source payloads, jobs, and
+  database rows.
+- Keep domain files predictable. Agents should be able to guess where behavior
+  lives before they open the repo.
+- Keep framework behavior visible. Cricket provides runtime shape; your app
+  defines product behavior, auth policy, data policy, worker entrypoints,
+  health checks, and deployment.
 
 ## App Shape
 
@@ -81,47 +59,47 @@ api/
   index.js      app entrypoint and Cricket wiring
   domains/      product API domains
   middleware/   request middleware
-  services/     app-wide services
-  workers/      background workers
+  services/     app-wide capabilities
+  workers/      background worker entrypoints
   migrations/   app database migrations
-  dev/          local-only developer support
+  dev/          local-only support
 ```
 
-| Folder | Use it for | Keep out |
-| --- | --- | --- |
-| `domains/` | Product API behavior. | App-wide clients and app-level middleware. |
-| `middleware/` | Request middleware: auth extraction, request IDs, CORS, rate limits, raw webhooks, frontend fallbacks. | Domain authorization; put that in `*.rules.js`. |
-| `services/` | Narrow shared capabilities: email, media storage, payment clients, caches, external clients. | Domain-specific product logic. |
-| `workers/` | Background entrypoints that start Cricket workers. | A second product layer. |
-| `migrations/` | App Knex migrations for `cricket migrate`. | Product data policy or query design. |
-| `dev/` | Local-only helpers, fixture builders, reset/setup scripts, smoke-test harnesses. | Production runtime or product behavior. |
+Use `domains/` for product behavior. Use `middleware/` for HTTP edge work such
+as auth extraction, CORS, request IDs, raw webhooks, and frontend fallbacks. Use
+`services/` for narrow shared capabilities like mail, storage, payments, caches,
+and external clients. Use `workers/` for background entrypoints that start
+Cricket workers. Use `dev/` only for local support.
 
-If code affects product behavior, design it into a domain, app service, worker,
-middleware, or migration. `dev/` is local-only.
+If code affects product behavior, put it in a domain, app service, worker,
+middleware, or migration. Avoid generic junk drawers.
+
+## Domain Shape
+
+Use one folder per domain.
+
+```text
+api/domains/project/
+  project.model.js        row contracts and visibility
+  project.validations.js  request/source/service input schemas
+  project.normalizers.js  outside payload projections
+  project.serializers.js  API output projections
+  project.service.js      data and product operations
+  project.rules.js        auth, existence, ownership, business guards
+  project.routes.js       endpoint contracts
+  project.jobs.js         background job contracts
+  project.test.js         HTTP and worker-boundary tests
+```
+
+The folder is the domain. Cricket auto-loads the standard files that exist.
+Optional files stay optional, but standard names should stay predictable.
 
 ## App Entry
 
-Put the app contract in your normal Node entrypoint, usually `api/index.js`.
+Put the app contract in `api/index.js`.
 
 ```js
 import { defineCricketApp, startCricketApp } from '@robdel12/cricket';
-
-function readSession() {
-  return async (requestContext, next) => {
-    let authorization = String(requestContext.request.headers.authorization ?? '');
-    let user = authorization
-      ? await requestContext.services.sessions.verifyBearerToken(authorization)
-      : undefined;
-
-    return await next({
-      ...requestContext,
-      context: {
-        ...requestContext.context,
-        user
-      }
-    });
-  };
-}
 
 export let app = defineCricketApp({
   name: 'Project API',
@@ -150,22 +128,12 @@ export let app = defineCricketApp({
       }
     }
   },
-  // Cricket scans this folder for standard domain files that exist.
   domains: './domains',
   async setup({ db }) {
     return {
       services: {
-        mailer: createMailer(),
-        sessions: createSessionService({ db })
+        projects: createProjectService({ db })
       }
-    };
-  },
-  middleware: [readSession()],
-  context({ request }) {
-    // Add app-specific request facts. Cricket already passes dependencies,
-    // lifecycle, db, logger, services, and trace through the base context.
-    return {
-      requestId: request.id
     };
   }
 });
@@ -177,33 +145,13 @@ if (process.env.NODE_ENV !== 'test')
   });
 ```
 
-## Middleware
+`setup` returns app capabilities. Cricket passes `services`, `db`, `logger`,
+`trace`, and `lifecycle` through middleware, context, rules, handlers, jobs,
+workers, startup, shutdown, and tests.
 
-Cricket middleware receives a plain request context and returns a response or
-passes the next request context forward. Treat it as immutable: copy what you
-change.
+## Domain Contracts
 
-```js
-export function requestId() {
-  return async (requestContext, next) => {
-    return await next({
-      ...requestContext,
-      context: {
-        ...requestContext.context,
-        requestId: crypto.randomUUID()
-      }
-    });
-  };
-}
-```
-
-Use middleware for cross-cutting HTTP work before Cricket parses an endpoint
-body.
-
-## Model
-
-Models define durable row contracts, public/private visibility, and sensitive
-fields.
+Models describe durable rows and default visibility:
 
 ```js
 import { defineModel, field, z } from '@robdel12/cricket';
@@ -216,33 +164,11 @@ export let Project = defineModel({
     owner_id: field.private(z.uuid(), { sensitive: true }),
     slug: field.public(z.string()),
     name: field.public(z.string())
-  },
-  views: {
-    owner: ['id', 'owner_id', 'slug', 'name']
   }
 });
 ```
 
-Cricket derives strict Zod schemas from the row map:
-
-```js
-Project.row       // all fields
-Project.public    // public fields only
-Project.owner     // explicit named view
-```
-
-Use `Project.row` at the database boundary. Request and source input contracts
-belong in `*.validations.js`, not as model lifecycle keys.
-
-Visibility and sensitive handling are separate on purpose. Visibility controls
-the default output contract. Fields default to `sensitive: false`; add
-`sensitive: true` when a field needs careful handling in logging, inspection,
-and observability work. Cricket does not define PII or internal-data categories
-for you; compose those product-specific policies from this marker in app code.
-
-## Validation
-
-Validations are reusable Zod schemas for data entering a boundary.
+Validations are reusable Zod schemas for data entering a boundary:
 
 ```js
 import { z } from '@robdel12/cricket';
@@ -264,41 +190,8 @@ export let ProjectParams = z.object({
 });
 ```
 
-Routes, rules, services, and normalizers import the schemas they use. Cricket
-does not auto-wire validations by name.
-
-## Normalizer
-
-Normalizers translate outside-world payloads into app shapes.
-
-```js
-import { defineNormalizer, z } from '@robdel12/cricket';
-import { ProjectCreateInput } from './project.validations.js';
-
-export let normalizeProjectImport = defineNormalizer({
-  name: 'project.import',
-  source: z.object({
-    SLUG: z.string(),
-    NAME: z.string()
-  }).passthrough(),
-  output: ProjectCreateInput,
-  normalize(row) {
-    return {
-      slug: row.SLUG,
-      name: row.NAME
-    };
-  }
-});
-```
-
-Reach for `*.normalizers.js` when a third-party API, CSV, webhook, queue
-payload, or legacy source speaks in its own shape. Keep normalizers pure: no
-fetching, no DB writes, no auth, no queues. Cricket validates source and output
-contracts when the normalizer runs.
-
-## Serializer
-
-Serializers are pure projections for data leaving the API.
+Normalizers turn outside payloads into app shapes. Serializers turn domain data
+into API output shapes. Both should be pure.
 
 ```js
 import { defineSerializer, pickFields } from '@robdel12/cricket';
@@ -311,20 +204,15 @@ export let serializeProjectPublic = defineSerializer({
 });
 ```
 
-Use serializers to drop private fields and create endpoint-specific API shapes.
-They should not query, mutate, or check permissions. Cricket validates serializer
-output, so leaking a private field through `Project.public` fails.
-
-## Service
-
-Services do data and product work without knowing about HTTP.
+Services do data and product work without knowing about HTTP:
 
 ```js
+import { randomUUID } from 'node:crypto';
 import { createKnexRepository } from '@robdel12/cricket';
 import { Project } from './project.model.js';
 import { ProjectInsert } from './project.validations.js';
 
-export function createProjectService({ db, ids }) {
+export function createProjectService({ db }) {
   let projects = createKnexRepository({
     db,
     model: Project,
@@ -334,7 +222,7 @@ export function createProjectService({ db, ids }) {
   return {
     async createForUser({ userId, slug, name }) {
       return await projects.insert({
-        id: ids.next(),
+        id: randomUUID(),
         owner_id: userId,
         slug,
         name
@@ -344,107 +232,15 @@ export function createProjectService({ db, ids }) {
 }
 ```
 
-`createKnexRepository()` handles row parsing and small CRUD helpers. It is not an
-ORM. Use raw Knex when the query is clearer.
-
-## Database
-
-Cricket uses Knex as the database path. Put the config on the app contract:
+Rules answer whether the request can continue. Routes compose validation, rules,
+handlers, serializers, response contracts, and docs metadata.
 
 ```js
-export let app = defineCricketApp({
-  database: {
-    client: 'pg',
-    defaultEnvironment: 'development',
-    environments: {
-      development: {
-        connection: process.env.DATABASE_URL
-      },
-      test: {
-        client: 'sqlite3',
-        connection: {
-          filename: ':memory:'
-        },
-        useNullAsDefault: true
-      },
-      production: {
-        connection: process.env.DATABASE_URL
-      }
-    }
-  }
-});
-```
-
-Cricket creates one `db` handle for the runtime, passes it through setup,
-services, rules, middleware, and handlers, then destroys it during cleanup.
-The active environment comes from `database.environment`,
-`CRICKET_DATABASE_ENV`, `NODE_ENV`, `database.defaultEnvironment`, then
-`development`. Shared Knex options can live beside `environments`; the selected
-environment overrides them.
-
-Migrations live in `api/migrations/` by convention. Only set
-`database.migrations.directory` when an app is intentionally changing that
-shape.
-
-```sh
-pnpm cricket migrate make api/index.js create_projects
-pnpm cricket migrate latest api/index.js
-pnpm cricket migrate latest api/index.js --env production
-pnpm cricket migrate status api/index.js
-pnpm cricket migrate list api/index.js
-pnpm cricket migrate current-version api/index.js
-pnpm cricket migrate rollback api/index.js
-```
-
-Cricket does not run migrations on server start, design tables, hide data
-policy, or replace Knex. It just makes the database contract and migration
-commands visible from the same app definition.
-
-## Rule
-
-Rules answer whether the request can continue.
-
-```js
-import { defineRule, forbidden } from '@robdel12/cricket';
-
-export let ownsProject = defineRule(
-  'project.ownsProject',
-  async ({ input, services, user }) => {
-    let project = await services.project.findBySlug(input.params.slug);
-
-    if (!project || project.owner_id !== user.id)
-      throw forbidden('Project access denied');
-
-    return {
-      project
-    };
-  }
-);
-```
-
-Rules are the right place for auth, ownership, existence, billing, feature
-limits, and business preconditions. When a rule loads request-local facts, return
-them as a plain object so the next rule and handler receive them directly.
-
-## Route
-
-Routes compose the HTTP contract.
-
-```js
-import {
-  created,
-  defineEndpoint,
-  deprecateEndpoint,
-  ok,
-  z
-} from '@robdel12/cricket';
+import { created, defineEndpoint, z } from '@robdel12/cricket';
 import { Project } from './project.model.js';
 import { serializeProjectPublic } from './project.serializers.js';
 import { ProjectCreateInput } from './project.validations.js';
-import {
-  requireUser,
-  slugAvailable
-} from './project.rules.js';
+import { requireUser, slugAvailable } from './project.rules.js';
 
 export let createProject = defineEndpoint({
   method: 'post',
@@ -459,7 +255,7 @@ export let createProject = defineEndpoint({
     project: Project.public
   }),
   async handler({ input, services, user }) {
-    let project = await services.project.createForUser({
+    let project = await services.projects.createForUser({
       userId: user.id,
       ...input.body
     });
@@ -470,229 +266,61 @@ export let createProject = defineEndpoint({
     });
   }
 });
-
-export let projectEndpoints = [
-  createProject
-];
 ```
 
-Handlers receive Cricket input plus the request context. Setup dependencies,
-lifecycle, logger, services, and trace are already there. Add app-specific facts in
-`context(...)`, middleware, or rules.
+## Database
 
-## Runtime Lifecycle
+Cricket uses Knex as the database path. It creates one `db` handle for the
+runtime, passes it through app capabilities, and destroys it during cleanup.
 
-Cricket exposes HTTP runtime state through `lifecycle`.
-Apps can read `lifecycle.phase()`, `lifecycle.status()`,
-`lifecycle.isReady()`, `lifecycle.isShuttingDown()`, and
-`lifecycle.isStopped()` from setup, services, middleware, context, handlers, and
-shutdown hooks.
-
-The lifecycle reader is immutable from app code. `status()` returns a frozen
-snapshot, and Cricket keeps phase transitions private inside the runtime.
-
-This is not a health endpoint or readiness system. Compose lifecycle state into
-your own product health checks when it matters.
-
-Deprecate an endpoint by wrapping the endpoint object. Deprecation is a signal,
-not behavior control: Cricket still routes the request, validates input, runs
-rules, and returns the handler response.
-
-```js
-export let checkShas = deprecateEndpoint(defineEndpoint({
-  method: 'post',
-  path: '/sdk/check-shas',
-  response: z.object({
-    success: z.literal(true)
-  }),
-  async handler({ input, services }) {
-    return ok(await services.sdk.checkShas(input.body));
-  }
-}), {
-  since: '2026-06-17',
-  sunset: '2026-09-01',
-  replacement: 'POST /sdk/screenshots/batch',
-  reason: 'Use the batch screenshot upload flow instead.'
-});
-```
-
-`docs` marks the operation with OpenAPI `deprecated: true` and keeps the details
-under `x-cricket-deprecation`. `inspect` labels the route and prints the sunset,
-replacement, and reason. Runtime observability gets the same metadata, which is
-usually the useful signal for product APIs.
-
-HTTP deprecation headers are opt-in. Use them when clients outside your product
-need migration hints from the response itself.
-
-```js
-export let publicLegacyRoute = deprecateEndpoint(endpoint, {
-  sunset: '2026-09-01',
-  replacement: 'GET /v2/projects/:slug',
-  reason: 'Use the v2 project route.',
-  headers: true
-});
-```
-
-When `headers` is true, Cricket adds `Deprecation`, `Sunset`, and replacement
-`Link` headers when it can infer a successor path, unless your handler already
-set those headers.
-
-## Observability
-
-Every Cricket app gets a structured logger. By default it writes
-newline-delimited JSON to stdout with the app name as the service, or
-`Cricket app` if unnamed. Configure `logger` when you want a different service,
-level, format, or write target.
-
-```js
-export let app = defineCricketApp({
-  name: 'Project API',
-  logger: {
-    service: 'project-api',
-    level: process.env.LOG_LEVEL ?? 'info',
-    format: process.env.NODE_ENV === 'production' ? 'json' : 'pretty'
-  }
-});
-```
-
-The runtime passes the logger through setup, services, startup, and shutdown.
-For each request, middleware, context, rules, handlers, and error handling get a
-request-scoped child logger. Matched route logs also carry route identity, so
-one `requestId` is enough to inspect the request flow.
-
-Cricket also keeps sparse, monotonic timings at the HTTP boundary: middleware,
-route match, validation, rules, handler, response finish, and close. They show
-where a request spent time without turning logs into a firehose.
-
-Cricket emits safe request events from the HTTP runtime when an app provides
-`observability.observe`.
-
-```js
-export let app = defineCricketApp({
-  observability: {
-    observe(event) {
-      console.log(event.type, event.requestId);
-    }
-  }
-});
-```
-
-Events include `request.started`, `route.matched`, `request.failed`,
-`response.finished`, and `response.closed`. Request snapshots include method,
-path, host, protocol, and the names of headers, cookies, query keys, and params.
-They do not include raw auth headers, cookie values, query values, request
-bodies, response bodies, or `Set-Cookie` values.
-
-The terminal response event includes a replay list for that request. Replay is a
-plain request artifact, not a second logging system.
-
-Cricket wraps endpoint handlers in request-scoped spans by default. The span
-name comes from `operationId` when you provide one, or from the method and path
-when you don't. Add `traceName` only when you want a different product name in
-the logs.
-
-```js
-export let createProject = defineEndpoint({
-  method: 'post',
-  path: '/projects',
-  operationId: 'projects.create',
-  async handler({ input, services }) {
-    return created(await services.projects.create(input.body));
-  }
-});
-```
-
-Cricket also passes a request-scoped `trace` capability through middleware,
-context, rules, and handlers so apps can wrap deeper workflow stages with
-`trace.span(name, metadata, fn)`. Spans return the callback result, rethrow the
-original error, and keep metadata to safe scalar values.
-
-Use `createCricketLogger` when you want an explicit logger value for tests,
-workers, CLIs, or custom composition.
-
-```js
-import { createCricketLogger } from '@robdel12/cricket/logger';
-
-let logger = createCricketLogger({
-  service: 'api',
-  write(line) {
-    process.stdout.write(`${line}\n`);
-  }
-});
-```
-
-In production, let Docker or the host runtime store and rotate logs. When you
-need one request, pipe the logs back through Cricket:
+Migrations live in `api/migrations/` by convention:
 
 ```sh
-docker logs api | pnpm cricket trace req_123
+pnpm cricket migrate make api/index.js create_projects
+pnpm cricket migrate latest api/index.js
+pnpm cricket migrate status api/index.js
+pnpm cricket migrate rollback api/index.js
 ```
 
-Cricket's built-in structured logger redacts common secret-shaped keys at the
-boundary and keeps child metadata, including `requestId`, in the envelope that
-`cricket trace` understands. If you pass a custom logger, Cricket forwards the
-same events into that logger's shape.
-
-`trace` reads the same logs back on demand and renders request timings plus span
-records. Cricket does not store that data for you.
+Cricket does not run migrations on server start, design tables, hide data
+policy, or replace Knex. It makes the database contract visible from the same
+app definition your server uses.
 
 ## Jobs
 
-Jobs are Cricket contracts for background work. Use them when work needs a
-validated input shape, retry policy, queue coordination, and the same runtime
-capabilities your HTTP handlers already get.
+Jobs are Cricket contracts for background work. Use them when work needs
+validated input, immutable envelopes, Redis coordination, retry policy,
+scheduled execution, failure handling, logs, traces, progress, and the same
+services your HTTP handlers use.
 
 ```js
+import { z } from '@robdel12/cricket';
 import {
-  createJobLedgerTable,
   createCricketJobs,
   cronSchedule,
   defineJob,
   jobFailure,
   redisQueue,
-  retry,
-  startCricketWorker,
-  state
+  retry
 } from '@robdel12/cricket/jobs';
-import { z } from '@robdel12/cricket';
 
 export let generateReport = defineJob({
   name: 'reports.generate',
-
   input: z.object({
     reportId: z.string(),
-    accountId: z.string(),
-    templateId: z.string()
+    accountId: z.string()
   }),
-
-  context: z.object({
-    requestId: z.string().optional(),
-    source: z.string().optional(),
-    priority: z.number().int().default(0)
-  }).default({}),
-
   queue: redisQueue({
     name: 'reports',
     idempotencyKey: ({ input }) => input.reportId,
-    partition: ({ input }) => `account:${input.accountId}`,
-    priority: ({ context }) => context.priority
+    partition: ({ input }) => `account:${input.accountId}`
   }),
-
   retry: retry.exponential({
     attempts: 3,
     delayMs: 2_000,
-    maxDelayMs: 60_000,
-    when: ({ error }) => error.retryable !== false
+    maxDelayMs: 60_000
   }),
-
   failure: jobFailure({
-    async retrying({ input, failure, services }) {
-      await services.reports.markQueued({
-        reportId: input.reportId,
-        reason: failure.message
-      });
-    },
-
     async exhausted({ input, failure, services }) {
       await services.reports.markFailed({
         reportId: input.reportId,
@@ -700,14 +328,17 @@ export let generateReport = defineJob({
       });
     }
   }),
-
-  state: state.derived({
-    from: ['accounts', 'reports', 'templates']
+  schedule: cronSchedule({
+    key: 'daily-reports',
+    cron: '15 4 * * *',
+    timezone: 'America/Chicago',
+    input: ({ scheduledFor }) => ({
+      reportId: `daily:${scheduledFor.slice(0, 10)}`,
+      accountId: 'system'
+    })
   }),
-
   async run({ input, services, trace, progress }) {
     await progress.update({ current: 1, total: 1 });
-
     return trace.span('reports.generate', {
       accountId: input.accountId
     }, () => services.reports.generate(input));
@@ -715,37 +346,7 @@ export let generateReport = defineJob({
 });
 ```
 
-Enqueueing a job creates an immutable envelope. Redis stores queue metadata for
-hot coordination. Your app records and services keep product truth.
-
-```js
-await jobs.enqueue(generateReport, {
-  reportId,
-  accountId,
-  templateId
-}, {
-  context: {
-    requestId,
-    source: 'report.requested',
-    priority: 50
-  }
-});
-```
-
-Delay a one-off job with `runAt` when the work should become available later.
-`delayMs` is a convenience for relative delays.
-
-```js
-await jobs.enqueue(generateReport, input, {
-  runAt: new Date('2026-06-19T14:00:00.000Z')
-});
-
-await jobs.enqueue(generateReport, input, {
-  delayMs: 30_000
-});
-```
-
-Producer entrypoints can enqueue without starting a worker:
+Producer entrypoints enqueue without starting a worker:
 
 ```js
 let producer = await createCricketJobs({
@@ -757,53 +358,13 @@ let producer = await createCricketJobs({
   }
 });
 
-await producer.jobs.enqueue(generateReport, input, {
-  context: {
-    requestId,
-    source: 'report.requested'
-  }
+await producer.jobs.enqueue(generateReport, {
+  reportId,
+  accountId
 });
 ```
 
-Scheduled jobs are normal jobs with schedule metadata. Cricket uses
-`cron-parser` for cron and timezone math, then materializes due slots into the
-same immutable envelopes as manually enqueued work.
-
-```js
-export let dailyDigest = defineJob({
-  name: 'maintenance.dailyDigest',
-
-  input: z.object({
-    runDate: z.string()
-  }),
-
-  queue: redisQueue({
-    name: 'maintenance',
-    idempotencyKey: ({ input }) => `daily-digest:${input.runDate}`
-  }),
-
-  schedule: cronSchedule({
-    key: 'daily-digest',
-    cron: '15 4 * * *',
-    timezone: 'America/Chicago',
-    input: ({ scheduledFor }) => ({
-      runDate: scheduledFor.slice(0, 10)
-    }),
-    enabled: ({ env }) => env.ENABLE_DAILY_DIGEST === 'true'
-  }),
-
-  async run({ input, services }) {
-    return services.maintenance.dailyDigest(input);
-  }
-});
-```
-
-Your app defines the policy: the cron expression, the timezone, whether the
-schedule is enabled, and the job input for a due slot. Cricket handles the
-mechanics: due-slot planning, Redis coordination, delayed promotion, immutable
-envelopes, retries, failure handling, logs, traces, progress, and the ledger.
-
-Worker entrypoints stay small:
+Worker entrypoints execute jobs:
 
 ```js
 import { startCricketWorker } from '@robdel12/cricket/jobs';
@@ -811,61 +372,18 @@ import { app } from '../index.js';
 import { generateReport } from '../domains/reports/reports.jobs.js';
 
 let worker = await startCricketWorker(app, {
-  baseUrl: new URL('../index.js', import.meta.url),
   queues: {
     redis: {
       url: process.env.REDIS_URL
     }
   },
-  jobs: [
-    generateReport
-  ]
+  jobs: [generateReport]
 });
 
 await worker.run();
 ```
 
-Job `run` functions receive `services`, `logger`, `trace`, `lifecycle`, `jobs`,
-and `progress`. Failure handlers receive the same app capabilities, plus the
-original `error`, a safe `failure` snapshot, the immutable `envelope`, and the
-current `attempt`. They never receive Redis objects.
-
-Tests can drive schedules without waiting on wall time:
-
-```js
-let worker = await startCricketWorker(app, {
-  jobs: [dailyDigest],
-  queues: {
-    test: true
-  },
-  clock: {
-    now: () => new Date('2026-06-19T09:16:00.000Z')
-  }
-});
-
-await worker.schedules.tick();
-await worker.drain();
-```
-
-That runs through the worker boundary: schedule tick, envelope materialization,
-queue claim, `run`, events, traces, and ledger writes.
-
-`retry` decides whether Cricket should try again. `failure` is for app
-state sync after Cricket has made that decision. `retrying` runs after Cricket
-has scheduled the next attempt. `exhausted` runs after Cricket has marked the
-envelope failed. If a failure handler throws, Cricket logs
-`job.failure_handler_failed` and keeps the original job error as the failure
-that matters.
-
-When the app has a Cricket database, workers also write a `cricket_jobs` ledger
-row for each envelope. The ledger is execution history:
-status, attempts, queue metadata, request/source context, schedule identity,
-availability time, latest progress, result or error, and timestamps. It is not
-product state, and Cricket does not create the table at worker startup. Ledger
-write failures are logged as `job.ledger_failed` and do not change queue
-execution.
-
-Add it in a normal app migration:
+If the app has a Cricket database, add the job ledger deliberately:
 
 ```js
 import { createJobLedgerTable } from '@robdel12/cricket/jobs';
@@ -879,11 +397,40 @@ export async function down(db) {
 }
 ```
 
+The ledger is execution history for debugging and operators. It is not product
+state.
+
+## Observability
+
+Cricket provides one logger shape, request/job events, sparse timings, trace
+spans, and lifecycle state.
+
+```js
+export let app = defineCricketApp({
+  logger: {
+    service: 'project-api',
+    level: process.env.LOG_LEVEL ?? 'info',
+    format: process.env.NODE_ENV === 'production' ? 'json' : 'pretty'
+  }
+});
+```
+
+Use `trace.span(name, metadata, fn)` around meaningful service calls, external
+calls, and job steps. Use `pnpm cricket trace` when you need to inspect one
+request from newline-delimited JSON logs:
+
+```sh
+docker logs api | pnpm cricket trace req_123
+```
+
+Apps can read `lifecycle` from setup, services, middleware, context, handlers,
+jobs, workers, and shutdown hooks. Product health checks still decide whether
+the app is ready for traffic.
+
 ## Testing
 
-Cricket tests are normal `node:test` files. The test helpers add a real Cricket
-runtime, a small HTTP client, and inspectable request state. They do not reset
-your database, fake auth, bypass endpoints, or replace Node's test runner.
+Test through the boundary users consume. Use HTTP tests for endpoints and the
+worker boundary for jobs.
 
 ```js
 import { test } from 'node:test';
@@ -897,109 +444,59 @@ test('creates a project through the API', async () => {
 
   try {
     let response = await api.post('/api/projects', {
-      headers: {
-        authorization: 'Bearer test-token'
-      },
       body: {
+        slug: 'launch-plan',
         name: 'Launch Plan'
       }
     });
 
     assert.equal(response.status, 201);
-    assert.equal(response.body.name, 'Launch Plan');
+    assert.equal(response.body.project.slug, 'launch-plan');
 
     let request = testState.request(response.requestId);
-
     assert.equal(request.response.status, 201);
-    assert.equal(Number.isFinite(request.timings.totalMs), true);
-    assert.equal(Number.isFinite(request.timings.handlerMs), true);
   } finally {
     await cleanup();
   }
 });
 ```
 
-`createTestRuntime(app)` returns `{ api, runtime, testState, cleanup }`.
+Drive scheduled jobs without waiting on wall time:
 
-`api` talks to a real local HTTP server on an ephemeral port. It has `get`,
-`post`, `put`, `patch`, `delete`, `head`, `options`, and `request` helpers.
-Request options are `{ headers, query, body, text, buffer, formData, redirect }`,
-and responses have `{ status, headers, body, text, requestId }`. JSON responses
-are parsed into `body`; non-JSON responses keep their bytes in `body` as a
-`Buffer` while also exposing `text`.
+```js
+let worker = await startCricketWorker(app, {
+  jobs: [generateReport],
+  queues: {
+    test: true
+  },
+  clock: {
+    now: () => new Date('2026-06-19T09:16:00.000Z')
+  }
+});
 
-`testState` exposes safe frozen data from Cricket's runtime:
-
-- `report()` returns the current report object.
-- `events(filter?)` returns lifecycle events.
-- `logs(filter?)` returns structured log records.
-- `requests(filter?)` returns terminal request records.
-- `request(requestId)` returns one request with route, request, response,
-  timings, and replay.
-- `trace(requestId)` returns the request's events, logs, spans, and timings.
-- `jobs(filter?)` returns job runtime events.
-- `job(jobRunId)` returns one job run with events, logs, and spans.
-- `clear()` clears only the collector. It does not touch app state.
-
-Timings are facts, not budgets. Use them when a test needs to prove a workflow
-used the expected lifecycle path, or when you want to assert that a timing field
-exists for later debugging. Cricket does not decide that your app is "too slow."
-
-The CLI wraps Node's runner with Cricket defaults:
-
-```sh
-pnpm cricket test
-pnpm cricket test test/projects.test.js --grep "creates a project"
-pnpm cricket test --json
-pnpm cricket test --output cricket-test-report.json
+await worker.schedules.tick();
+await worker.drain();
 ```
 
-By default, `cricket test` discovers `api/**/*.test.js`, `src/**/*.test.js`, and
-`test/**/*.test.js`, then runs `node --test`. Use `--reporter cricket|spec|dot|tap`
-for human output, `--coverage` for Node's test coverage, `--concurrency <number>`
-for suites that need serial or bounded execution, `--json` for a Node test
-summary on stdout, and `--output <path>` to write that summary while still
-printing human output.
+`testState` exposes events, logs, request traces, job traces, timings, and
+runtime reports. It does not reset app state for you.
 
 ## CLI
 
 ```sh
 pnpm cricket init app .
+pnpm cricket init agents .
 pnpm cricket new domain project api/domains
 pnpm cricket inspect api/index.js
 pnpm cricket docs api/index.js --out openapi.json
 pnpm cricket migrate latest api/index.js
 pnpm cricket test
-pnpm cricket init agents .
 ```
 
-`init app` creates the small app shell: `api/index.js`, `api/domains/`,
-`api/middleware/`, `api/services/`, `api/workers/`, `api/migrations/`, and
-`api/dev/`.
-
-`new domain` creates the standard files and skips existing files unless
-`--force` is passed.
-
-`inspect` prints the loaded domains, model sensitive-field markers, rules,
-services, jobs, route operation IDs, and observability posture for an app
-module.
-
-`docs` writes OpenAPI from the same app module your server runs.
-
-`migrate` runs Knex migrations from the app's `database` contract. The default
-directory is `api/migrations/`; pass `--env name` to run against a specific
-database environment.
-
-`trace` reads newline-delimited JSON logs from stdin and prints a
-human-readable request timeline for one `requestId`, including request timings
-and any recorded spans.
-
-`test` runs Node's built-in test runner with Cricket's file discovery and
-optional JSON report output.
-
-`init agents` writes lightweight guidance for people and agents working inside a
-Cricket app. It augments `AGENTS.md` and installs the repo-local skill at
-`.agents/skills/cricket-api/SKILL.md`.
+`inspect` prints loaded domains, model visibility, rules, services, jobs, route
+operation IDs, and observability posture. `docs` writes OpenAPI from the same
+app module your server runs. `test` wraps Node's built-in test runner with
+Cricket defaults and optional JSON output.
 
 ## Exports
 
@@ -1008,7 +505,6 @@ import {
   defineCricketApp,
   startCricketApp,
   createCricketRuntime,
-  defineJob,
   defineEndpoint,
   deprecateEndpoint,
   defineModel,
@@ -1037,11 +533,11 @@ import {
 Public subpaths are also available:
 
 ```js
-import { createKnexRepository } from '@robdel12/cricket/knex';
-import { generateOpenApi } from '@robdel12/cricket/openapi';
 import { defineCricketApp } from '@robdel12/cricket/app';
 import { loadDomains } from '@robdel12/cricket/domain';
+import { createKnexRepository } from '@robdel12/cricket/knex';
 import { createCricketLogger, normalizeLogger } from '@robdel12/cricket/logger';
+import { generateOpenApi } from '@robdel12/cricket/openapi';
 import { defineSerializer } from '@robdel12/cricket/serializer';
 import { createTestRuntime } from '@robdel12/cricket/test';
 ```

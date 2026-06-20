@@ -101,5 +101,5 @@ Update examples when public contracts change. The examples are part of the API
 surface here, and stale examples will mislead the next real-app pass.
 
 Update `cricket init agents` guidance when the agent workflow changes. The
-generated `AGENTS.md` block and `.agents/skills/cricket-api/SKILL.md` are part
-of Cricket's docs surface, not incidental CLI output.
+generated `AGENTS.md` block and `.agents/skills/cricket*/SKILL.md` files are
+part of Cricket's docs surface, not incidental CLI output.

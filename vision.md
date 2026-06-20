@@ -184,7 +184,7 @@ The CLI should create structure and orientation, not product behavior.
 
 `cricket new domain` scaffolds the standard domain files. `cricket init app`
 scaffolds the small app shell. `cricket init agents` ships project guidance and
-a local Cricket skill so agents learn the same architecture humans use.
+local Cricket skills so agents learn the same architecture humans use.
 
 The generated guidance is documentation. Keep it current when Cricket's public
 contract changes.
