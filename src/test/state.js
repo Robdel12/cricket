@@ -1,43 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-function copyPlain(value, seen = new WeakMap()) {
-  if (!value || typeof value !== 'object')
-    return value;
-
-  if (seen.has(value))
-    return seen.get(value);
-
-  if (Array.isArray(value)) {
-    let copy = [];
-    seen.set(value, copy);
-    copy.push(...value.map(item => copyPlain(item, seen)));
-    return copy;
-  }
-
-  let copy = {};
-  seen.set(value, copy);
-
-  for (let [key, child] of Object.entries(value))
-    copy[key] = copyPlain(child, seen);
-
-  return copy;
-}
-
-function deepFreeze(value, seen = new WeakSet()) {
-  if (!value || typeof value !== 'object' || seen.has(value))
-    return value;
-
-  seen.add(value);
-
-  for (let child of Object.values(value))
-    deepFreeze(child, seen);
-
-  return Object.freeze(value);
-}
-
-function frozenPlain(value) {
-  return deepFreeze(copyPlain(value));
-}
+import { frozenPlain } from '../immutable.js';
 
 function matchesFilter(value, filter = {}) {
   return Object.entries(filter).every(([key, expected]) => value?.[key] === expected);
@@ -81,6 +44,30 @@ function spanRecords(eventItems) {
     .map(spanFromEvent);
 }
 
+function jobFromEvent(event) {
+  return {
+    jobName: event.jobName,
+    jobRunId: event.jobRunId,
+    envelopeId: event.envelopeId,
+    queueName: event.queueName,
+    scheduleKey: event.scheduleKey,
+    scheduledFor: event.scheduledFor,
+    availableAt: event.availableAt,
+    trigger: event.trigger,
+    requestId: event.requestId,
+    type: event.type,
+    attempt: event.attempt,
+    error: event.error,
+    progress: event.progress
+  };
+}
+
+function jobRecords(eventItems) {
+  return eventItems
+    .filter(event => typeof event.type === 'string' && event.type.startsWith('job.'))
+    .map(jobFromEvent);
+}
+
 /**
  * Create an in-memory Cricket test collector.
  *
@@ -90,7 +77,7 @@ function spanRecords(eventItems) {
  * @param {object} [options]
  * @param {number} [options.maxEvents=1000] - Maximum lifecycle events retained.
  * @param {number} [options.maxLogs=1000] - Maximum structured logs retained.
- * @returns {object} Test state inspection API.
+ * @returns {object} Test state inspection API, including request and job views.
  */
 export function createTestState({
   maxEvents = 1000,
@@ -133,6 +120,21 @@ export function createTestState({
       return frozenPlain(requestRecords(eventItems).find(request => request.requestId === requestId));
     },
 
+    jobs(filter) {
+      return frozenPlain(jobRecords(eventItems).filter(job => matchesFilter(job, filter)));
+    },
+
+    job(jobRunId) {
+      let events = eventItems.filter(event => event.jobRunId === jobRunId);
+
+      return frozenPlain({
+        jobRunId,
+        events,
+        spans: spanRecords(eventItems).filter(span => span.context?.jobRunId === jobRunId),
+        logs: logItems.filter(log => log.metadata?.jobRunId === jobRunId)
+      });
+    },
+
     trace(requestId) {
       let request = requestRecords(eventItems).find(item => item.requestId === requestId);
 
@@ -150,6 +152,7 @@ export function createTestState({
       let endedAt = new Date().toISOString();
       let durationMs = Date.parse(endedAt) - Date.parse(run.startedAt);
       let requests = requestRecords(eventItems);
+      let jobs = jobRecords(eventItems);
       let spans = spanRecords(eventItems);
 
       return frozenPlain({
@@ -169,6 +172,7 @@ export function createTestState({
         },
         tests: [],
         requests,
+        jobs,
         spans,
         logs: logItems
       });

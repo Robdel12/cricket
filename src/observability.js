@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import { deepFreeze } from './immutable.js';
+
 function toArray(value) {
   if (!value)
     return [];
@@ -12,18 +14,6 @@ function observerListFrom(config) {
     return [config];
 
   return toArray(config?.observe);
-}
-
-function deepFreeze(value, seen = new WeakSet()) {
-  if (!value || typeof value !== 'object' || seen.has(value))
-    return value;
-
-  seen.add(value);
-
-  for (let child of Object.values(value))
-    deepFreeze(child, seen);
-
-  return Object.freeze(value);
 }
 
 function freezeEvent(event) {

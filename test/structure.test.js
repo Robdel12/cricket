@@ -178,8 +178,20 @@ describe('Cricket CLI', () => {
     assert.match(result.stdout, /Next/);
 
     let agents = await fs.readFile(path.join(root, 'AGENTS.md'), 'utf8');
-    let skill = await fs.readFile(
-      path.join(root, '.agents', 'skills', 'cricket-api', 'SKILL.md'),
+    let cricketSkill = await fs.readFile(
+      path.join(root, '.agents', 'skills', 'cricket', 'SKILL.md'),
+      'utf8'
+    );
+    let jobsSkill = await fs.readFile(
+      path.join(root, '.agents', 'skills', 'cricket-jobs', 'SKILL.md'),
+      'utf8'
+    );
+    let observabilitySkill = await fs.readFile(
+      path.join(root, '.agents', 'skills', 'cricket-observability', 'SKILL.md'),
+      'utf8'
+    );
+    let testingSkill = await fs.readFile(
+      path.join(root, '.agents', 'skills', 'cricket-testing', 'SKILL.md'),
       'utf8'
     );
 
@@ -187,22 +199,48 @@ describe('Cricket CLI', () => {
     assert.match(agents, /Cricket App Guidance/);
     assert.match(agents, /App Shape/);
     assert.match(agents, /Domain Shape/);
+    assert.match(agents, /Jobs/);
     assert.match(agents, /\*\.normalizers\.js/);
+    assert.match(agents, /\*\.jobs\.js/);
     assert.match(agents, /api\/middleware/);
     assert.match(agents, /api\/services/);
     assert.match(agents, /api\/workers/);
     assert.match(agents, /api\/migrations/);
     assert.match(agents, /api\/dev/);
     assert.match(agents, /lifecycle/);
+    assert.match(agents, /defineJob/);
+    assert.match(agents, /cronSchedule/);
+    assert.match(agents, /createCricketJobs/);
+    assert.match(agents, /startCricketWorker/);
+    assert.match(agents, /jobFailure/);
+    assert.match(agents, /cricket_jobs/);
     assert.match(agents, /\*\.test\.js/);
-    assert.match(skill, /name: cricket-api/);
-    assert.match(skill, /OpenAPI generation/);
-    assert.match(skill, /normalizers/);
-    assert.match(skill, /api\/middleware/);
-    assert.match(skill, /api\/workers/);
-    assert.match(skill, /api\/dev/);
-    assert.match(skill, /read-only runtime lifecycle/);
-    assert.match(skill, /domain-local `\*\.test\.js`/);
+    assert.match(agents, /worker boundary/);
+    assert.match(cricketSkill, /name: cricket/);
+    assert.match(cricketSkill, /Domain Files/);
+    assert.match(cricketSkill, /normalizers/);
+    assert.match(cricketSkill, /\*\.jobs\.js/);
+    assert.match(cricketSkill, /OpenAPI/);
+    assert.match(cricketSkill, /cricket-jobs/);
+    assert.match(cricketSkill, /cricket-observability/);
+    assert.match(cricketSkill, /cricket-testing/);
+    assert.match(cricketSkill, /pnpm cricket init agents/);
+    assert.match(jobsSkill, /name: cricket-jobs/);
+    assert.match(jobsSkill, /defineJob/);
+    assert.match(jobsSkill, /cronSchedule/);
+    assert.match(jobsSkill, /createCricketJobs/);
+    assert.match(jobsSkill, /startCricketWorker/);
+    assert.match(jobsSkill, /jobFailure/);
+    assert.match(jobsSkill, /cricket_jobs/);
+    assert.match(jobsSkill, /Redis coordinates hot execution/);
+    assert.match(observabilitySkill, /name: cricket-observability/);
+    assert.match(observabilitySkill, /cricket trace/);
+    assert.match(observabilitySkill, /lifecycle/);
+    assert.match(observabilitySkill, /trace\.span/);
+    assert.match(testingSkill, /name: cricket-testing/);
+    assert.match(testingSkill, /createTestRuntime/);
+    assert.match(testingSkill, /worker boundary/);
+    assert.match(testingSkill, /worker\.schedules\.tick/);
   });
 
   it('augments existing agent guidance without duplicating Cricket notes', async () => {

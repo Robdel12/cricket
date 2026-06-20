@@ -84,7 +84,7 @@ function normalizeKnexConfig(database) {
 }
 
 /**
- * Normalize the app-owned Knex config that Cricket uses for runtime and CLI work.
+ * Normalize the app Knex config that Cricket uses for runtime and CLI work.
  *
  * Cricket accepts either one Knex config or a small environment map. The
  * environment map exists so apps can declare database environments once while
@@ -193,7 +193,7 @@ export function knexConfigForDatabase(database, {
 }
 
 /**
- * Create the Knex handle Cricket owns for runtime or CLI work.
+ * Create the Knex handle Cricket uses for runtime or CLI work.
  *
  * @param {object} database - Normalized database config.
  * @param {object} [options]
