@@ -39,6 +39,9 @@ That skill suite is part of Cricket's docs surface. It exists because Cricket is
 meant to be easy for agents to use correctly while humans drive the product
 decisions.
 
+In this repo, the canonical scaffolded guidance lives in
+`src/templates/agents/`, including each skill's real `SKILL.md` file.
+
 ## Principles
 
 - Keep data plain: objects in, objects out.

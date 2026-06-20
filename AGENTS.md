@@ -72,8 +72,8 @@ obvious in every change.
   orientation, and commands.
 - The CLI-scaffolded agent guidance is documentation. When public framework
   contracts change, update the `cricket init agents` templates in
-  `src/structure.js` and the scaffold tests alongside `README.md`, `vision.md`,
-  and examples.
+  `src/templates/agents/` and the scaffold tests alongside `README.md`,
+  `vision.md`, and examples.
 - Treat LLM/agent readability as a first-class design concern: predictable
   filenames, predictable exports, small pure functions, explicit dependencies,
   and tests through the API boundary.
