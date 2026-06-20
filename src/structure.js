@@ -437,7 +437,7 @@ worker, and deploy readiness.
 - \`*.rules.js\` owns auth, existence, ownership, and business preconditions.
 - \`*.routes.js\` owns endpoint contracts.
 - \`*.jobs.js\` owns background job contracts for validated asynchronous work.
-- \`*.test.js\` tests endpoint behavior through HTTP.
+- \`*.test.js\` tests endpoint behavior through HTTP and job behavior through the worker boundary.
 
 The folder is the domain. Keep services boring, rules named, and routes thin.
 Keep HTTP request behavior in \`middleware/\`, not in rules. Keep app-wide clients
@@ -455,7 +455,8 @@ local-only.
 ## Jobs
 
 Use \`defineJob\` for asynchronous work that needs validated input, retry policy,
-Redis coordination, and the same services/logger/trace/lifecycle shape as HTTP.
+Redis coordination, and the same services/logger/trace/lifecycle/jobs/progress
+capabilities as HTTP.
 Keep job contracts in domain-local \`*.jobs.js\` files when the work belongs to
 one domain.
 
@@ -527,7 +528,7 @@ The folder is the domain. Optional files stay optional, but standard filenames s
 
 ## Jobs
 
-Use \`defineJob\` when work should leave the request path and still keep Cricket's contract shape: validated input, immutable envelopes, retry policy, structured logs, traces, services, lifecycle, and progress.
+Use \`defineJob\` when work should leave the request path and still keep Cricket's contract shape: validated input, immutable envelopes, retry policy, structured logs, traces, services, lifecycle, jobs, and progress.
 
 Redis coordinates hot execution: queues, wakeups, leases, attempts, delayed availability, schedule materialization, and progress. App-owned tables keep product truth. The \`cricket_jobs\` table is a Cricket execution ledger for debugging and operator visibility, not the domain state model.
 
@@ -554,6 +555,7 @@ Use \`createCricketJobs\` for producer entrypoints that enqueue work without sta
 
 \`\`\`sh
 pnpm cricket init app .
+pnpm cricket init agents .
 pnpm cricket inspect api/index.js
 pnpm cricket docs api/index.js --out openapi.json
 pnpm cricket migrate status api/index.js

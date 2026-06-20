@@ -62,12 +62,13 @@ api/domains/project/
   project.service.js      data and product operations
   project.rules.js        auth, existence, ownership, business guards
   project.routes.js       endpoint contracts
+  project.jobs.js         background job contracts
   project.test.js         HTTP-boundary endpoint tests
 ```
 
 The folder is the domain. Cricket auto-loads the standard files from your domain
 root, then wires the files that exist. Models, validations, normalizers,
-serializers, services, rules, and routes are standard homes, not mandatory
+serializers, services, rules, routes, and jobs are standard homes, not mandatory
 paperwork.
 
 Extra files are fine when a domain needs them. Keep the standard files as the
@@ -653,7 +654,7 @@ import {
   startCricketWorker,
   state
 } from '@robdel12/cricket/jobs';
-import { z } from 'zod';
+import { z } from '@robdel12/cricket';
 
 export let generateReport = defineJob({
   name: 'reports.generate',
@@ -875,7 +876,7 @@ export async function up(db) {
 }
 
 export async function down(db) {
-  await db.schema.dropTable('cricket_jobs');
+  await db.schema.dropTableIfExists('cricket_jobs');
 }
 ```
 
@@ -1021,8 +1022,11 @@ import {
 } from '@robdel12/cricket';
 
 import {
+  concurrency,
   createCricketJobs,
   createJobLedgerTable,
+  cronSchedule,
+  defineJob,
   jobFailure,
   redisQueue,
   retry,

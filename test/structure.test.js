@@ -203,6 +203,7 @@ describe('Cricket CLI', () => {
     assert.match(agents, /jobFailure/);
     assert.match(agents, /cricket_jobs/);
     assert.match(agents, /\*\.test\.js/);
+    assert.match(agents, /worker boundary/);
     assert.match(skill, /name: cricket-api/);
     assert.match(skill, /OpenAPI generation/);
     assert.match(skill, /normalizers/);
@@ -219,6 +220,7 @@ describe('Cricket CLI', () => {
     assert.match(skill, /api\/dev/);
     assert.match(skill, /read-only runtime lifecycle/);
     assert.match(skill, /domain-local `\*\.test\.js`/);
+    assert.match(skill, /pnpm cricket init agents/);
   });
 
   it('augments existing agent guidance without duplicating Cricket notes', async () => {
