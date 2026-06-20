@@ -23,10 +23,12 @@ function parseLine(buffer, offset) {
 }
 
 function parseResp(buffer, offset = 0) {
-  let type = buffer[offset];
+  let typeByte = buffer[offset];
 
-  if (!type)
+  if (typeByte === undefined)
     return undefined;
+
+  let type = String.fromCharCode(typeByte);
 
   if (type === '+' || type === '-') {
     let line = parseLine(buffer, offset + 1);
@@ -36,7 +38,10 @@ function parseResp(buffer, offset = 0) {
     if (type === '-')
       throw new Error(line.value.toString('utf8'));
 
-    return line;
+    return {
+      value: line.value,
+      offset: line.offset
+    };
   }
 
   if (type === ':') {
