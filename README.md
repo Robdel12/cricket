@@ -83,19 +83,20 @@ Use one folder per domain.
 
 ```text
 api/domains/project/
-  project.model.js        row contracts and visibility
-  project.validations.js  request/source/service input schemas
-  project.normalizers.js  outside payload projections
-  project.serializers.js  API output projections
-  project.service.js      data and product operations
-  project.rules.js        auth, existence, ownership, business guards
-  project.routes.js       endpoint contracts
-  project.jobs.js         background job contracts
-  project.test.js         HTTP and worker-boundary tests
+  schema.model.js         row contracts and visibility
+  input.validations.js    request/source/service input schemas
+  source.normalizers.js   outside payload projections
+  output.serializers.js   API output projections
+  domain.service.js       data and product operations
+  access.rules.js         auth, existence, ownership, business guards
+  http.routes.js          endpoint contracts
+  *.jobs.js               background job contracts
+  behavior.test.js        HTTP and worker-boundary tests
 ```
 
-The folder is the domain. Cricket auto-loads the standard files that exist.
-Optional files stay optional, but standard names should stay predictable.
+The folder is the domain. Cricket auto-loads direct domain-local files by
+suffix, such as `*.model.js`, `*.routes.js`, and `*.jobs.js`. Optional files
+stay optional, and filenames can describe the slice they contain.
 
 ## App Entry
 
@@ -198,7 +199,7 @@ into API output shapes. Both should be pure.
 
 ```js
 import { defineSerializer, pickFields } from '@robdel12/cricket';
-import { Project } from './project.model.js';
+import { Project } from './schema.model.js';
 
 export let serializeProjectPublic = defineSerializer({
   name: 'project.public',
@@ -212,8 +213,8 @@ Services do data and product work without knowing about HTTP:
 ```js
 import { randomUUID } from 'node:crypto';
 import { createKnexRepository } from '@robdel12/cricket';
-import { Project } from './project.model.js';
-import { ProjectInsert } from './project.validations.js';
+import { Project } from './schema.model.js';
+import { ProjectInsert } from './input.validations.js';
 
 export function createProjectService({ db }) {
   let projects = createKnexRepository({
@@ -240,10 +241,10 @@ handlers, serializers, response contracts, and docs metadata.
 
 ```js
 import { created, defineEndpoint, z } from '@robdel12/cricket';
-import { Project } from './project.model.js';
-import { serializeProjectPublic } from './project.serializers.js';
-import { ProjectCreateInput } from './project.validations.js';
-import { requireUser, slugAvailable } from './project.rules.js';
+import { Project } from './schema.model.js';
+import { serializeProjectPublic } from './output.serializers.js';
+import { ProjectCreateInput } from './input.validations.js';
+import { requireUser, slugAvailable } from './access.rules.js';
 
 export let createProject = defineEndpoint({
   method: 'post',
@@ -405,7 +406,7 @@ Worker entrypoints execute jobs:
 ```js
 import { startCricketWorker } from '@robdel12/cricket/jobs';
 import { app } from '../index.js';
-import { generateReport } from '../domains/reports/reports.jobs.js';
+import { generateReport } from '../domains/reports/reporting.jobs.js';
 
 let worker = await startCricketWorker(app, {
   queues: {

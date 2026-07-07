@@ -59,15 +59,15 @@ app is the same.
 The domain folder is Cricket's core contract:
 
 ```text
-project.model.js
-project.validations.js
-project.normalizers.js
-project.serializers.js
-project.service.js
-project.rules.js
-project.routes.js
-project.jobs.js
-project.test.js
+schema.model.js
+input.validations.js
+source.normalizers.js
+output.serializers.js
+domain.service.js
+access.rules.js
+http.routes.js
+*.jobs.js
+behavior.test.js
 ```
 
 Each file has one job:
@@ -83,8 +83,9 @@ Each file has one job:
 - `jobs` defines validated asynchronous work.
 - `test` proves behavior at the API or worker boundary.
 
-Domains can use only the files they earn. Optional files stay optional, but the
-standard names should stay predictable.
+Domains can use only the files they earn. Optional files stay optional, and
+domain-local filenames can describe the slice they contain as long as they keep
+Cricket's standard suffixes.
 
 ## Runtime
 

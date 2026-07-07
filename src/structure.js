@@ -49,8 +49,21 @@ function fileNameFor(fileStem, type) {
   return `${fileStem}.${type}.js`;
 }
 
+function scaffoldFileStemFor(type) {
+  return {
+    model: 'schema',
+    validations: 'input',
+    normalizers: 'source',
+    serializers: 'output',
+    service: 'domain',
+    rules: 'access',
+    routes: 'http',
+    test: 'behavior'
+  }[type];
+}
+
 function domainFilePath(domainRoot, fileStem, type) {
-  return path.join(domainRoot, fileNameFor(fileStem, type));
+  return path.join(domainRoot, fileNameFor(scaffoldFileStemFor(type) ?? fileStem, type));
 }
 
 function modelTemplate({ pascalName, tableName }) {
@@ -78,13 +91,13 @@ export let ${pascalName}CreateInput = z.object({});
 `;
 }
 
-function serializersTemplate({ fileStem, pascalName }) {
+function serializersTemplate({ pascalName }) {
   return `import {
   defineSerializer,
   pickFields
 } from '@robdel12/cricket';
 
-import { ${pascalName} } from './${fileStem}.model.js';
+import { ${pascalName} } from './schema.model.js';
 
 export let serialize${pascalName}Public = defineSerializer({
   name: '${pascalName}.public',
