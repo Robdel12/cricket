@@ -25,6 +25,10 @@ function availableNow(envelope, now) {
   return new Date(envelope.availableAt ?? envelope.createdAt) <= new Date(now ?? envelope.createdAt);
 }
 
+function timestamp(now = new Date()) {
+  return now instanceof Date ? now.toISOString() : String(now);
+}
+
 /**
  * Create an in-memory queue driver for Cricket job tests.
  *
@@ -63,7 +67,9 @@ export function createTestQueueDriver() {
         envelope,
         status: availableNow(envelope) ? 'queued' : 'delayed',
         attempts: 0,
-        progress: []
+        logs: [],
+        progress: [],
+        spans: []
       });
       record('queued', envelope);
 
@@ -82,6 +88,11 @@ export function createTestQueueDriver() {
 
       item.status = 'active';
       item.attempts += 1;
+      item.startedAt = timestamp();
+      item.lastHeartbeatAt = timestamp();
+      item.logs = [];
+      item.progress = [];
+      item.spans = [];
       record('claimed', item.envelope, {
         attempt: item.attempts
       });
@@ -96,7 +107,10 @@ export function createTestQueueDriver() {
       let item = itemFor(items, envelope);
 
       if (item)
-        item.progress.push(progress);
+        item.progress.push({
+          progress,
+          timestamp: timestamp()
+        });
 
       record('progressed', envelope, {
         progress
@@ -106,12 +120,21 @@ export function createTestQueueDriver() {
     async complete(envelope, result) {
       let item = itemFor(items, envelope);
 
+      if (item?.status !== 'active')
+        return frozenPlain({
+          settled: false
+        });
+
       if (item) {
         item.status = 'completed';
         item.result = result;
+        item.finishedAt = timestamp();
       }
 
       record('completed', envelope);
+      return frozenPlain({
+        settled: true
+      });
     },
 
     async fail(envelope, error) {
@@ -121,23 +144,92 @@ export function createTestQueueDriver() {
         message: error?.message
       };
 
+      if (item?.status !== 'active')
+        return frozenPlain({
+          settled: false
+        });
+
       if (item) {
         item.status = 'failed';
         item.error = failure;
+        item.finishedAt = timestamp();
       }
 
       record('failed', envelope, {
         error: failure
+      });
+      return frozenPlain({
+        settled: true
       });
     },
 
     async retry(envelope) {
       let item = itemFor(items, envelope);
 
-      if (item)
+      if (item?.status !== 'active')
+        return frozenPlain({
+          settled: false
+        });
+
+      if (item) {
         item.status = 'queued';
+        item.startedAt = undefined;
+      }
 
       record('retry_scheduled', envelope);
+      return frozenPlain({
+        settled: true
+      });
+    },
+
+    async heartbeat(envelope, {
+      now = new Date()
+    } = {}) {
+      let item = itemFor(items, envelope);
+
+      if (item)
+        item.lastHeartbeatAt = timestamp(now);
+    },
+
+    async recordLog(envelope, log) {
+      let item = itemFor(items, envelope);
+
+      if (item)
+        item.logs.push({
+          ...log,
+          timestamp: log.timestamp ?? timestamp()
+        });
+    },
+
+    async recordSpan(envelope, span) {
+      let item = itemFor(items, envelope);
+
+      if (item)
+        item.spans.push({
+          ...span,
+          timestamp: span.timestamp ?? timestamp()
+        });
+    },
+
+    async recoveryCandidates() {
+      return frozenPlain(items
+        .filter(item => item.status === 'active')
+        .map(item => ({
+          envelope: item.envelope,
+          attempt: item.attempts,
+          startedAt: item.startedAt,
+          lastHeartbeatAt: item.lastHeartbeatAt,
+          leaseActive: true,
+          logs: item.logs,
+          spans: item.spans,
+          progress: item.progress,
+          ledger: {
+            status: item.status,
+            attempts: item.attempts,
+            startedAt: item.startedAt,
+            updatedAt: item.lastHeartbeatAt
+          }
+        })));
     },
 
     async promoteDelayed({

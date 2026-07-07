@@ -122,9 +122,9 @@ start or invent a second database abstraction.
 Jobs are Cricket contracts for background work.
 
 A job should be an immutable envelope with validated input, explicit context,
-queue metadata, retry policy, observable execution, and a plain `run` function.
-Job code should receive the same app capabilities as HTTP handlers: services,
-logger, trace, lifecycle, jobs, and progress.
+queue metadata, retry policy, observable execution, recovery policy, and a
+plain `run` function. Job code should receive the same app capabilities as HTTP
+handlers: services, logger, trace, lifecycle, jobs, and progress.
 
 Redis coordinates hot execution: queues, wakeups, leases, attempts, idempotency,
 delayed availability, schedule materialization, and short-lived progress. The
@@ -136,10 +136,15 @@ timezone, enablement rule, and input for each due slot. Cricket uses a thin cron
 parser for schedule math, then materializes due slots into normal immutable job
 envelopes. No separate app cron sidecars.
 
+Recovery is a job-owned decision over normal Cricket signals: run state,
+ledger, logs, spans, and progress. Cricket keeps those facts available and
+executes the returned decision. The app defines what stuck, dead, or out of
+bounds means.
+
 Failure handling is first-class because retries are where framework truth and
 product truth drift. Retry policy decides whether Cricket schedules another
-attempt. `jobFailure({ retrying, exhausted })` lets app code sync product
-records after that decision without knowing Redis internals.
+attempt after thrown errors. `jobFailure({ retrying, exhausted })` lets app code
+sync product records after that decision without knowing Redis internals.
 
 ## Observability
 

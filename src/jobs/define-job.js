@@ -13,6 +13,7 @@ let jobOptionKeys = new Set([
   'queue',
   'retry',
   'failure',
+  'recover',
   'concurrency',
   'state',
   'schedule',
@@ -62,6 +63,11 @@ function assertFailure(failure) {
     throw new Error('defineJob failure must be a jobFailure contract');
 }
 
+function assertRecover(recover) {
+  if (recover !== undefined && typeof recover !== 'function')
+    throw new Error('defineJob recover must be a function');
+}
+
 export function isJobContract(value) {
   return value &&
     typeof value === 'object' &&
@@ -85,6 +91,7 @@ export function isJobContract(value) {
  * @param {object} [options.queue] - Queue contract, usually `redisQueue(...)`.
  * @param {object} [options.retry] - Retry policy, usually `retry.exponential(...)`.
  * @param {object} [options.failure] - Failure handlers, usually `jobFailure(...)`.
+ * @param {Function} [options.recover] - Pure recovery decision over job logs, spans, progress, ledger, and run state.
  * @param {object|object[]} [options.concurrency] - Concurrency policy or policies.
  * @param {object} [options.state] - Inspect metadata for where product truth lives.
  * @param {object} [options.schedule] - Schedule metadata that produces normal envelopes.
@@ -102,6 +109,7 @@ export function defineJob(options = {}) {
     queue,
     retry,
     failure,
+    recover,
     concurrency,
     state,
     schedule,
@@ -124,6 +132,7 @@ export function defineJob(options = {}) {
 
   assertSchedule(schedule);
   assertFailure(failure);
+  assertRecover(recover);
 
   let job = {
     kind: 'cricket.job',
@@ -147,6 +156,9 @@ export function defineJob(options = {}) {
 
   if (failure)
     job.failure = failure;
+
+  if (recover)
+    job.recover = recover;
 
   if (state)
     job.state = state;

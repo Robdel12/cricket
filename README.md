@@ -292,9 +292,9 @@ app definition your server uses.
 ## Jobs
 
 Jobs are Cricket contracts for background work. Use them when work needs
-validated input, immutable envelopes, Redis coordination, retry policy,
-scheduled execution, failure handling, logs, traces, progress, and the same
-services your HTTP handlers use.
+validated input, immutable envelopes, Redis coordination, scheduled execution,
+recovery, failure handling, logs, traces, progress, and the same services your
+HTTP handlers use.
 
 ```js
 import { z } from '@robdel12/cricket';
@@ -323,6 +323,36 @@ export let generateReport = defineJob({
     delayMs: 2_000,
     maxDelayMs: 60_000
   }),
+  recover({ run, logs, progress }) {
+    if (run.heartbeatAgeMs > 2 * 60_000)
+      return {
+        action: 'retry',
+        reason: {
+          code: 'heartbeat_stale',
+          message: 'worker heartbeat is stale'
+        }
+      };
+
+    if (run.ageMs > 5 * 60_000 && !logs.seen('report.started', { within: '5 minutes' }))
+      return {
+        action: 'retry',
+        reason: {
+          code: 'report_never_started',
+          message: 'report job never started'
+        }
+      };
+
+    if (run.ageMs > 10 * 60_000 && !progress.seen({ within: '10 minutes' }))
+      return {
+        action: 'retry',
+        reason: {
+          code: 'report_not_advancing',
+          message: 'report job stopped reporting progress'
+        }
+      };
+
+    return { action: 'continue' };
+  },
   failure: jobFailure({
     async exhausted({ input, failure, services }) {
       await services.reports.markFailed({
@@ -340,7 +370,10 @@ export let generateReport = defineJob({
       accountId: 'system'
     })
   }),
-  async run({ input, services, trace, progress }) {
+  async run({ input, logger, services, trace, progress }) {
+    logger.info('report.started', {
+      reportId: input.reportId
+    });
     await progress.update({ current: 1, total: 1 });
     return trace.span('reports.generate', {
       accountId: input.accountId
@@ -402,6 +435,20 @@ export async function down(db) {
 
 The ledger is execution history for debugging and operators. It is not product
 state.
+
+Recovery is app-owned. Cricket keeps the worker heartbeat fresh and records the
+job's normal logs, spans, progress, ledger row, and run state. Your `recover`
+function reads those facts and returns a plain decision:
+
+```js
+return { action: 'continue' };
+return { action: 'retry', reason: { code: 'worker_lost' } };
+return { action: 'fail', reason: { code: 'outside_business_window' } };
+```
+
+Use logs for domain breadcrumbs, `trace.span()` for timed work, and
+`progress.update()` for human-readable progress. Cricket does not define
+"stuck" for you. The job does.
 
 ## Observability
 

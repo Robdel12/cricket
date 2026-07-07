@@ -54,7 +54,7 @@ The folder is the domain. Optional files stay optional, but standard filenames s
 
 ## Focused Skills
 
-- Use `cricket-jobs` for background work, scheduling, retries, worker entrypoints, and the `cricket_jobs` ledger.
+- Use `cricket-jobs` for background work, scheduling, recovery, retries, worker entrypoints, and the `cricket_jobs` ledger.
 - Use `cricket-observability` for logging, tracing, lifecycle, request/job inspection, and `cricket trace`.
 - Use `cricket-testing` for HTTP-boundary tests, worker-boundary job tests, test state, and Cricket's test CLI.
 

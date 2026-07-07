@@ -1,6 +1,6 @@
 ---
 name: cricket-jobs
-description: Build, review, or test Cricket jobs. Use when working with defineJob, redisQueue, retry, jobFailure, cronSchedule, createCricketJobs, startCricketWorker, worker entrypoints, job ledgers, scheduled work, delayed work, or background processing in a Cricket app.
+description: Build, review, or test Cricket jobs. Use when working with defineJob, redisQueue, retry, recover, jobFailure, cronSchedule, createCricketJobs, startCricketWorker, worker entrypoints, job ledgers, scheduled work, delayed work, or background processing in a Cricket app.
 ---
 
 # Cricket Jobs Skill
@@ -10,7 +10,7 @@ Use this when work leaves the request path but should keep Cricket's contract sh
 ## Shape
 
 - Put jobs in `api/domains/<domain>/<domain>.jobs.js` when the work belongs to one domain.
-- Use `defineJob` with validated `input`, optional `context`, queue metadata, retry policy, failure handlers, state metadata, and a plain `run`.
+- Use `defineJob` with validated `input`, optional `context`, queue metadata, retry policy, recovery policy, failure handlers, state metadata, and a plain `run`.
 - Keep product truth in app tables and services. Redis coordinates hot execution: queues, wakeups, leases, attempts, delayed availability, schedules, and progress.
 - Add `cricket_jobs` with `createJobLedgerTable` in an app migration when the app uses a Cricket database. Treat it as execution history, not product state.
 
@@ -34,3 +34,11 @@ Use this when work leaves the request path but should keep Cricket's contract sh
 - Use `jobFailure({ retrying, exhausted })` when product records need to follow retry decisions.
 - Failure handlers receive app capabilities plus `error`, `failure`, `envelope`, and `attempt`. Keep them focused on product state sync.
 - If failure handlers throw, Cricket logs that handler failure and keeps the original job failure as the important error.
+
+## Recovery
+
+- Use `recover({ run, ledger, logs, spans, progress, now })` when active jobs need app-owned recovery decisions.
+- Return plain decisions: `{ action: 'continue' }`, `{ action: 'retry', reason: { code, message } }`, or `{ action: 'fail', reason: { code, message } }`.
+- Define stuck/dead/out-of-bounds in the job. Cricket provides the facts; the app decides what they mean.
+- Use normal `logger.info(...)`, `trace.span(...)`, and `progress.update(...)` in `run`. Do not create separate recovery-only signaling.
+- Keep recovery pure. It should inspect facts and return a decision, not write product state directly.
