@@ -16,9 +16,9 @@ Cricket provides the architecture. Your app defines the behavior.
 First-class means scaffolded, documented, inspectable, and agent-readable. It does not mean Cricket takes over auth policy, table design, product data policy, local tooling, or deployment.
 
 Cricket passes runtime capabilities such as `lifecycle`, `logger`, `services`,
-and `trace` through setup, middleware, context, handlers, workers, and shutdown
-hooks. Product health checks may read `lifecycle`, but they still own database,
-worker, and deploy readiness.
+`trace`, `jobs`, and `progress` through setup, middleware, context, handlers,
+workers, and shutdown hooks. Product health checks may read `lifecycle`, but
+they still own database, worker, and deploy readiness.
 
 ## Domain Shape
 
@@ -48,8 +48,8 @@ local-only.
 ## Jobs
 
 Use `defineJob` for asynchronous work that needs validated input, retry policy,
-Redis coordination, and the same services/logger/trace/lifecycle/jobs/progress
-capabilities as HTTP.
+recovery policy, Redis coordination, and the same
+services/logger/trace/lifecycle/jobs/progress capabilities as HTTP.
 Keep job contracts in domain-local `*.jobs.js` files when the work belongs to
 one domain.
 
@@ -65,6 +65,12 @@ clock and `worker.schedules.tick()`.
 Use `jobFailure({ retrying, exhausted })` when product records need to follow
 retry decisions. The handlers run after Cricket has scheduled a retry or marked
 the envelope failed, and they receive app capabilities instead of Redis objects.
+
+Use `recover({ run, ledger, logs, spans, progress, now })` when active jobs need
+app-owned recovery. Cricket provides normal job facts; the job decides whether
+to `{ action: 'continue' }`, `{ action: 'retry' }`, or `{ action: 'fail' }`.
+Use normal `logger.info(...)`, `trace.span(...)`, and `progress.update(...)` as
+the signals recovery reads.
 
 Use `createCricketJobs` in producers that only enqueue work. Use
 `startCricketWorker` in `api/workers/` entrypoints that execute work, then

@@ -9,6 +9,11 @@ import { planJobEnvelope } from './envelope.js';
 import { createRedisQueueDriver } from './drivers/redis.js';
 import { createJobLedger } from './ledger.js';
 import {
+  createRecoverySnapshot,
+  errorFromRecoveryDecision,
+  normalizeRecoveryDecision
+} from './recovery.js';
+import {
   planCronSchedule,
   previousCronRun
 } from './schedule.js';
@@ -27,6 +32,7 @@ function jobsByName(jobs) {
 
 function safeError(error) {
   return {
+    ...(error?.code ? { code: error.code } : {}),
     ...(error?.name ? { name: error.name } : {}),
     ...(error?.message ? { message: error.message } : {})
   };
@@ -122,6 +128,106 @@ function failureContext({
     lifecycle: runtime.lifecycle,
     jobs: jobsCapability,
     progress
+  };
+}
+
+function createFailureHandler({
+  envelope,
+  attempt,
+  job,
+  jobRun,
+  runtime,
+  logger,
+  trace,
+  jobsCapability,
+  progress,
+  emitJobEvent
+}) {
+  return async function runFailureHandler(phase, error) {
+    let handler = job.failure?.[phase];
+
+    if (!handler)
+      return;
+
+    let originalError = safeError(error);
+
+    try {
+      await trace.span(`job.failure.${phase} ${job.name}`, {}, () => handler(failureContext({
+        envelope,
+        error,
+        attempt,
+        jobRun,
+        runtime,
+        logger,
+        trace,
+        jobsCapability,
+        progress
+      })));
+    } catch (handlerError) {
+      let failure = safeError(handlerError);
+
+      await emitJobEvent('job.failure_handler_failed', envelope, {
+        jobRunId: jobRun.jobRunId,
+        attempt,
+        phase,
+        error: failure,
+        originalError
+      });
+      logger.error('job.failure_handler_failed', {
+        phase,
+        error: handlerError,
+        originalError
+      });
+    }
+  };
+}
+
+function createRecordingLogger(logger, driver, envelope) {
+  function recordJobLog(level, event, metadata) {
+    driver.recordLog?.(envelope, {
+      level,
+      event,
+      metadata
+    })?.catch?.(() => {});
+  }
+
+  function recordJobSpan(event, metadata) {
+    if (event !== 'trace.span.finished' || !metadata?.span)
+      return;
+
+    driver.recordSpan?.(envelope, {
+      ...metadata.span,
+      requestId: metadata.requestId,
+      route: metadata.route
+    })?.catch?.(() => {});
+  }
+
+  function record(level, event, metadata = {}) {
+    recordJobLog(level, event, metadata);
+    recordJobSpan(event, metadata);
+    logger[level]?.(event, metadata);
+  }
+
+  return {
+    debug(event, metadata) {
+      record('debug', event, metadata);
+    },
+
+    info(event, metadata) {
+      record('info', event, metadata);
+    },
+
+    warn(event, metadata) {
+      record('warn', event, metadata);
+    },
+
+    error(event, metadata) {
+      record('error', event, metadata);
+    },
+
+    child(metadata = {}) {
+      return createRecordingLogger(logger.child(metadata), driver, envelope);
+    }
   };
 }
 
@@ -310,6 +416,68 @@ export async function startCricketWorker(cricketApp, {
     clock
   });
 
+  async function retryJob({
+    envelope,
+    attempt,
+    error,
+    logger,
+    jobRunId,
+    runFailureHandler
+  }) {
+    let failure = safeError(error);
+
+    let result = await driver.retry(envelope, error);
+
+    if (result?.settled === false)
+      return false;
+
+    await recordLedger('retrying', envelope, ledger => ledger.retrying(envelope, {
+      attempt,
+      error: failure
+    }));
+    await emitJobEvent('job.retry_scheduled', envelope, {
+      ...(jobRunId ? { jobRunId } : {}),
+      attempt,
+      error: failure
+    });
+    logger.warn('job.retry_scheduled', {
+      error
+    });
+    await runFailureHandler?.('retrying', error);
+    return true;
+  }
+
+  async function failJob({
+    envelope,
+    attempt,
+    error,
+    logger,
+    jobRunId,
+    runFailureHandler
+  }) {
+    let failure = safeError(error);
+
+    let result = await driver.fail(envelope, error);
+
+    if (result?.settled === false)
+      return false;
+
+    await recordLedger('failed', envelope, ledger => ledger.failed(envelope, {
+      attempt,
+      error: failure
+    }));
+    await emitJobEvent('job.failed', envelope, {
+      ...(jobRunId ? { jobRunId } : {}),
+      attempt,
+      error: failure
+    });
+    logger.error('job.failed', {
+      error
+    });
+    await runFailureHandler?.('exhausted', error);
+    return true;
+  }
+
   async function runClaim(claim) {
     let envelope = claim.envelope;
     let job = byName.get(envelope.name);
@@ -318,7 +486,7 @@ export async function startCricketWorker(cricketApp, {
       throw new Error(`No job registered for ${envelope.name}`);
 
     let jobRun = jobRunContext(envelope, `jobrun_${randomUUID()}`);
-    let logger = runtime.logger.child({
+    let logger = createRecordingLogger(runtime.logger.child({
       jobName: job.name,
       jobRunId: jobRun.jobRunId,
       envelopeId: envelope.id,
@@ -327,7 +495,7 @@ export async function startCricketWorker(cricketApp, {
       ...(envelope.scheduleKey ? { scheduleKey: envelope.scheduleKey } : {}),
       ...(envelope.scheduledFor ? { scheduledFor: envelope.scheduledFor } : {}),
       ...(jobRun.requestId ? { requestId: jobRun.requestId } : {})
-    });
+    }), driver, envelope);
     let replay = runtime.observability.createReplay();
     let trace = createTrace({
       logger,
@@ -343,54 +511,37 @@ export async function startCricketWorker(cricketApp, {
       }
     });
     let progress = createProgressCapability(driver, recordLedger, envelope, emitJobEvent);
-
-    async function runFailureHandler(phase, error) {
-      let handler = job.failure?.[phase];
-
-      if (!handler)
-        return;
-
-      let originalError = safeError(error);
-
-      try {
-        await trace.span(`job.failure.${phase} ${job.name}`, {}, () => handler(failureContext({
-          envelope,
-          error,
-          attempt: claim.attempt,
-          jobRun,
-          runtime,
-          logger,
-          trace,
-          jobsCapability,
-          progress
-        })));
-      } catch (handlerError) {
-        let failure = safeError(handlerError);
-
-        await emitJobEvent('job.failure_handler_failed', envelope, {
-          jobRunId: jobRun.jobRunId,
-          attempt: claim.attempt,
-          phase,
-          error: failure,
-          originalError
-        });
-        logger.error('job.failure_handler_failed', {
-          phase,
-          error: handlerError,
-          originalError
-        });
-      }
-    }
+    let runFailureHandler = createFailureHandler({
+      envelope,
+      attempt: claim.attempt,
+      job,
+      jobRun,
+      runtime,
+      logger,
+      trace,
+      jobsCapability,
+      progress,
+      emitJobEvent
+    });
 
     await recordLedger('started', envelope, ledger => ledger.started(envelope, {
       attempt: claim.attempt,
       jobRunId: jobRun.jobRunId
     }));
+    await driver.heartbeat?.(envelope, {
+      now: clock.now()
+    });
     await emitJobEvent('job.started', envelope, {
       jobRunId: jobRun.jobRunId,
       attempt: claim.attempt
     });
     logger.info('job.started');
+    let heartbeat = setInterval(() => {
+      driver.heartbeat?.(envelope, {
+        now: clock.now()
+      })?.catch?.(() => {});
+    }, 15_000);
+    heartbeat.unref?.();
 
     try {
       let result = await trace.span(`job.run ${job.name}`, {}, () => job.run({
@@ -405,7 +556,11 @@ export async function startCricketWorker(cricketApp, {
       }));
       let parsedResult = parseJobResult(job, result);
 
-      await driver.complete(envelope, parsedResult);
+      let settlement = await driver.complete(envelope, parsedResult);
+
+      if (settlement?.settled === false)
+        return undefined;
+
       await recordLedger('completed', envelope, ledger => ledger.completed(envelope, {
         result: parsedResult
       }));
@@ -418,43 +573,149 @@ export async function startCricketWorker(cricketApp, {
       return parsedResult;
     } catch (error) {
       if (shouldRetry(job, error, envelope, claim.attempt)) {
-        let failure = safeError(error);
-
-        await driver.retry(envelope, error);
-        await recordLedger('retrying', envelope, ledger => ledger.retrying(envelope, {
+        await retryJob({
+          envelope,
           attempt: claim.attempt,
-          error: failure
-        }));
-        await emitJobEvent('job.retry_scheduled', envelope, {
           jobRunId: jobRun.jobRunId,
-          attempt: claim.attempt,
-          error: failure
+          error,
+          logger,
+          runFailureHandler
         });
-        logger.warn('job.retry_scheduled', {
-          error
-        });
-        await runFailureHandler('retrying', error);
         return undefined;
       }
 
-      let failure = safeError(error);
-
-      await driver.fail(envelope, error);
-      await recordLedger('failed', envelope, ledger => ledger.failed(envelope, {
+      await failJob({
+        envelope,
         attempt: claim.attempt,
-        error: failure
-      }));
-      await emitJobEvent('job.failed', envelope, {
         jobRunId: jobRun.jobRunId,
-        attempt: claim.attempt,
-        error: failure
+        error,
+        logger,
+        runFailureHandler
       });
-      logger.error('job.failed', {
-        error
-      });
-      await runFailureHandler('exhausted', error);
       throw error;
+    } finally {
+      clearInterval(heartbeat);
     }
+  }
+
+  async function recover({
+    throwOnError = false
+  } = {}) {
+    let results = [];
+    let candidates = await driver.recoveryCandidates?.({
+      now: clock.now()
+    }) ?? [];
+
+    for (let candidate of candidates) {
+      let envelope = candidate.envelope;
+      let job = byName.get(envelope.name);
+
+      if (!job?.recover)
+        continue;
+
+      let now = clock.now();
+      let snapshot = createRecoverySnapshot({
+        candidate,
+        now: now instanceof Date ? now.toISOString() : String(now)
+      });
+      let logger = createRecordingLogger(runtime.logger.child({
+        jobName: job.name,
+        envelopeId: envelope.id,
+        queueName: envelope.queueName,
+        attempt: candidate.attempt
+      }), driver, envelope);
+      let trace = createTrace({
+        logger,
+        replay: runtime.observability.createReplay(),
+        requestId: candidate.jobRunId ?? envelope.context?.requestId ?? envelope.id,
+        context: {
+          jobName: job.name,
+          envelopeId: envelope.id,
+          queueName: envelope.queueName
+        }
+      });
+      let progress = createProgressCapability(driver, recordLedger, envelope, emitJobEvent);
+      let jobRun = {
+        jobRunId: candidate.jobRunId ?? `jobrun_${randomUUID()}`,
+        requestId: envelope.context?.requestId
+      };
+      let runFailureHandler = createFailureHandler({
+        envelope,
+        attempt: candidate.attempt,
+        job,
+        jobRun,
+        runtime,
+        logger,
+        trace,
+        jobsCapability,
+        progress,
+        emitJobEvent
+      });
+
+      try {
+        let decision = normalizeRecoveryDecision(await job.recover({
+          run: snapshot.run,
+          ledger: snapshot.ledger,
+          logs: snapshot.logs,
+          spans: snapshot.spans,
+          progress: snapshot.progress,
+          now,
+          logger,
+          trace
+        }));
+
+        if (decision.action !== 'continue') {
+          await emitJobEvent('job.recovery.decided', envelope, {
+            attempt: candidate.attempt,
+            decision
+          });
+          logger.info('job.recovery.decided', {
+            decision
+          });
+        }
+
+        if (decision.action === 'retry') {
+          let error = errorFromRecoveryDecision(decision);
+
+          await retryJob({
+            envelope,
+            attempt: candidate.attempt,
+            jobRunId: jobRun.jobRunId,
+            error,
+            logger,
+            runFailureHandler
+          });
+        }
+
+        if (decision.action === 'fail') {
+          let error = errorFromRecoveryDecision(decision);
+
+          await failJob({
+            envelope,
+            attempt: candidate.attempt,
+            jobRunId: jobRun.jobRunId,
+            error,
+            logger,
+            runFailureHandler
+          });
+        }
+
+        results.push({
+          envelope,
+          decision
+        });
+      } catch (error) {
+        if (throwOnError)
+          throw error;
+
+        results.push({
+          envelope,
+          error: safeError(error)
+        });
+      }
+    }
+
+    return results;
   }
 
   async function drain({
@@ -597,6 +858,9 @@ export async function startCricketWorker(cricketApp, {
     throwOnError = false
   } = {}) {
     while (!signal?.aborted) {
+      await recover({
+        throwOnError
+      });
       await tickSchedules();
       await drain({
         throwOnError
@@ -637,6 +901,7 @@ export async function startCricketWorker(cricketApp, {
       tick: tickSchedules
     },
     drain,
+    recover,
     run,
     cleanup
   };

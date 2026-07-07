@@ -234,6 +234,18 @@ function progressKey(prefix, id) {
   return keyFor(prefix, 'progress', id);
 }
 
+function logsKey(prefix, id) {
+  return keyFor(prefix, 'logs', id);
+}
+
+function spansKey(prefix, id) {
+  return keyFor(prefix, 'spans', id);
+}
+
+function activeKey(prefix) {
+  return keyFor(prefix, 'active');
+}
+
 function wakeupsKey(prefix) {
   return keyFor(prefix, 'wakeups');
 }
@@ -270,6 +282,18 @@ async function readDuplicateEnvelope(command, duplicateKey, envelope, readEnvelo
 function addQueueName(queues, queueName) {
   if (!queues.includes(queueName))
     queues.push(queueName);
+}
+
+function hashFromRedis(value) {
+  if (!Array.isArray(value))
+    return value ?? {};
+
+  let hash = {};
+
+  for (let index = 0; index < value.length; index += 2)
+    hash[value[index]] = value[index + 1];
+
+  return hash;
 }
 
 /**
@@ -316,6 +340,11 @@ export async function createRedisQueueDriver({
     };
 
     await callRedis('RPUSH', eventsKey(prefix, envelope.id), JSON.stringify(event));
+  }
+
+  async function readList(key) {
+    let values = await callRedis('LRANGE', key, '0', '-1');
+    return (values ?? []).map(value => JSON.parse(value));
   }
 
   async function wakeWorker(envelope) {
@@ -379,18 +408,22 @@ export async function createRedisQueueDriver({
 
     async claim() {
       for (let queueName of queues) {
-        let id = await callRedis('LPOP', queueKey(prefix, queueName));
+        let id = await callRedis('LMOVE', queueKey(prefix, queueName), activeKey(prefix), 'LEFT', 'RIGHT');
 
         if (!id)
           continue;
 
         let envelope = await readEnvelope(id);
-        if (!envelope)
+        if (!envelope) {
+          await callRedis('LREM', activeKey(prefix), '0', id);
           continue;
+        }
 
         let attempt = await callRedis('HINCRBY', runKey(prefix, id), 'attempts', '1');
+        let now = new Date().toISOString();
 
-        await updateRunStatus(id, 'active');
+        await callRedis('DEL', logsKey(prefix, id), spansKey(prefix, id), progressKey(prefix, id));
+        await updateRunStatus(id, 'active', 'startedAt', now, 'lastHeartbeatAt', now);
         await callRedis('SET', leaseKey(prefix, id), 'active', 'EX', '60');
         await writeEvent('claimed', envelope, {
           attempt
@@ -406,32 +439,127 @@ export async function createRedisQueueDriver({
     },
 
     async progress(envelope, progress) {
-      await callRedis('RPUSH', progressKey(prefix, envelope.id), JSON.stringify(progress));
+      await callRedis('RPUSH', progressKey(prefix, envelope.id), JSON.stringify({
+        progress,
+        timestamp: new Date().toISOString()
+      }));
       await writeEvent('progressed', envelope, {
         progress
       });
     },
 
     async complete(envelope, result) {
+      let removed = await callRedis('LREM', activeKey(prefix), '0', envelope.id);
+
+      if (!removed)
+        return frozenPlain({
+          settled: false
+        });
+
       await callRedis('HSET', runKey(prefix, envelope.id), 'status', 'completed', 'result', JSON.stringify(result));
       await callRedis('DEL', leaseKey(prefix, envelope.id));
       await writeEvent('completed', envelope);
+      return frozenPlain({
+        settled: true
+      });
     },
 
     async fail(envelope, error) {
+      let removed = await callRedis('LREM', activeKey(prefix), '0', envelope.id);
+
+      if (!removed)
+        return frozenPlain({
+          settled: false
+        });
+
       await callRedis('HSET', runKey(prefix, envelope.id), 'status', 'failed', 'error', JSON.stringify({
+        code: error?.code,
         name: error?.name,
         message: error?.message
       }));
       await callRedis('DEL', leaseKey(prefix, envelope.id));
       await writeEvent('failed', envelope);
+      return frozenPlain({
+        settled: true
+      });
     },
 
     async retry(envelope) {
+      let removed = await callRedis('LREM', activeKey(prefix), '0', envelope.id);
+
+      if (!removed)
+        return frozenPlain({
+          settled: false
+        });
+
       await updateRunStatus(envelope.id, 'queued');
+      await callRedis('DEL', leaseKey(prefix, envelope.id));
       await callRedis('RPUSH', queueKey(prefix, envelope.queueName), envelope.id);
       await writeEvent('retry_scheduled', envelope);
       await wakeWorker(envelope);
+      return frozenPlain({
+        settled: true
+      });
+    },
+
+    async heartbeat(envelope, {
+      now = new Date()
+    } = {}) {
+      let timestamp = now instanceof Date ? now.toISOString() : String(now);
+
+      await callRedis('HSET', runKey(prefix, envelope.id), 'lastHeartbeatAt', timestamp);
+      await callRedis('SET', leaseKey(prefix, envelope.id), 'active', 'EX', '60');
+    },
+
+    async recordLog(envelope, log) {
+      await callRedis('RPUSH', logsKey(prefix, envelope.id), JSON.stringify({
+        ...log,
+        timestamp: log.timestamp ?? new Date().toISOString()
+      }));
+    },
+
+    async recordSpan(envelope, span) {
+      await callRedis('RPUSH', spansKey(prefix, envelope.id), JSON.stringify({
+        ...span,
+        timestamp: span.timestamp ?? new Date().toISOString()
+      }));
+    },
+
+    async recoveryCandidates() {
+      let ids = await callRedis('LRANGE', activeKey(prefix), '0', '-1');
+      let candidates = [];
+
+      for (let id of ids ?? []) {
+        let envelope = await readEnvelope(id);
+
+        if (!envelope) {
+          await callRedis('LREM', activeKey(prefix), '0', id);
+          continue;
+        }
+
+        let run = hashFromRedis(await callRedis('HGETALL', runKey(prefix, id)));
+        let leaseActive = await callRedis('GET', leaseKey(prefix, id));
+
+        candidates.push(frozenPlain({
+          envelope,
+          attempt: Number(run?.attempts ?? 0),
+          startedAt: run?.startedAt,
+          lastHeartbeatAt: run?.lastHeartbeatAt,
+          leaseActive: Boolean(leaseActive),
+          logs: await readList(logsKey(prefix, id)),
+          spans: await readList(spansKey(prefix, id)),
+          progress: await readList(progressKey(prefix, id)),
+          ledger: {
+            status: run?.status,
+            attempts: Number(run?.attempts ?? 0),
+            startedAt: run?.startedAt,
+            updatedAt: run?.lastHeartbeatAt,
+            error: run?.error ? JSON.parse(run.error) : undefined
+          }
+        }));
+      }
+
+      return frozenPlain(candidates);
     },
 
     async promoteDelayed({

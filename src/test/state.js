@@ -57,6 +57,7 @@ function jobFromEvent(event) {
     requestId: event.requestId,
     type: event.type,
     attempt: event.attempt,
+    decision: event.decision,
     error: event.error,
     progress: event.progress
   };
