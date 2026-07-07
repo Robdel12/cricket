@@ -84,6 +84,10 @@ function collectExported(module, predicate) {
   return [...new Set(exportedValues(module).filter(predicate))];
 }
 
+function collectModuleContracts(modules, predicate) {
+  return [...new Set(modules.flatMap(module => collectExported(module, predicate)))];
+}
+
 function resolveRootPath(root, baseUrl) {
   if (root instanceof URL)
     return fileURLToPath(root);
@@ -96,35 +100,36 @@ function resolveRootPath(root, baseUrl) {
   return path.resolve(basePath, root);
 }
 
-function filePathFor(domainPath, fileStem, type) {
-  return path.join(domainPath, `${fileStem}.${type}.js`);
+async function domainFilePathsFor(domainPath, type) {
+  let entries = await fs.readdir(domainPath, {
+    withFileTypes: true
+  });
+  return entries
+    .filter(entry => entry.isFile() && entry.name.endsWith(`.${type}.js`))
+    .map(entry => path.join(domainPath, entry.name))
+    .sort((left, right) => left.localeCompare(right));
 }
 
 async function hasDomainFile(domainPath) {
-  let fileStem = path.basename(domainPath);
-
   for (let type of domainFileTypes) {
-    try {
-      await fs.access(filePathFor(domainPath, fileStem, type));
+    let filePaths = await domainFilePathsFor(domainPath, type);
+
+    if (filePaths.length > 0)
       return true;
-    } catch {
-      // Keep looking for another standard domain file.
-    }
   }
 
   return false;
 }
 
-async function importOptionalDomainFile(domainPath, fileStem, type) {
-  let filePath = filePathFor(domainPath, fileStem, type);
+async function importDomainFiles(domainPath, type) {
+  let modules = [];
+  let paths = await domainFilePathsFor(domainPath, type);
 
-  try {
-    await fs.access(filePath);
-  } catch {
-    return null;
+  for (let filePath of paths) {
+    modules.push(await import(pathToFileURL(filePath).href));
   }
 
-  return await import(pathToFileURL(filePath).href);
+  return modules;
 }
 
 function serviceFactoryFor(module, {
@@ -153,6 +158,41 @@ function serviceFactoryFor(module, {
   throw new Error(`Cricket domain ${camelName} needs create${pascalName}Service`);
 }
 
+function mergeModuleExports(modules, type, {
+  camelName
+}) {
+  let merged = {};
+
+  for (let module of modules) {
+    for (let [name, value] of Object.entries(module)) {
+      if (Object.hasOwn(merged, name))
+        throw new Error(`Cricket domain ${camelName} has duplicate ${type} export ${name}`);
+
+      merged[name] = value;
+    }
+  }
+
+  return merged;
+}
+
+function serviceFactoriesForModules(modules, {
+  camelName,
+  pascalName
+}) {
+  if (modules.length === 0)
+    return {};
+
+  if (modules.length > 1)
+    throw new Error(`Cricket domain ${camelName} can load one service file`);
+
+  return {
+    [camelName]: serviceFactoryFor(modules[0], {
+      camelName,
+      pascalName
+    })
+  };
+}
+
 async function loadDomainFolder(domainPath) {
   let fileStem = path.basename(domainPath);
   let camelName = toCamelCase(fileStem);
@@ -160,19 +200,15 @@ async function loadDomainFolder(domainPath) {
   let modules = {};
 
   for (let type of domainFileTypes)
-    modules[type] = await importOptionalDomainFile(domainPath, fileStem, type);
+    modules[type] = await importDomainFiles(domainPath, type);
 
-  let models = modules.model ? collectExported(modules.model, isModelContract) : [];
-  let endpoints = modules.routes ? collectExported(modules.routes, isEndpointContract) : [];
-  let jobs = modules.jobs ? collectExported(modules.jobs, isJobContract) : [];
-  let services = {};
-
-  if (modules.service) {
-    services[camelName] = serviceFactoryFor(modules.service, {
-      camelName,
-      pascalName
-    });
-  }
+  let models = collectModuleContracts(modules.model, isModelContract);
+  let endpoints = collectModuleContracts(modules.routes, isEndpointContract);
+  let jobs = collectModuleContracts(modules.jobs, isJobContract);
+  let services = serviceFactoriesForModules(modules.service, {
+    camelName,
+    pascalName
+  });
 
   return {
     name: camelName,
@@ -181,10 +217,10 @@ async function loadDomainFolder(domainPath) {
     models,
     endpoints,
     jobs,
-    validations: modules.validations ?? {},
-    normalizers: modules.normalizers ?? {},
-    rules: modules.rules ?? {},
-    serializers: modules.serializers ?? {},
+    validations: mergeModuleExports(modules.validations, 'validations', { camelName }),
+    normalizers: mergeModuleExports(modules.normalizers, 'normalizers', { camelName }),
+    rules: mergeModuleExports(modules.rules, 'rules', { camelName }),
+    serializers: mergeModuleExports(modules.serializers, 'serializers', { camelName }),
     services
   };
 }

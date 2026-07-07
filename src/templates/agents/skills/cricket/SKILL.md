@@ -38,7 +38,7 @@ Start with `pnpm cricket inspect api/index.js`, then read `api/index.js` and the
 - Put endpoint contracts in `*.routes.js`.
 - Put asynchronous job contracts in `*.jobs.js`.
 
-The folder is the domain. Optional files stay optional, but standard filenames should stay predictable.
+The folder is the domain. Optional files stay optional; Cricket auto-loads direct domain-local `*.<type>.js` files.
 
 ## Change Flow
 

@@ -71,24 +71,24 @@ describe('Cricket CLI', () => {
     ]);
 
     assert.match(result.stdout, /Created projectBoard domain/);
-    assert.match(result.stdout, /project-board\.model\.js/);
+    assert.match(result.stdout, /schema\.model\.js/);
     assert.match(result.stdout, /Next/);
 
     let files = await fs.readdir(path.join(root, 'project-board'));
 
     assert.deepEqual(files.sort(), [
-      'project-board.model.js',
-      'project-board.normalizers.js',
-      'project-board.routes.js',
-      'project-board.rules.js',
-      'project-board.serializers.js',
-      'project-board.service.js',
-      'project-board.test.js',
-      'project-board.validations.js'
+      'access.rules.js',
+      'behavior.test.js',
+      'domain.service.js',
+      'http.routes.js',
+      'input.validations.js',
+      'output.serializers.js',
+      'schema.model.js',
+      'source.normalizers.js'
     ]);
 
     let routes = await fs.readFile(
-      path.join(root, 'project-board', 'project-board.routes.js'),
+      path.join(root, 'project-board', 'http.routes.js'),
       'utf8'
     );
 
@@ -96,7 +96,7 @@ describe('Cricket CLI', () => {
     assert.doesNotMatch(routes, /defineEndpoint/);
 
     let service = await fs.readFile(
-      path.join(root, 'project-board', 'project-board.service.js'),
+      path.join(root, 'project-board', 'domain.service.js'),
       'utf8'
     );
 
@@ -104,12 +104,12 @@ describe('Cricket CLI', () => {
     assert.doesNotMatch(service, /createKnexRepository/);
 
     let rules = await fs.readFile(
-      path.join(root, 'project-board', 'project-board.rules.js'),
+      path.join(root, 'project-board', 'access.rules.js'),
       'utf8'
     );
 
     let model = await fs.readFile(
-      path.join(root, 'project-board', 'project-board.model.js'),
+      path.join(root, 'project-board', 'schema.model.js'),
       'utf8'
     );
 
@@ -118,7 +118,7 @@ describe('Cricket CLI', () => {
     assert.doesNotMatch(model, /sensitive: false/);
 
     let validations = await fs.readFile(
-      path.join(root, 'project-board', 'project-board.validations.js'),
+      path.join(root, 'project-board', 'input.validations.js'),
       'utf8'
     );
 
@@ -128,7 +128,7 @@ describe('Cricket CLI', () => {
 
   it('does not overwrite existing domain files unless forced', async () => {
     let root = await tempRoot();
-    let modelPath = path.join(root, 'project', 'project.model.js');
+    let modelPath = path.join(root, 'project', 'schema.model.js');
 
     await execFileAsync(process.execPath, [
       'bin/cricket.js',

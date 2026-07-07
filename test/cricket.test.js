@@ -470,14 +470,14 @@ describe('Cricket core', () => {
     let domainRoot = path.join(root, 'admin-social');
 
     await fs.mkdir(domainRoot);
-    await fs.writeFile(path.join(domainRoot, 'admin-social.model.js'), `
+    await fs.writeFile(path.join(domainRoot, 'schema.model.js'), `
       export let postParams = {
         kind: 'schema-only-boundary-contract'
       };
     `);
-    await fs.writeFile(path.join(domainRoot, 'admin-social.serializers.js'), 'export {};\n');
-    await fs.writeFile(path.join(domainRoot, 'admin-social.rules.js'), 'export {};\n');
-    await fs.writeFile(path.join(domainRoot, 'admin-social.routes.js'), `
+    await fs.writeFile(path.join(domainRoot, 'output.serializers.js'), 'export {};\n');
+    await fs.writeFile(path.join(domainRoot, 'access.rules.js'), 'export {};\n');
+    await fs.writeFile(path.join(domainRoot, 'http.routes.js'), `
       export let listPosts = {
         method: 'GET',
         path: '/admin/social-posts',
@@ -491,7 +491,7 @@ describe('Cricket core', () => {
         }
       };
     `);
-    await fs.writeFile(path.join(domainRoot, 'admin-social.service.js'), `
+    await fs.writeFile(path.join(domainRoot, 'domain.service.js'), `
       export function createAdminSocialService() {
         return {
           async listPosts() {
@@ -519,7 +519,7 @@ describe('Cricket core', () => {
     let domainRoot = path.join(root, 'storm-events');
 
     await fs.mkdir(domainRoot);
-    await fs.writeFile(path.join(domainRoot, 'storm-events.normalizers.js'), `
+    await fs.writeFile(path.join(domainRoot, 'source.normalizers.js'), `
       export function normalizeStormEventRow(row) {
         return {
           event_id: row.EVENT_ID,
@@ -527,7 +527,7 @@ describe('Cricket core', () => {
         };
       }
     `);
-    await fs.writeFile(path.join(domainRoot, 'storm-events.routes.js'), `
+    await fs.writeFile(path.join(domainRoot, 'http.routes.js'), `
       export let health = {
         method: 'GET',
         path: '/storm-events/health',
@@ -560,17 +560,116 @@ describe('Cricket core', () => {
     });
   });
 
-  it('loads jobs from standard domain folders', async () => {
+  it('loads domain files by suffix with semantic filenames', async () => {
     let root = await tempRoot();
-    let domainRoot = path.join(root, 'radar-jobs');
+    let domainRoot = path.join(root, 'storm-events');
+    let cricketUrl = pathToFileURL(path.resolve('src/index.js')).href;
 
     await fs.mkdir(domainRoot);
-    await fs.writeFile(path.join(domainRoot, 'radar-jobs.jobs.js'), `
+    await fs.writeFile(path.join(domainRoot, 'event.model.js'), `
+      import {
+        defineModel,
+        field,
+        z
+      } from '${cricketUrl}';
+
+      export let StormEvent = defineModel({
+        name: 'StormEvent',
+        table: 'storm_event',
+        row: {
+          id: field.public(z.string()),
+          source_id: field.private(z.string())
+        }
+      });
+    `);
+    await fs.writeFile(path.join(domainRoot, 'admin.routes.js'), `
+      export let health = {
+        method: 'GET',
+        path: '/storm-events/health',
+        async handle() {
+          return {
+            status: 200,
+            body: {
+              ok: true
+            }
+          };
+        }
+      };
+    `);
+    await fs.writeFile(path.join(domainRoot, 'source.normalizers.js'), `
+      export function normalizeStormEventRow(row) {
+        return {
+          event_id: row.EVENT_ID,
+          raw_data: row
+        };
+      }
+    `);
+    await fs.writeFile(path.join(domainRoot, 'input.validations.js'), `
+      import {
+        z
+      } from '${cricketUrl}';
+
+      export let stormEventParams = z.object({
+        id: z.string()
+      });
+    `);
+    await fs.writeFile(path.join(domainRoot, 'read.service.js'), `
+      export function createStormEventService() {
+        return {
+          listStormEvents() {
+            return [];
+          }
+        };
+      }
+    `);
+
+    let domains = await loadDomains(root);
+    let [domain] = domains;
+    let services = createServices(domains);
+
+    assert.equal(domains.length, 1);
+    assert.equal(domain.name, 'stormEvents');
+    assert.equal(collectModels(domains).length, 1);
+    assert.equal(collectEndpoints(domains).length, 1);
+    assert.equal(typeof domain.normalizers.normalizeStormEventRow, 'function');
+    assert.equal(typeof domain.validations.stormEventParams.parse, 'function');
+    assert.equal(typeof services.stormEvents.listStormEvents, 'function');
+  });
+
+  it('rejects multiple service files in one domain folder', async () => {
+    let root = await tempRoot();
+    let domainRoot = path.join(root, 'storm-events');
+
+    await fs.mkdir(domainRoot);
+    await fs.writeFile(path.join(domainRoot, 'read.service.js'), `
+      export function createStormEventService() {
+        return {};
+      }
+    `);
+    await fs.writeFile(path.join(domainRoot, 'write.service.js'), `
+      export function createStormEventWriterService() {
+        return {};
+      }
+    `);
+
+    await assert.rejects(
+      loadDomains(root),
+      /Cricket domain stormEvents can load one service file/
+    );
+  });
+
+  it('loads jobs from multiple domain-local jobs files', async () => {
+    let root = await tempRoot();
+    let domainRoot = path.join(root, 'radar-jobs');
+    let cricketUrl = pathToFileURL(path.resolve('src/index.js')).href;
+
+    await fs.mkdir(domainRoot);
+    await fs.writeFile(path.join(domainRoot, 'radar.jobs.js'), `
       import {
         defineJob,
         redisQueue,
         z
-      } from '${pathToFileURL(path.resolve('src/index.js')).href}';
+      } from '${cricketUrl}';
 
       export let renderRadar = defineJob({
         name: 'radar.render',
@@ -586,15 +685,39 @@ describe('Cricket core', () => {
         }
       });
     `);
+    await fs.writeFile(path.join(domainRoot, 'repair.jobs.js'), `
+      import {
+        defineJob,
+        redisQueue,
+        z
+      } from '${cricketUrl}';
+
+      export let repairQueuedRadar = defineJob({
+        name: 'radar.repairQueued',
+        input: z.object({
+          scheduledFor: z.string().optional()
+        }).default({}),
+        queue: redisQueue({
+          name: 'radar-render',
+          idempotencyKey: ({ input }) => input.scheduledFor || 'manual'
+        }),
+        async run() {
+          return { ok: true };
+        }
+      });
+    `);
 
     let domains = await loadDomains(root);
     let [domain] = domains;
 
     assert.equal(domains.length, 1);
     assert.equal(domain.name, 'radarJobs');
-    assert.equal(domain.jobs.length, 1);
-    assert.equal(domain.jobs[0].name, 'radar.render');
+    assert.deepEqual(domain.jobs.map(job => job.name).sort(), [
+      'radar.render',
+      'radar.repairQueued'
+    ]);
   });
+
   it('rejects endpoint paths that do not start with a slash', async () => {
     await assert.rejects(
       createCricketRuntime(defineCricketApp({
