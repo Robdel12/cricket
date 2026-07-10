@@ -62,7 +62,8 @@ Use this when work leaves the request path but should keep Cricket's contract sh
 
 ## Recovery
 
-- Use `recover({ run, ledger, logs, spans, progress, now })` when active jobs need app-owned recovery decisions.
+- Use `recover({ run, ledger, logs, spans, progress, now, logger, trace })` when
+  active jobs need app-owned recovery decisions.
 - Return plain decisions: `{ action: 'continue' }`, `{ action: 'retry', reason: { code, message } }`, or `{ action: 'fail', reason: { code, message } }`.
 - Define stuck/dead/out-of-bounds in the job. Cricket provides the facts; the app decides what they mean.
 - Use normal `logger.info(...)`, `trace.span(...)`, and `progress.update(...)` in `run`. Do not create separate recovery-only signaling.

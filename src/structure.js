@@ -1,19 +1,15 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { domainFileTypes } from './domain.js';
+
 /**
  * File types generated for each scaffolded Cricket domain.
  */
-export let domainFileTypes = [
-  'model',
-  'validations',
-  'normalizers',
-  'serializers',
-  'service',
-  'rules',
-  'routes',
+export let domainScaffoldFileTypes = Object.freeze([
+  ...domainFileTypes,
   'test'
-];
+]);
 
 function toWords(value) {
   return value
@@ -131,13 +127,18 @@ export let ${camelName}Endpoints = [
 `;
 }
 
+function jobsTemplate({ camelName }) {
+  return `// Add ${camelName} background job contracts here.
+export let ${camelName}Jobs = [
+];
+`;
+}
+
 function testTemplate({ fileStem }) {
   return `import { describe, it } from 'node:test';
 
-describe('${fileStem} endpoints', () => {
-  it('tests user-visible HTTP behavior through the app boundary', async () => {
-    // Start the real app test server, make an HTTP request, and assert the response.
-  });
+describe('${fileStem} behavior', () => {
+  it.todo('tests behavior through the HTTP or worker boundary');
 });
 `;
 }
@@ -150,6 +151,7 @@ let templates = {
   service: serviceTemplate,
   rules: rulesTemplate,
   routes: routesTemplate,
+  jobs: jobsTemplate,
   test: testTemplate
 };
 
@@ -192,32 +194,64 @@ export function domainNames(name) {
   };
 }
 
+function selectedDomainFileTypes(types) {
+  if (!Array.isArray(types) || !types.length)
+    throw new Error(`Domain scaffold requires --with <${domainScaffoldFileTypes.join('|')}|all>`);
+
+  if (types.includes('all') && types.length !== 1)
+    throw new Error('Domain scaffold type all cannot be combined with other types');
+
+  let selected = types[0] === 'all' ? domainScaffoldFileTypes : types;
+  let unique = [...new Set(selected)];
+  let unknown = unique.filter(type => !domainScaffoldFileTypes.includes(type));
+
+  if (unknown.length)
+    throw new Error(`Unknown domain file type ${unknown.join(', ')}`);
+
+  return unique;
+}
+
+async function assertScaffoldDependencies(domainRoot, fileStem, selectedTypes) {
+  if (!selectedTypes.includes('serializers') || selectedTypes.includes('model'))
+    return;
+
+  let modelPath = domainFilePath(domainRoot, fileStem, 'model');
+
+  if (!(await pathExists(modelPath)))
+    throw new Error('Domain serializer scaffold requires --with model or an existing schema.model.js');
+}
+
 /**
  * Create or overwrite the standard Cricket domain files for a feature area.
  *
  * @param {object} options - Scaffolding options.
  * @param {string} [options.root='.'] - Directory that will contain the domain folder.
  * @param {string} options.name - Domain name to scaffold.
+ * @param {string[]} options.types - Deliberately selected domain file types.
  * @param {boolean} [options.force=false] - Overwrite existing files when true.
  * @returns {Promise<{
  *   created: string[],
  *   skipped: string[],
- *   domainRoot: string
+ *   domainRoot: string,
+ *   types: string[]
  * }>} Summary of the scaffold operation.
  */
 export async function scaffoldDomain({
   root = '.',
   name,
+  types,
   force = false
 }) {
   let domain = domainNames(name);
+  let selectedTypes = selectedDomainFileTypes(types);
   let domainRoot = path.join(root, domain.fileStem);
   let created = [];
   let skipped = [];
 
+  await assertScaffoldDependencies(domainRoot, domain.fileStem, selectedTypes);
   await fs.mkdir(domainRoot, { recursive: true });
 
-  for (let type of domainFileTypes) {
+  for (let type of selectedTypes) {
     let filePath = domainFilePath(domainRoot, domain.fileStem, type);
     let exists = await pathExists(filePath);
 
@@ -234,6 +268,7 @@ export async function scaffoldDomain({
     created,
     skipped,
     domain,
+    types: selectedTypes,
     root,
     domainRoot
   };
@@ -272,7 +307,7 @@ export function formatScaffoldResult(result) {
   lines.push(
     '',
     'Next',
-    `  - Add the ${result.domain.tableName} table migration in api/migrations/.`,
+    `  - If this domain persists data, add the ${result.domain.tableName} table migration in api/migrations/.`,
     `  - Point \`defineCricketApp({ domains })\` at the domain root (${result.root}).`,
     '  - Run `pnpm cricket inspect <app-module>` and `pnpm cricket docs <app-module> --out openapi.json`.'
   );
@@ -389,7 +424,7 @@ export function formatAppScaffoldResult(result) {
   lines.push(
     '',
     'Next',
-    '  - Add domains with `pnpm cricket new domain project api/domains`.',
+    '  - Add domains with `pnpm cricket new domain project api/domains --with model,validations,service,routes,test`.',
     '  - Configure `defineCricketApp({ database })` and put migrations in `api/migrations` if the app persists data.',
     '  - Run `pnpm cricket inspect api/index.js` and `pnpm cricket docs api/index.js --out openapi.json`.'
   );

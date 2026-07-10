@@ -19,10 +19,15 @@ Cricket definition builders return stable contracts and reject unknown app or
 endpoint options. Compose new definitions instead of mutating existing apps,
 endpoints, rules, models, serializers, normalizers, or jobs after construction.
 
-Cricket passes runtime capabilities such as `lifecycle`, `logger`, `services`,
-`trace`, `jobs`, and `progress` through setup, middleware, context, handlers,
-workers, and shutdown hooks. Product health checks may read `lifecycle`, but
-they still own database, worker, and deploy readiness.
+Setup returns `undefined` or `{ dependencies, services, cleanup }`. It receives
+the app, database, lifecycle, logger, and a no-op startup trace. Service and
+middleware initialization receive dependencies, lifecycle, and logger before
+requests exist. Request context, rules, and handlers receive services,
+lifecycle, dependencies, and request-scoped logger and trace capabilities. Job
+`run` and failure handlers receive services, lifecycle, logger, trace, jobs,
+and progress. Recovery receives evidence, time, logger, and trace for a pure
+decision. Shutdown hooks receive the assembled runtime. Product health checks
+may read `lifecycle`, but they still own database, worker, and deploy readiness.
 
 ## Domain Shape
 
@@ -66,8 +71,8 @@ as an implicit HTTP response.
 ## Jobs
 
 Use `defineJob` for asynchronous work that needs validated input, retry policy,
-recovery policy, queue coordination, and the same
-services/logger/trace/lifecycle/jobs/progress capabilities as HTTP.
+recovery policy, and queue coordination. Job execution reuses app services,
+lifecycle, and logger, then adds job-scoped trace, jobs, and progress.
 Keep job contracts in domain-local `*.jobs.js` files when the work belongs to
 one domain.
 
@@ -100,8 +105,9 @@ Use `jobFailure({ retrying, exhausted })` when product records need to follow
 retry decisions. The handlers run after Cricket has scheduled a retry or marked
 the envelope failed, and they receive app capabilities instead of Redis objects.
 
-Use `recover({ run, ledger, logs, spans, progress, now })` when active jobs need
-app-owned recovery. Cricket provides normal job facts; the job decides whether
+Use `recover({ run, ledger, logs, spans, progress, now, logger, trace })` when
+active jobs need app-owned recovery. Cricket provides normal job facts; the
+job decides whether
 to `{ action: 'continue' }`, `{ action: 'retry' }`, or `{ action: 'fail' }`.
 Use normal `logger.info(...)`, `trace.span(...)`, and `progress.update(...)` as
 the signals recovery reads. Recovery may be evaluated concurrently, so keep it

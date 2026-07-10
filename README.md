@@ -152,9 +152,20 @@ if (process.env.NODE_ENV !== 'test')
   });
 ```
 
-`setup` returns app capabilities. Cricket passes `services`, `db`, `logger`,
-`trace`, and `lifecycle` through middleware, context, rules, handlers, jobs,
-workers, startup, shutdown, and tests.
+`setup` returns `undefined` or one explicit object with `dependencies`,
+`services`, and `cleanup`. Cricket adds its configured `db` to dependencies;
+apps must not return a second `db`.
+
+Capabilities follow the runtime phase that owns them. Setup receives the app,
+database, lifecycle, logger, and a no-op startup trace. Domain services, the
+app service composer, and middleware initialization receive dependencies,
+lifecycle, and logger before requests exist. Request context, rules, and
+handlers receive the request logger and trace plus services, lifecycle, and
+setup dependencies. Job `run` and failure handlers receive services, lifecycle,
+logger, trace, jobs, and progress. Recovery receives execution evidence, time,
+logger, and trace because it returns a pure decision rather than doing product
+work. Shutdown hooks receive the assembled runtime, including dependencies,
+services, lifecycle, and logger.
 
 ## Domain Contracts
 
@@ -612,8 +623,9 @@ docker logs api | pnpm cricket trace req_123
 ```
 
 Apps can read `lifecycle` from setup, services, middleware, context, handlers,
-jobs, workers, and shutdown hooks. Product health checks still decide whether
-the app is ready for traffic.
+job execution, and shutdown hooks. Worker runtimes expose it for worker
+entrypoints. Product health checks still decide whether the app is ready for
+traffic.
 
 ## Testing
 
@@ -678,13 +690,18 @@ runtime reports. It does not reset app state for you.
 ```sh
 pnpm cricket init app .
 pnpm cricket init agents .
-pnpm cricket new domain project api/domains
+pnpm cricket new domain project api/domains --with model,validations,service,routes,test
 pnpm cricket inspect api/index.js
 pnpm cricket docs api/index.js --out openapi.json
 pnpm cricket migrate latest api/index.js
 pnpm cricket test
 ```
 
+`new domain` requires `--with` so optional files exist only when the domain
+needs them; use `--with all` when every supported file is intentional. A
+selected test starts as a todo until it proves behavior through the HTTP or
+worker boundary. The serializer scaffold requires a model in the same selection
+or an existing `schema.model.js` in the domain.
 `inspect` prints loaded domains, model visibility, rules, services, jobs, route
 operation IDs, and observability posture. `docs` writes OpenAPI from the same
 app module your server runs. `test` wraps Node's built-in test runner with

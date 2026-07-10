@@ -30,7 +30,7 @@
   },
   "scripts": {
     "cricket": "node bin/cricket.js",
-    "test": "node --test",
+    "test": "node bin/cricket.js test",
     "test:redis": "node test-support/run-redis-tests.js",
     "check": "node --check bin/*.js src/*.js src/**/*.js test/*.test.js test/fixtures/*.js test-support/*.js integration/*.js fixtures/**/*.js examples/*.js",
     "prepublishOnly": "pnpm run check && pnpm test"

@@ -59,7 +59,7 @@ async function writeSqliteAppFixture({
 }
 
 describe('Cricket CLI', () => {
-  it('scaffolds the standard domain files', async () => {
+  it('scaffolds deliberately selected domain files', async () => {
     let root = await tempRoot();
 
     let result = await execFileAsync(process.execPath, [
@@ -67,7 +67,9 @@ describe('Cricket CLI', () => {
       'new',
       'domain',
       'project-board',
-      root
+      root,
+      '--with',
+      'model,validations,serializers,service,rules,routes,jobs,test'
     ]);
 
     assert.match(result.stdout, /Created projectBoard domain/);
@@ -83,8 +85,8 @@ describe('Cricket CLI', () => {
       'http.routes.js',
       'input.validations.js',
       'output.serializers.js',
-      'schema.model.js',
-      'source.normalizers.js'
+      'project-board.jobs.js',
+      'schema.model.js'
     ]);
 
     let routes = await fs.readFile(
@@ -103,10 +105,12 @@ describe('Cricket CLI', () => {
     assert.match(service, /export function createProjectBoardService/);
     assert.doesNotMatch(service, /createKnexRepository/);
 
-    let rules = await fs.readFile(
-      path.join(root, 'project-board', 'access.rules.js'),
+    let jobs = await fs.readFile(
+      path.join(root, 'project-board', 'project-board.jobs.js'),
       'utf8'
     );
+
+    assert.match(jobs, /export let projectBoardJobs = \[/);
 
     let model = await fs.readFile(
       path.join(root, 'project-board', 'schema.model.js'),
@@ -124,6 +128,116 @@ describe('Cricket CLI', () => {
 
     assert.match(validations, /ProjectBoardCreateInput/);
 
+    let test = await fs.readFile(
+      path.join(root, 'project-board', 'behavior.test.js'),
+      'utf8'
+    );
+
+    assert.match(test, /describe\('project-board behavior'/);
+    assert.match(test, /it\.todo\('tests behavior through the HTTP or worker boundary'\)/);
+  });
+
+  it('requires a deliberate domain file selection', async () => {
+    let root = await tempRoot();
+
+    await assert.rejects(
+      execFileAsync(process.execPath, [
+        'bin/cricket.js',
+        'new',
+        'domain',
+        'project',
+        root
+      ]),
+      error => {
+        assert.match(error.stderr, /Domain scaffold requires --with/);
+        return true;
+      }
+    );
+  });
+
+  it('supports selecting every domain file deliberately', async () => {
+    let root = await tempRoot();
+
+    await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'new',
+      'domain',
+      'project',
+      root,
+      '--with',
+      'all'
+    ]);
+
+    let files = await fs.readdir(path.join(root, 'project'));
+
+    assert.deepEqual(files.sort(), [
+      'access.rules.js',
+      'behavior.test.js',
+      'domain.service.js',
+      'http.routes.js',
+      'input.validations.js',
+      'output.serializers.js',
+      'project.jobs.js',
+      'schema.model.js',
+      'source.normalizers.js'
+    ]);
+  });
+
+  it('rejects invalid domain file selections', async () => {
+    let root = await tempRoot();
+    let invalidSelections = [
+      ['unknown', /Unknown domain file type unknown/],
+      ['all,model', /all cannot be combined with other types/],
+      ['serializers', /serializer scaffold requires --with model/]
+    ];
+
+    for (let [selection, expectedError] of invalidSelections) {
+      await assert.rejects(
+        execFileAsync(process.execPath, [
+          'bin/cricket.js',
+          'new',
+          'domain',
+          'project',
+          root,
+          '--with',
+          selection
+        ]),
+        error => {
+          assert.match(error.stderr, expectedError);
+          return true;
+        }
+      );
+    }
+  });
+
+  it('adds serializers to a domain with an existing model', async () => {
+    let root = await tempRoot();
+
+    await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'new',
+      'domain',
+      'project',
+      root,
+      '--with',
+      'model'
+    ]);
+    await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'new',
+      'domain',
+      'project',
+      root,
+      '--with',
+      'serializers'
+    ]);
+
+    let files = await fs.readdir(path.join(root, 'project'));
+
+    assert.deepEqual(files.sort(), [
+      'output.serializers.js',
+      'schema.model.js'
+    ]);
   });
 
   it('does not overwrite existing domain files unless forced', async () => {
@@ -135,7 +249,9 @@ describe('Cricket CLI', () => {
       'new',
       'domain',
       'project',
-      root
+      root,
+      '--with',
+      'model'
     ]);
 
     await fs.writeFile(modelPath, 'custom model\n');
@@ -145,7 +261,9 @@ describe('Cricket CLI', () => {
       'new',
       'domain',
       'project',
-      root
+      root,
+      '--with',
+      'model'
     ]);
 
     assert.match(skipped.stdout, /skipped existing/);
@@ -157,6 +275,8 @@ describe('Cricket CLI', () => {
       'domain',
       'project',
       root,
+      '--with',
+      'model',
       '--force'
     ]);
 
@@ -208,6 +328,8 @@ describe('Cricket CLI', () => {
     assert.match(agents, /api\/migrations/);
     assert.match(agents, /api\/dev/);
     assert.match(agents, /lifecycle/);
+    assert.match(agents, /\{ dependencies, services, cleanup \}/);
+    assert.match(agents, /Recovery receives evidence, time, logger, and trace/);
     assert.match(agents, /defineJob/);
     assert.match(agents, /cronSchedule/);
     assert.match(agents, /createCricketJobs/);
@@ -225,6 +347,7 @@ describe('Cricket CLI', () => {
     assert.match(cricketSkill, /cricket-observability/);
     assert.match(cricketSkill, /cricket-testing/);
     assert.match(cricketSkill, /pnpm cricket init agents/);
+    assert.match(cricketSkill, /--with model,validations,service,routes,test/);
     assert.match(jobsSkill, /name: cricket-jobs/);
     assert.match(jobsSkill, /defineJob/);
     assert.match(jobsSkill, /cronSchedule/);
@@ -237,6 +360,7 @@ describe('Cricket CLI', () => {
     assert.match(observabilitySkill, /cricket trace/);
     assert.match(observabilitySkill, /lifecycle/);
     assert.match(observabilitySkill, /trace\.span/);
+    assert.match(observabilitySkill, /no-op startup trace/);
     assert.match(testingSkill, /name: cricket-testing/);
     assert.match(testingSkill, /createTestRuntime/);
     assert.match(testingSkill, /worker boundary/);

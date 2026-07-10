@@ -14,9 +14,8 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
 - Cricket's public surface spans definition, HTTP, job, documentation, and
   generated-guidance contracts; drift in any one of them teaches apps the wrong
   framework shape.
-- The remaining audit work is runtime and scaffold cohesion: setup still has a
-  dual return shape, scaffolding creates optional noise, and normal test
-  discovery still runs source/support files as empty tests.
+- The remaining audit work is closure: verify runtime and scaffold cleanup as a
+  coherent public contract, then remove this temporary workpad.
 - Cricket's vision explicitly rejects hidden mutation, transport magic, polling waits, and contract theater.
 
 ## Current Repo Facts
@@ -49,7 +48,14 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
   `duplicate()` connection for blocking wakeups.
 - The built-in driver targets standalone Redis. Redis Cluster is not supported
   by that driver.
-- `src/structure.js` scaffolds optional empty files and a passing test with no assertion.
+- Setup now returns one explicit `{ dependencies, services, cleanup }` shape.
+  Capability documentation names the phases where each capability exists.
+- Domain scaffolding now requires deliberate file selection and generates a
+  todo test instead of an assertion-free pass.
+- Disposable examples label setup-time schema creation as demo/test-only;
+  migration guidance remains authoritative for real apps.
+- Normal `pnpm test` uses Cricket's recursive conventional discovery rather
+  than counting source and support modules as empty tests.
 - The job suites are organized by definition, policy, worker lifecycle,
   failure, recovery, Redis socket, ledger, and schedule contracts. A separate
   Docker-backed suite proves concurrent transitions against real Redis 7.
@@ -106,10 +112,10 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
 
 ### PR 6 - Runtime And Scaffold Cleanup
 
-- [ ] Replace the ambiguous dual-shape `setup` return with one explicit contract and align capability documentation with actual injection points.
-- [ ] Scaffold only useful domain files or provide deliberate selections; never generate a passing assertion-free test.
-- [ ] Mark disposable setup-time schema creation as demo/test-only and keep migration guidance authoritative.
-- [ ] Remove source-file discovery noise from the normal `pnpm test` workflow.
+- [x] Replace the ambiguous dual-shape `setup` return with one explicit contract and align capability documentation with actual injection points.
+- [x] Scaffold only useful domain files or provide deliberate selections; never generate a passing assertion-free test.
+- [x] Mark disposable setup-time schema creation as demo/test-only and keep migration guidance authoritative.
+- [x] Remove source-file discovery noise from the normal `pnpm test` workflow.
 
 ## Verification
 
@@ -155,3 +161,6 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
 - 2026-07-10: PR 5 is a clean Redis coordination cutover. Deployments must
   drain active work and clear or deliberately re-enqueue old queue keys before
   running the new worker; no legacy key reader is retained.
+- 2026-07-10: PR 6 makes setup return one explicit capability contract, makes
+  domain scaffolding opt-in by file type, leaves generated HTTP tests pending
+  until they assert behavior, and limits normal test discovery to test files.

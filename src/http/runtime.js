@@ -14,8 +14,10 @@ import {
   expectationFailed,
   toHttpError
 } from '../errors.js';
+import { isPlainObject } from '../immutable.js';
 import { resolveLogger } from '../logger.js';
 import { normalizeObservability } from '../observability.js';
+import { assertKnownOptions } from '../options.js';
 import { createDatabaseConnection } from '../persistence/database.js';
 import {
   createNoopTrace,
@@ -47,6 +49,11 @@ import {
 } from './response.js';
 
 let lifecycleControllerKey = Symbol('cricket.lifecycleController');
+let setupResultKeys = new Set([
+  'cleanup',
+  'dependencies',
+  'services'
+]);
 
 function toArray(value) {
   if (!value)
@@ -56,24 +63,34 @@ function toArray(value) {
 }
 
 function normalizeSetupResult(result) {
-  if (!result)
+  if (result === undefined)
     return {
       dependencies: {},
       services: {},
       cleanup: undefined
     };
 
-  if (result.dependencies || result.services || result.cleanup)
-    return {
-      dependencies: result.dependencies ?? {},
-      services: result.services ?? {},
-      cleanup: result.cleanup
-    };
+  if (!isPlainObject(result))
+    throw new Error('setup must return { dependencies, services, cleanup } or undefined');
+
+  assertKnownOptions(result, setupResultKeys, 'setup');
+
+  let dependencies = result.dependencies === undefined ? {} : result.dependencies;
+  let services = result.services === undefined ? {} : result.services;
+
+  if (!isPlainObject(dependencies))
+    throw new Error('setup dependencies must be a plain object');
+
+  if (!isPlainObject(services))
+    throw new Error('setup services must be a plain object');
+
+  if (result.cleanup !== undefined && typeof result.cleanup !== 'function')
+    throw new Error('setup cleanup must be a function');
 
   return {
-    dependencies: result,
-    services: {},
-    cleanup: undefined
+    dependencies,
+    services,
+    cleanup: result.cleanup
   };
 }
 
