@@ -25,7 +25,13 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
   are redacted at HTTP, and runtime default statuses agree with OpenAPI.
 - HTTP transport intent now comes from branded response helpers; bare handler,
   middleware, and fallback values remain response bodies.
-- `src/jobs/runtime.js` immediately requeues exponential retries, polls every second, and never evaluates job concurrency policies.
+- `src/jobs/runtime.js` now requires explicit queue configuration, waits on
+  driver events and concrete delayed or cron deadlines, and schedules retries
+  at calculated exponential-backoff availability times.
+- Active claim heartbeats now use the same injected, abortable clock lifecycle
+  as worker deadlines instead of an untestable interval.
+- Job concurrency policies remain inspectable metadata and are not yet enforced
+  during claim or settlement.
 - `src/jobs/drivers/redis.js` stores priority/retention-adjacent metadata but claims FIFO and settles work through non-atomic command sequences.
 - `src/structure.js` scaffolds optional empty files and a passing test with no assertion.
 - `test/jobs.test.js` proves worker behavior mainly through the test driver and protocol doubles, not a real concurrent Redis boundary.
@@ -60,10 +66,10 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
 
 ### PR 3 - Worker Loop And Retry Truth
 
-- [ ] `src/jobs/runtime.js` - require an explicit queue driver outside the test harness.
-- [ ] Replace polling with an abortable driver wait contract that accounts for ready work and the next delayed/scheduled boundary.
-- [ ] Calculate exponential retry availability from attempt, delay, maximum delay, and the injected clock; prove retries do not run early.
-- [ ] Replace timer-owned heartbeat behavior with a driver/runtime lifecycle contract that is deterministic under test.
+- [x] `src/jobs/runtime.js` - require an explicit queue driver outside the test harness.
+- [x] Replace polling with an abortable driver wait contract that accounts for ready work and the next delayed/scheduled boundary.
+- [x] Calculate exponential retry availability from attempt, delay, maximum delay, and the injected clock; prove retries do not run early.
+- [x] Replace timer-owned heartbeat behavior with a driver/runtime lifecycle contract that is deterministic under test.
 
 ### PR 4 - Queue Policy Truth
 
@@ -116,3 +122,6 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
 - 2026-07-10: Documentation and generated skills are current-state contracts,
   not append-only change logs. Every lane must rewrite the surrounding guidance
   for cohesion and delete stale or redundant instructions.
+- 2026-07-10: PR 3 uses one injected clock lifecycle for worker deadlines,
+  retry availability, and active heartbeats. Queue drivers wake workers for
+  ready work; the runtime supplies delayed and cron boundaries.

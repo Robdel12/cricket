@@ -25,6 +25,10 @@ function availableNow(envelope, now) {
   return new Date(envelope.availableAt ?? envelope.createdAt) <= new Date(now ?? envelope.createdAt);
 }
 
+function itemAvailableNow(item, now) {
+  return new Date(item.availableAt) <= new Date(now);
+}
+
 function timestamp(now = new Date()) {
   return now instanceof Date ? now.toISOString() : String(now);
 }
@@ -41,6 +45,15 @@ export function createTestQueueDriver() {
   let items = [];
   let events = [];
   let schedules = [];
+  let workWaiters = new Set();
+
+  function notifyWork(queueName) {
+    for (let notify of [...workWaiters])
+      notify({
+        reason: 'work',
+        queueName
+      });
+  }
 
   function record(type, envelope, metadata = {}) {
     events.push(frozenPlain({
@@ -66,12 +79,15 @@ export function createTestQueueDriver() {
       items.push({
         envelope,
         status: availableNow(envelope) ? 'queued' : 'delayed',
+        availableAt: envelope.availableAt,
         attempts: 0,
         logs: [],
         progress: [],
         spans: []
       });
       record('queued', envelope);
+
+      notifyWork(envelope.queueName);
 
       return frozenPlain({
         enqueued: true,
@@ -163,7 +179,10 @@ export function createTestQueueDriver() {
       });
     },
 
-    async retry(envelope) {
+    async retry(envelope, {
+      availableAt,
+      now = new Date()
+    } = {}) {
       let item = itemFor(items, envelope);
 
       if (item?.status !== 'active')
@@ -172,11 +191,17 @@ export function createTestQueueDriver() {
         });
 
       if (item) {
-        item.status = 'queued';
+        item.availableAt = availableAt ?? timestamp(now);
+        item.status = itemAvailableNow(item, now) ? 'queued' : 'delayed';
         item.startedAt = undefined;
       }
 
-      record('retry_scheduled', envelope);
+      record('retry_scheduled', envelope, {
+        availableAt: item?.availableAt
+      });
+
+      notifyWork(envelope.queueName);
+
       return frozenPlain({
         settled: true
       });
@@ -238,15 +263,90 @@ export function createTestQueueDriver() {
       let promoted = [];
 
       for (let item of items) {
-        if (item.status !== 'delayed' || !availableNow(item.envelope, now))
+        if (item.status !== 'delayed' || !itemAvailableNow(item, now))
           continue;
 
         item.status = 'queued';
         promoted.push(item.envelope);
         record('delay_promoted', item.envelope);
+        notifyWork(item.envelope.queueName);
       }
 
       return frozenPlain(promoted);
+    },
+
+    async nextAvailableAt() {
+      let delayed = items
+        .filter(item => item.status === 'delayed')
+        .map(item => item.availableAt)
+        .sort();
+
+      return delayed[0];
+    },
+
+    async waitForWork({
+      signal,
+      until,
+      waitUntil
+    } = {}) {
+      let queued = items.find(item => item.status === 'queued');
+
+      if (queued)
+        return frozenPlain({
+          reason: 'work',
+          queueName: queued.envelope.queueName
+        });
+
+      if (signal?.aborted)
+        return frozenPlain({
+          reason: 'aborted'
+        });
+
+      return await new Promise((resolve, reject) => {
+        let settled = false;
+        let deadline = new AbortController();
+        let deadlineSignal = signal
+          ? AbortSignal.any([signal, deadline.signal])
+          : deadline.signal;
+        let onAbort = () => settle({
+          reason: 'aborted'
+        });
+        let onWork = settle;
+
+        function settle(result) {
+          if (settled)
+            return;
+
+          settled = true;
+          workWaiters.delete(onWork);
+          signal?.removeEventListener('abort', onAbort);
+          deadline.abort();
+          resolve(frozenPlain(result));
+        }
+
+        workWaiters.add(onWork);
+        signal?.addEventListener('abort', onAbort, {
+          once: true
+        });
+
+        if (until) {
+          Promise.resolve(waitUntil(until, {
+            signal: deadlineSignal
+          })).then(() => settle({
+            reason: 'deadline'
+          })).catch(error => {
+            if (error?.name === 'AbortError')
+              return;
+
+            if (!settled) {
+              settled = true;
+              workWaiters.delete(onWork);
+              signal?.removeEventListener('abort', onAbort);
+              reject(error);
+            }
+          });
+        }
+      });
     },
 
     async registerSchedule(job, {
@@ -312,6 +412,11 @@ export function createTestQueueDriver() {
       });
     },
 
-    async cleanup() {}
+    async cleanup() {
+      for (let notify of [...workWaiters])
+        notify({
+          reason: 'aborted'
+        });
+    }
   };
 }

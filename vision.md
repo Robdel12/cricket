@@ -142,6 +142,10 @@ queue metadata, retry policy, observable execution, recovery policy, and a
 plain `run` function. Job code should receive the same app capabilities as HTTP
 handlers: services, logger, trace, lifecycle, jobs, and progress.
 
+Queue ownership should always be explicit. Workers wait for driver wakeups or
+the next known delayed or cron boundary, and shutdown aborts that wait. They do
+not poll on a framework interval.
+
 Redis coordinates hot execution: queues, wakeups, leases, attempts, idempotency,
 delayed availability, schedule materialization, and short-lived progress. The
 app database keeps product truth. Cricket's `cricket_jobs` table is an
@@ -159,8 +163,10 @@ bounds means.
 
 Failure handling is first-class because retries are where framework truth and
 product truth drift. Retry policy decides whether Cricket schedules another
-attempt after thrown errors. `jobFailure({ retrying, exhausted })` lets app code
-sync product records after that decision without knowing Redis internals.
+attempt after thrown errors and when that attempt becomes available.
+Exponential backoff is execution behavior, not inspect-only metadata.
+`jobFailure({ retrying, exhausted })` lets app code sync product records after
+that decision without knowing Redis internals.
 
 ## Observability
 

@@ -353,9 +353,9 @@ app definition your server uses.
 ## Jobs
 
 Jobs are Cricket contracts for background work. Use them when work needs
-validated input, immutable envelopes, Redis coordination, scheduled execution,
-recovery, failure handling, logs, traces, progress, and the same services your
-HTTP handlers use.
+validated input, immutable envelopes, explicit queue coordination, scheduled
+execution, recovery, failure handling, logs, traces, progress, and the same
+services your HTTP handlers use.
 
 ```js
 import { z } from '@robdel12/cricket';
@@ -477,8 +477,31 @@ let worker = await startCricketWorker(app, {
   jobs: [generateReport]
 });
 
-await worker.run();
+let shutdown = new AbortController();
+process.once('SIGTERM', () => shutdown.abort());
+
+try {
+  await worker.run({
+    signal: shutdown.signal
+  });
+} finally {
+  await worker.cleanup();
+}
 ```
+
+Choose the queue deliberately. Production producers and workers use
+`queues.redis` or an app-provided `queues.driver`; tests opt into the in-memory
+driver with `queues.test: true`. Cricket never silently turns a missing queue
+configuration into an in-memory worker.
+
+`worker.run({ signal })` blocks on queue wakeups and the next delayed or cron
+boundary. Enqueuing ready work wakes it immediately. Aborting the signal or
+calling `worker.cleanup()` stops the wait without a polling interval.
+
+Exponential retries use the job policy as execution behavior. The first retry
+waits `delayMs`, each later retry doubles that delay, and `maxDelayMs` caps it.
+The retry stays unclaimable until that calculated availability time, while the
+original immutable envelope stays unchanged.
 
 If the app has a Cricket database, add the job ledger deliberately:
 
@@ -497,9 +520,10 @@ export async function down(db) {
 The ledger is execution history for debugging and operators. It is not product
 state.
 
-Recovery is app-owned. Cricket keeps the worker heartbeat fresh and records the
-job's normal logs, spans, progress, ledger row, and run state. Your `recover`
-function reads those facts and returns a plain decision:
+Recovery is app-owned. Cricket renews an active claim's heartbeat while its
+`run` function is working and records the job's normal logs, spans, progress,
+ledger row, and run state. Your `recover` function reads those facts, including
+heartbeat age, and returns a plain decision:
 
 ```js
 return { action: 'continue' };
@@ -588,6 +612,10 @@ let worker = await startCricketWorker(app, {
 await worker.schedules.tick();
 await worker.drain();
 ```
+
+Direct `tick()` and `drain()` tests only need `clock.now`. If a test exercises
+the continuous `worker.run()` loop with a custom clock, provide
+`clock.waitUntil` too so the test owns deadline advancement without sleeping.
 
 `testState` exposes events, logs, request traces, job traces, timings, and
 runtime reports. It does not reset app state for you.

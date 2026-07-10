@@ -28,6 +28,7 @@ import {
 } from '../src/app-contract.js';
 import { createRedisQueueDriver } from '../src/jobs/drivers/redis.js';
 import { previousCronRun } from '../src/jobs/schedule.js';
+import { createTestQueueDriver } from '../src/jobs/test-driver.js';
 import { createTestState } from '../src/test/index.js';
 import {
   createJobLedgerTable as createPackagedJobLedgerTable,
@@ -64,6 +65,97 @@ async function createLedgerDatabase({
       filename
     },
     useNullAsDefault: true
+  };
+}
+
+function createManualClock(start) {
+  let current = new Date(start);
+  let waiters = new Set();
+  let observers = [];
+
+  function remove(waiter) {
+    waiters.delete(waiter);
+    waiter.signal?.removeEventListener('abort', waiter.onAbort);
+  }
+
+  function notifyWait(until) {
+    for (let observe of observers.splice(0))
+      observe(until);
+  }
+
+  function waitUntil(until, {
+    signal
+  } = {}) {
+    let deadline = new Date(until);
+
+    notifyWait(deadline);
+
+    if (deadline <= current)
+      return Promise.resolve();
+
+    return new Promise((resolve, reject) => {
+      let waiter = {
+        deadline,
+        signal,
+        resolve,
+        reject
+      };
+
+      waiter.onAbort = () => {
+        remove(waiter);
+        reject(new DOMException('The operation was aborted', 'AbortError'));
+      };
+      waiters.add(waiter);
+      signal?.addEventListener('abort', waiter.onAbort, {
+        once: true
+      });
+    });
+  }
+
+  function advanceTo(value) {
+    current = new Date(value);
+
+    for (let waiter of [...waiters]) {
+      if (waiter.deadline > current)
+        continue;
+
+      remove(waiter);
+      waiter.resolve();
+    }
+  }
+
+  return {
+    clock: {
+      now: () => new Date(current),
+      waitUntil
+    },
+    advanceBy(milliseconds) {
+      advanceTo(current.getTime() + milliseconds);
+    },
+    advanceTo,
+    nextWait() {
+      return new Promise(resolve => {
+        observers.push(resolve);
+      });
+    },
+    now() {
+      return new Date(current);
+    }
+  };
+}
+
+function deferred() {
+  let resolve;
+  let reject;
+  let promise = new Promise((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+
+  return {
+    promise,
+    reject,
+    resolve
   };
 }
 
@@ -179,6 +271,16 @@ function createFakeRedis() {
         .sort((a, b) => a[1] - b[1])
         .map(([value]) => value);
     },
+    async zrange(key, start, stop, withScores) {
+      let values = [...sortedSet(key).entries()]
+        .sort((a, b) => a[1] - b[1])
+        .slice(Number(start), Number(stop) + 1);
+
+      if (String(withScores).toUpperCase() === 'WITHSCORES')
+        return values.flatMap(([value, score]) => [value, String(score)]);
+
+      return values.map(([value]) => value);
+    },
     async zrem(key, value) {
       return sortedSet(key).delete(value) ? 1 : 0;
     },
@@ -267,8 +369,12 @@ function parseRespCommand(buffer) {
 async function createRespRedisServer(handleCommand) {
   let commands = [];
   let sockets = new Set();
+  let nextConnectionId = 1;
   let server = net.createServer(socket => {
     let buffer = '';
+    let connectionId = nextConnectionId;
+
+    nextConnectionId += 1;
 
     sockets.add(socket);
     socket.on('close', () => {
@@ -285,7 +391,12 @@ async function createRespRedisServer(handleCommand) {
 
         let command = parsed.parts.map(part => part.toString('utf8'));
         commands.push(command);
-        socket.write(handleCommand(command));
+        let response = handleCommand(command, {
+          connectionId
+        });
+
+        if (response !== undefined)
+          socket.write(response);
         buffer = parsed.rest;
       }
     });
@@ -419,6 +530,56 @@ function reportJob(events = [], options = {}) {
 }
 
 describe('Cricket jobs', () => {
+  it('requires an explicit queue driver for producers and workers', async () => {
+    let job = reportJob();
+
+    await assert.rejects(
+      createCricketJobs({
+        jobs: [job]
+      }),
+      /queues\.driver, queues\.redis, or explicit queues\.test/
+    );
+    await assert.rejects(
+      startCricketWorker(defineCricketApp({}), {
+        jobs: [job]
+      }),
+      /queues\.driver, queues\.redis, or explicit queues\.test/
+    );
+  });
+
+  it('rejects retry policies that cannot produce safe availability dates', () => {
+    assert.throws(() => retry.exponential({
+      attempts: 2,
+      delayMs: Number.MAX_SAFE_INTEGER
+    }), /delay exceeds the supported date range/);
+    assert.throws(() => retry.exponential({
+      attempts: Number.MAX_SAFE_INTEGER + 1,
+      delayMs: 1
+    }), /attempts must be a positive safe integer/);
+  });
+
+  it('requires custom worker clocks to own deadline waits', async () => {
+    let worker = await startCricketWorker(defineCricketApp({
+      logger() {}
+    }), {
+      clock: {
+        now: () => new Date('2026-06-18T12:00:00.000Z')
+      },
+      queues: {
+        test: true
+      }
+    });
+
+    try {
+      await assert.rejects(
+        worker.run(),
+        /custom clock\.now needs clock\.waitUntil/
+      );
+    } finally {
+      await worker.cleanup();
+    }
+  });
+
   it('plans immutable envelopes from job input and context', async () => {
     let job = reportJob();
     let app = defineCricketApp({});
@@ -538,6 +699,406 @@ describe('Cricket jobs', () => {
     }
   });
 
+  it('wakes the worker loop for enqueued work and stops on abort', async () => {
+    let waiting = deferred();
+    let completed = deferred();
+    let baseDriver = createTestQueueDriver();
+    let waitForWork = baseDriver.waitForWork.bind(baseDriver);
+    let driver = {
+      ...baseDriver,
+      async waitForWork(options) {
+        waiting.resolve();
+        return await waitForWork(options);
+      }
+    };
+    let job = defineJob({
+      name: 'reports.eventDriven',
+      input: z.object({
+        reportId: z.string()
+      }),
+      queue: redisQueue({
+        name: 'reports'
+      }),
+      run({ input }) {
+        completed.resolve(input.reportId);
+        return {
+          status: 'completed'
+        };
+      }
+    });
+    let worker = await startCricketWorker(defineCricketApp({
+      logger() {}
+    }), {
+      jobs: [job],
+      queues: {
+        driver
+      }
+    });
+    let controller = new AbortController();
+
+    try {
+      let running = worker.run({
+        signal: controller.signal
+      });
+
+      await waiting.promise;
+      await worker.jobs.enqueue(job, {
+        reportId: 'report_event_driven'
+      });
+      assert.equal(await completed.promise, 'report_event_driven');
+
+      controller.abort();
+      await running;
+
+      assert.equal(driver.snapshot().items[0].status, 'completed');
+    } finally {
+      await worker.cleanup();
+    }
+  });
+
+  it('stops a blocked worker loop when cleanup begins', async () => {
+    let waiting = deferred();
+    let baseDriver = createTestQueueDriver();
+    let waitForWork = baseDriver.waitForWork.bind(baseDriver);
+    let driver = {
+      ...baseDriver,
+      async waitForWork(options) {
+        waiting.resolve();
+        return await waitForWork(options);
+      }
+    };
+    let worker = await startCricketWorker(defineCricketApp({
+      logger() {}
+    }), {
+      queues: {
+        driver
+      }
+    });
+    let cleaned = false;
+
+    try {
+      let running = worker.run();
+
+      await waiting.promise;
+      await worker.cleanup();
+      cleaned = true;
+      await running;
+    } finally {
+      if (!cleaned)
+        await worker.cleanup();
+    }
+  });
+
+  it('recomputes its deadline when delayed work arrives after waiting starts', async () => {
+    let time = createManualClock('2026-06-19T12:00:00.000Z');
+    let waiting = deferred();
+    let completed = deferred();
+    let baseDriver = createTestQueueDriver();
+    let waitForWork = baseDriver.waitForWork.bind(baseDriver);
+    let driver = {
+      ...baseDriver,
+      async waitForWork(options) {
+        waiting.resolve();
+        return await waitForWork(options);
+      }
+    };
+    let job = defineJob({
+      name: 'reports.lateDelayedBoundary',
+      input: z.object({
+        reportId: z.string()
+      }),
+      queue: redisQueue({
+        name: 'reports'
+      }),
+      run({ input }) {
+        completed.resolve(input.reportId);
+        return {
+          status: 'completed'
+        };
+      }
+    });
+    let worker = await startCricketWorker(defineCricketApp({
+      logger() {}
+    }), {
+      clock: time.clock,
+      jobs: [job],
+      queues: {
+        driver
+      }
+    });
+    let controller = new AbortController();
+
+    try {
+      let running = worker.run({
+        signal: controller.signal
+      });
+
+      await waiting.promise;
+      let nextWait = time.nextWait();
+      await worker.jobs.enqueue(job, {
+        reportId: 'report_late_delayed_boundary'
+      }, {
+        delayMs: 60_000
+      });
+
+      assert.equal(
+        (await nextWait).toISOString(),
+        '2026-06-19T12:01:00.000Z'
+      );
+      time.advanceBy(60_000);
+      assert.equal(await completed.promise, 'report_late_delayed_boundary');
+
+      controller.abort();
+      await running;
+    } finally {
+      await worker.cleanup();
+    }
+  });
+
+  it('wakes the worker loop at the next delayed boundary', async () => {
+    let time = createManualClock('2026-06-19T12:00:00.000Z');
+    let completed = deferred();
+    let job = defineJob({
+      name: 'reports.delayedBoundary',
+      input: z.object({
+        reportId: z.string()
+      }),
+      queue: redisQueue({
+        name: 'reports'
+      }),
+      run({ input }) {
+        completed.resolve(input.reportId);
+        return {
+          status: 'completed'
+        };
+      }
+    });
+    let worker = await startCricketWorker(defineCricketApp({
+      logger() {}
+    }), {
+      clock: time.clock,
+      jobs: [job],
+      queues: {
+        test: true
+      }
+    });
+    let controller = new AbortController();
+
+    try {
+      await worker.jobs.enqueue(job, {
+        reportId: 'report_delayed_boundary'
+      }, {
+        delayMs: 60_000
+      });
+      let nextWait = time.nextWait();
+      let running = worker.run({
+        signal: controller.signal
+      });
+
+      assert.equal(
+        (await nextWait).toISOString(),
+        '2026-06-19T12:01:00.000Z'
+      );
+      time.advanceBy(60_000);
+      assert.equal(await completed.promise, 'report_delayed_boundary');
+
+      controller.abort();
+      await running;
+    } finally {
+      await worker.cleanup();
+    }
+  });
+
+  it('wakes the worker loop at the next cron boundary', async () => {
+    let time = createManualClock('2026-06-19T09:14:00.000Z');
+    let completed = deferred();
+    let job = defineJob({
+      name: 'maintenance.scheduledBoundary',
+      input: z.object({
+        scheduledFor: z.string()
+      }),
+      queue: redisQueue({
+        name: 'maintenance'
+      }),
+      schedule: cronSchedule({
+        key: 'scheduled_boundary',
+        cron: '15 4 * * *',
+        timezone: 'America/Chicago',
+        input: ({ scheduledFor }) => ({
+          scheduledFor
+        })
+      }),
+      run({ input }) {
+        completed.resolve(input.scheduledFor);
+        return {
+          status: 'completed'
+        };
+      }
+    });
+    let worker = await startCricketWorker(defineCricketApp({
+      logger() {}
+    }), {
+      clock: time.clock,
+      jobs: [job],
+      queues: {
+        test: true
+      }
+    });
+    let controller = new AbortController();
+
+    try {
+      let nextWait = time.nextWait();
+      let running = worker.run({
+        signal: controller.signal
+      });
+
+      assert.equal(
+        (await nextWait).toISOString(),
+        '2026-06-19T09:15:00.000Z'
+      );
+      time.advanceBy(60_000);
+      assert.equal(await completed.promise, '2026-06-19T09:15:00.000Z');
+
+      controller.abort();
+      await running;
+    } finally {
+      await worker.cleanup();
+    }
+  });
+
+  it('renews active job heartbeats through the injected clock lifecycle', async () => {
+    let time = createManualClock('2026-06-19T12:00:00.000Z');
+    let started = deferred();
+    let release = deferred();
+    let renewed = deferred();
+    let heartbeatCount = 0;
+    let baseDriver = createTestQueueDriver();
+    let heartbeat = baseDriver.heartbeat.bind(baseDriver);
+    let driver = {
+      ...baseDriver,
+      async heartbeat(...args) {
+        await heartbeat(...args);
+        heartbeatCount += 1;
+
+        if (heartbeatCount === 2)
+          renewed.resolve();
+      }
+    };
+    let job = defineJob({
+      name: 'reports.longRunning',
+      input: z.object({
+        reportId: z.string()
+      }),
+      queue: redisQueue({
+        name: 'reports'
+      }),
+      async run() {
+        started.resolve();
+        await release.promise;
+        return {
+          status: 'completed'
+        };
+      }
+    });
+    let worker = await startCricketWorker(defineCricketApp({
+      logger() {}
+    }), {
+      clock: time.clock,
+      jobs: [job],
+      queues: {
+        driver
+      }
+    });
+
+    try {
+      await worker.jobs.enqueue(job, {
+        reportId: 'report_long_running'
+      });
+      let nextHeartbeat = time.nextWait();
+      let draining = worker.drain();
+
+      await started.promise;
+      assert.equal(
+        (await nextHeartbeat).toISOString(),
+        '2026-06-19T12:00:15.000Z'
+      );
+      time.advanceBy(15_000);
+      await renewed.promise;
+
+      let [candidate] = await driver.recoveryCandidates();
+      assert.equal(candidate.lastHeartbeatAt, '2026-06-19T12:00:15.000Z');
+
+      release.resolve();
+      assert.deepEqual(await draining, [{
+        status: 'completed'
+      }]);
+    } finally {
+      release.resolve();
+      await worker.cleanup();
+    }
+  });
+
+  it('waits for active claims to settle before closing worker resources', async () => {
+    let started = deferred();
+    let release = deferred();
+    let order = [];
+    let baseDriver = createTestQueueDriver();
+    let complete = baseDriver.complete.bind(baseDriver);
+    let cleanup = baseDriver.cleanup.bind(baseDriver);
+    let driver = {
+      ...baseDriver,
+      async complete(...args) {
+        let result = await complete(...args);
+        order.push('completed');
+        return result;
+      },
+      async cleanup() {
+        order.push('cleanup');
+        await cleanup();
+      }
+    };
+    let job = defineJob({
+      name: 'reports.gracefulCleanup',
+      input: z.object({
+        reportId: z.string()
+      }),
+      queue: redisQueue({
+        name: 'reports'
+      }),
+      async run() {
+        started.resolve();
+        await release.promise;
+        return {
+          status: 'completed'
+        };
+      }
+    });
+    let worker = await startCricketWorker(defineCricketApp({
+      logger() {}
+    }), {
+      jobs: [job],
+      queues: {
+        driver
+      }
+    });
+
+    await worker.jobs.enqueue(job, {
+      reportId: 'report_graceful_cleanup'
+    });
+    let draining = worker.drain();
+
+    await started.promise;
+    let cleaning = worker.cleanup();
+
+    release.resolve();
+    await Promise.all([draining, cleaning]);
+
+    assert.deepEqual(order, [
+      'completed',
+      'cleanup'
+    ]);
+  });
+
   it('can drain worker failures without stopping the worker process', async () => {
     let testState = createTestState();
     let job = defineJob({
@@ -582,6 +1143,7 @@ describe('Cricket jobs', () => {
   it('runs retrying failure handlers after Cricket schedules retry work', async () => {
     let productEvents = [];
     let attempts = 0;
+    let time = createManualClock('2026-06-18T12:00:00.000Z');
     let job = defineJob({
       name: 'reports.retry',
       input: z.object({
@@ -638,6 +1200,7 @@ describe('Cricket jobs', () => {
         };
       }
     }), {
+      clock: time.clock,
       jobs: [job],
       queues: {
         test: true
@@ -649,12 +1212,20 @@ describe('Cricket jobs', () => {
         reportId: 'report_retry'
       });
 
-      assert.deepEqual(await worker.drain(), [
-        undefined,
-        {
-          status: 'completed'
-        }
-      ]);
+      let originalAvailableAt = worker.driver.snapshot().items[0].envelope.availableAt;
+
+      assert.deepEqual(await worker.drain(), [undefined]);
+      assert.deepEqual(await worker.drain(), []);
+      assert.equal(worker.driver.snapshot().items[0].availableAt, '2026-06-18T12:00:00.010Z');
+      assert.equal(worker.driver.snapshot().items[0].envelope.availableAt, originalAvailableAt);
+
+      time.advanceBy(9);
+      assert.deepEqual(await worker.drain(), []);
+
+      time.advanceBy(1);
+      assert.deepEqual(await worker.drain(), [{
+        status: 'completed'
+      }]);
       assert.deepEqual(productEvents, [
         {
           status: 'queued',
@@ -667,9 +1238,76 @@ describe('Cricket jobs', () => {
         'queued',
         'claimed',
         'retry_scheduled',
+        'delay_promoted',
         'claimed',
         'completed'
       ]);
+    } finally {
+      await worker.cleanup();
+    }
+  });
+
+  it('applies exponential retry delays and caps them at the policy maximum', async () => {
+    let time = createManualClock('2026-06-18T12:00:00.000Z');
+    let attempts = 0;
+    let job = defineJob({
+      name: 'reports.backoff',
+      input: z.object({
+        reportId: z.string()
+      }),
+      queue: redisQueue({
+        name: 'reports'
+      }),
+      retry: retry.exponential({
+        attempts: 4,
+        delayMs: 10,
+        maxDelayMs: 25
+      }),
+      run() {
+        attempts += 1;
+
+        if (attempts < 4)
+          throw new Error(`attempt ${attempts} failed`);
+
+        return {
+          status: 'completed'
+        };
+      }
+    });
+    let worker = await startCricketWorker(defineCricketApp({
+      logger() {}
+    }), {
+      clock: time.clock,
+      jobs: [job],
+      queues: {
+        test: true
+      }
+    });
+
+    try {
+      await worker.jobs.enqueue(job, {
+        reportId: 'report_backoff'
+      });
+
+      assert.deepEqual(await worker.drain(), [undefined]);
+      assert.equal(worker.driver.snapshot().items[0].availableAt, '2026-06-18T12:00:00.010Z');
+
+      time.advanceBy(10);
+      assert.deepEqual(await worker.drain(), [undefined]);
+      assert.equal(worker.driver.snapshot().items[0].availableAt, '2026-06-18T12:00:00.030Z');
+
+      time.advanceBy(20);
+      assert.deepEqual(await worker.drain(), [undefined]);
+      assert.equal(worker.driver.snapshot().items[0].availableAt, '2026-06-18T12:00:00.055Z');
+
+      time.advanceBy(24);
+      assert.deepEqual(await worker.drain(), []);
+
+      time.advanceBy(1);
+      assert.deepEqual(await worker.drain(), [{
+        status: 'completed'
+      }]);
+      assert.equal(attempts, 4);
     } finally {
       await worker.cleanup();
     }
@@ -1507,7 +2145,10 @@ describe('Cricket jobs', () => {
       assert.equal(duplicate.duplicate, true);
       assert.equal(claim.envelope.name, 'reports.generate');
       assert.equal(claim.attempt, 1);
-      assert.equal(await driver.waitForWork(), 'reports');
+      assert.deepEqual(await driver.waitForWork(), {
+        reason: 'work',
+        queueName: 'reports'
+      });
 
       await driver.progress(claim.envelope, {
         current: 1,
@@ -1518,6 +2159,136 @@ describe('Cricket jobs', () => {
       });
 
       assert.equal(redis.published.some(event => event.message === 'reports'), true);
+    } finally {
+      await worker.cleanup();
+    }
+  });
+
+  it('keeps Redis retries delayed until their calculated availability', async () => {
+    let time = createManualClock('2026-06-18T12:00:00.000Z');
+    let attempts = 0;
+    let redis = createFakeRedis();
+    let driver = await createRedisQueueDriver({
+      client: redis,
+      prefix: 'retry:jobs',
+      queueNames: ['reports']
+    });
+    let job = defineJob({
+      name: 'reports.redisRetry',
+      input: z.object({
+        reportId: z.string()
+      }),
+      queue: redisQueue({
+        name: 'reports'
+      }),
+      retry: retry.exponential({
+        attempts: 2,
+        delayMs: 10
+      }),
+      run() {
+        attempts += 1;
+
+        if (attempts === 1)
+          throw new Error('Redis retry delay');
+
+        return {
+          status: 'completed'
+        };
+      }
+    });
+    let worker = await startCricketWorker(defineCricketApp({
+      logger() {}
+    }), {
+      clock: time.clock,
+      jobs: [job],
+      queues: {
+        driver
+      }
+    });
+
+    try {
+      await worker.jobs.enqueue(job, {
+        reportId: 'report_redis_retry'
+      });
+
+      assert.deepEqual(await worker.drain(), [undefined]);
+      assert.equal(await driver.nextAvailableAt(), '2026-06-18T12:00:00.010Z');
+      assert.equal(await driver.claim(), undefined);
+
+      time.advanceBy(10);
+      assert.deepEqual(await worker.drain(), [{
+        status: 'completed'
+      }]);
+      assert.equal(attempts, 2);
+    } finally {
+      await worker.cleanup();
+    }
+  });
+
+  it('records retry availability in the job ledger', async () => {
+    let time = createManualClock('2026-06-18T12:00:00.000Z');
+    let attempts = 0;
+    let database = await createLedgerDatabase();
+    let job = defineJob({
+      name: 'reports.ledgerRetry',
+      input: z.object({
+        reportId: z.string()
+      }),
+      queue: redisQueue({
+        name: 'reports'
+      }),
+      retry: retry.exponential({
+        attempts: 2,
+        delayMs: 10
+      }),
+      run() {
+        attempts += 1;
+
+        if (attempts === 1)
+          throw new Error('Ledger retry delay');
+
+        return {
+          status: 'completed'
+        };
+      }
+    });
+    let worker = await startCricketWorker(defineCricketApp({
+      database,
+      logger() {}
+    }), {
+      clock: time.clock,
+      jobs: [job],
+      queues: {
+        test: true
+      }
+    });
+
+    try {
+      let queued = await worker.jobs.enqueue(job, {
+        reportId: 'report_ledger_retry'
+      });
+
+      assert.deepEqual(await worker.drain(), [undefined]);
+
+      let delayed = await worker.runtime.dependencies.db('cricket_jobs')
+        .where('id', queued.envelope.id)
+        .first();
+
+      assert.equal(delayed.status, 'delayed');
+      assert.equal(delayed.available_at, '2026-06-18T12:00:00.010Z');
+      assert.equal(delayed.attempts, 1);
+
+      time.advanceBy(10);
+      assert.deepEqual(await worker.drain(), [{
+        status: 'completed'
+      }]);
+
+      let completed = await worker.runtime.dependencies.db('cricket_jobs')
+        .where('id', queued.envelope.id)
+        .first();
+
+      assert.equal(completed.status, 'completed');
+      assert.equal(completed.attempts, 2);
     } finally {
       await worker.cleanup();
     }
@@ -1571,6 +2342,74 @@ describe('Cricket jobs', () => {
         'PUBLISH'
       ]);
     } finally {
+      await driver.cleanup();
+      await redis.close();
+    }
+  });
+
+  it('keeps Redis commands usable while the worker blocks for a wakeup', async () => {
+    let blocked = deferred();
+    let blockingConnection;
+    let commandConnections = [];
+    let redis = await createRespRedisServer(([command], {
+      connectionId
+    }) => {
+      if (command === 'BLPOP') {
+        blockingConnection = connectionId;
+        blocked.resolve();
+        return undefined;
+      }
+
+      commandConnections.push(connectionId);
+
+      if (command === 'GET')
+        return encodeRespBulkString(null);
+
+      if (command === 'SET')
+        return encodeRespSimpleString('OK');
+
+      if (['HSET', 'RPUSH', 'PUBLISH'].includes(command))
+        return encodeRespInteger(1);
+
+      return encodeRespSimpleString('OK');
+    });
+    let driver = await createRedisQueueDriver({
+      url: redis.url,
+      prefix: 'blocking:jobs',
+      queueNames: ['reports']
+    });
+    let controller = new AbortController();
+    let envelope = {
+      schemaVersion: 1,
+      id: 'jobenv_blocking_connection',
+      name: 'reports.generate',
+      queueName: 'reports',
+      input: {
+        reportId: 'report_blocking_connection'
+      },
+      context: {},
+      policy: {
+        attempts: 1
+      },
+      createdAt: '2026-06-18T12:00:00.000Z',
+      availableAt: '2026-06-18T12:00:00.000Z'
+    };
+
+    try {
+      let waiting = driver.waitForWork({
+        signal: controller.signal
+      });
+
+      await blocked.promise;
+      assert.equal((await driver.enqueue(envelope)).enqueued, true);
+      assert.ok(commandConnections.every(connectionId => connectionId !== blockingConnection));
+
+      controller.abort();
+      assert.deepEqual(await waiting, {
+        reason: 'aborted'
+      });
+    } finally {
+      controller.abort();
       await driver.cleanup();
       await redis.close();
     }

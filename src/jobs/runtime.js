@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { setTimeout as sleep } from 'node:timers/promises';
 
 import { createCricketRuntime } from '../http/runtime.js';
 import { createTrace } from '../trace.js';
 import { parseZod } from '../schema.js';
+import { normalizeJobClock } from './clock.js';
 import { jobResultFailed } from './errors.js';
 import { planJobEnvelope } from './envelope.js';
 import { createRedisQueueDriver } from './drivers/redis.js';
@@ -17,7 +17,10 @@ import {
   planCronSchedule,
   previousCronRun
 } from './schedule.js';
+import { retryAvailability } from './retry.js';
 import { createTestQueueDriver } from './test-driver.js';
+
+let heartbeatIntervalMs = 15_000;
 
 function toArray(value) {
   if (!value)
@@ -236,6 +239,66 @@ function timestamp(value) {
   return date.toISOString();
 }
 
+function combinedSignal(...signals) {
+  let active = signals.filter(Boolean);
+
+  if (!active.length)
+    return undefined;
+
+  return active.length === 1 ? active[0] : AbortSignal.any(active);
+}
+
+async function maintainHeartbeat({
+  clock,
+  driver,
+  envelope,
+  logger,
+  signal
+}) {
+  while (!signal.aborted) {
+    let until = new Date(new Date(clock.now()).getTime() + heartbeatIntervalMs);
+
+    try {
+      await clock.waitUntil(until, {
+        signal
+      });
+    } catch (error) {
+      if (error?.name === 'AbortError' || signal.aborted)
+        return;
+
+      logger.warn('job.heartbeat_wait_failed', {
+        error
+      });
+      return;
+    }
+
+    if (signal.aborted)
+      return;
+
+    try {
+      await driver.heartbeat?.(envelope, {
+        now: clock.now()
+      });
+    } catch (error) {
+      logger.warn('job.heartbeat_failed', {
+        error
+      });
+    }
+  }
+}
+
+function earliestTimestamp(values) {
+  let timestamps = values
+    .filter(Boolean)
+    .map(value => new Date(value).getTime())
+    .filter(value => !Number.isNaN(value));
+
+  if (!timestamps.length)
+    return undefined;
+
+  return new Date(Math.min(...timestamps)).toISOString();
+}
+
 function scheduleContext(runtime, {
   now,
   scheduledFor
@@ -253,7 +316,7 @@ async function createDriver(queues = {}, jobList = []) {
   if (queues.driver)
     return queues.driver;
 
-  if (queues.test)
+  if (queues.test === true)
     return createTestQueueDriver();
 
   if (queues.redis)
@@ -264,7 +327,7 @@ async function createDriver(queues = {}, jobList = []) {
         .filter(Boolean)
     });
 
-  return createTestQueueDriver();
+  throw new Error('Cricket jobs need queues.driver, queues.redis, or explicit queues.test');
 }
 
 function createJobsCapability({
@@ -309,7 +372,7 @@ function createJobsCapability({
  * as `startCricketWorker`.
  *
  * @param {object} [options]
- * @param {object} [options.clock] - Clock used for deterministic enqueue and schedule tests.
+ * @param {object} [options.clock] - Clock with `now` and optional `waitUntil` functions.
  * @param {object[]} [options.jobs] - Job contracts used to initialize queue names.
  * @param {object} [options.ledger] - Job ledger options.
  * @param {object} [options.ledger.db] - Knex database handle for ledger writes.
@@ -319,14 +382,13 @@ function createJobsCapability({
  * @returns {Promise<object>} Producer controls, driver, ledger, and jobs capability.
  */
 export async function createCricketJobs({
-  clock = {
-    now: () => new Date()
-  },
+  clock: clockOptions,
   jobs = [],
   ledger: ledgerOptions = {},
   logger,
   queues = {}
 } = {}) {
+  let clock = normalizeJobClock(clockOptions);
   let jobList = toArray(jobs);
   let driver = await createDriver(queues, jobList);
   let ledger = createJobLedger(ledgerOptions);
@@ -360,7 +422,7 @@ export async function createCricketJobs({
  * @param {object} cricketApp - App returned by `defineCricketApp`.
  * @param {object} [options]
  * @param {string|URL} [options.baseUrl] - Module URL used to resolve domain paths.
- * @param {object} [options.clock] - Clock used for deterministic enqueue and schedule tests.
+ * @param {object} [options.clock] - Clock with `now` and optional `waitUntil` functions.
  * @param {object[]} [options.jobs] - Additional job contracts to register.
  * @param {object} [options.ledger] - Job ledger options.
  * @param {string} [options.ledger.tableName='cricket_jobs'] - Ledger table name.
@@ -369,13 +431,12 @@ export async function createCricketJobs({
  */
 export async function startCricketWorker(cricketApp, {
   baseUrl,
-  clock = {
-    now: () => new Date()
-  },
+  clock: clockOptions,
   jobs = [],
   ledger: ledgerOptions = {},
   queues = {}
 } = {}) {
+  let clock = normalizeJobClock(clockOptions);
   let runtime = await createCricketRuntime(cricketApp, {
     baseUrl
   });
@@ -383,7 +444,20 @@ export async function startCricketWorker(cricketApp, {
     ...toArray(runtime.contract.jobs),
     ...toArray(jobs)
   ];
-  let driver = await createDriver(queues, jobList);
+  let driver;
+
+  try {
+    driver = await createDriver(queues, jobList);
+  } catch (error) {
+    await runtime.cleanup();
+    throw error;
+  }
+
+  if (typeof driver.waitForWork !== 'function') {
+    await driver.cleanup?.();
+    await runtime.cleanup();
+    throw new Error('Cricket worker queue drivers need waitForWork');
+  }
   let ledger = createJobLedger({
     db: runtime.dependencies.db,
     ...ledgerOptions
@@ -393,6 +467,11 @@ export async function startCricketWorker(cricketApp, {
     logger: runtime.logger
   });
   let byName = jobsByName(jobList);
+  let activeClaims = new Set();
+  let activeRuns = new Set();
+  let clockCanDriveWorker = !clockOptions?.now || Boolean(clockOptions.waitUntil);
+  let shuttingDown = false;
+  let workerLifecycle = new AbortController();
 
   async function emitJobEvent(type, envelope, metadata = {}) {
     await runtime.observability.emit({
@@ -420,27 +499,40 @@ export async function startCricketWorker(cricketApp, {
     envelope,
     attempt,
     error,
+    job,
     logger,
     jobRunId,
     runFailureHandler
   }) {
     let failure = safeError(error);
+    let now = clock.now();
+    let retry = retryAvailability(job.retry, attempt, now);
 
-    let result = await driver.retry(envelope, error);
+    let result = await driver.retry(envelope, {
+      error,
+      now,
+      availableAt: retry.availableAt
+    });
 
     if (result?.settled === false)
       return false;
 
     await recordLedger('retrying', envelope, ledger => ledger.retrying(envelope, {
       attempt,
-      error: failure
+      availableAt: retry.availableAt,
+      error: failure,
+      status: retry.delayMs ? 'delayed' : 'queued'
     }));
     await emitJobEvent('job.retry_scheduled', envelope, {
       ...(jobRunId ? { jobRunId } : {}),
       attempt,
+      availableAt: retry.availableAt,
+      delayMs: retry.delayMs,
       error: failure
     });
     logger.warn('job.retry_scheduled', {
+      availableAt: retry.availableAt,
+      delayMs: retry.delayMs,
       error
     });
     await runFailureHandler?.('retrying', error);
@@ -536,12 +628,14 @@ export async function startCricketWorker(cricketApp, {
       attempt: claim.attempt
     });
     logger.info('job.started');
-    let heartbeat = setInterval(() => {
-      driver.heartbeat?.(envelope, {
-        now: clock.now()
-      })?.catch?.(() => {});
-    }, 15_000);
-    heartbeat.unref?.();
+    let claimLifecycle = new AbortController();
+    let heartbeat = maintainHeartbeat({
+      clock,
+      driver,
+      envelope,
+      logger,
+      signal: claimLifecycle.signal
+    });
 
     try {
       let result = await trace.span(`job.run ${job.name}`, {}, () => job.run({
@@ -578,6 +672,7 @@ export async function startCricketWorker(cricketApp, {
           attempt: claim.attempt,
           jobRunId: jobRun.jobRunId,
           error,
+          job,
           logger,
           runFailureHandler
         });
@@ -594,7 +689,19 @@ export async function startCricketWorker(cricketApp, {
       });
       throw error;
     } finally {
-      clearInterval(heartbeat);
+      claimLifecycle.abort();
+      await heartbeat;
+    }
+  }
+
+  async function executeClaim(claim) {
+    let execution = runClaim(claim);
+    activeClaims.add(execution);
+
+    try {
+      return await execution;
+    } finally {
+      activeClaims.delete(execution);
     }
   }
 
@@ -682,6 +789,7 @@ export async function startCricketWorker(cricketApp, {
             attempt: candidate.attempt,
             jobRunId: jobRun.jobRunId,
             error,
+            job,
             logger,
             runFailureHandler
           });
@@ -719,6 +827,7 @@ export async function startCricketWorker(cricketApp, {
   }
 
   async function drain({
+    signal,
     throwOnError = true
   } = {}) {
     let results = [];
@@ -727,14 +836,14 @@ export async function startCricketWorker(cricketApp, {
       now: clock.now()
     });
 
-    while (true) {
+    while (!shuttingDown && !signal?.aborted) {
       let claim = await driver.claim();
 
       if (!claim)
         return results;
 
       try {
-        results.push(await runClaim(claim));
+        results.push(await executeClaim(claim));
       } catch (error) {
         if (throwOnError)
           throw error;
@@ -744,6 +853,8 @@ export async function startCricketWorker(cricketApp, {
         });
       }
     }
+
+    return results;
   }
 
   async function startSchedule(job) {
@@ -800,10 +911,6 @@ export async function startCricketWorker(cricketApp, {
           now
         }))
         : true;
-
-      if (!enabled)
-        continue;
-
       let state = await driver.scheduleState?.(job);
       let lastRunAt = state?.lastRunAt ?? previousCronRun(job.schedule, now);
       let plan = planCronSchedule(job.schedule, {
@@ -811,6 +918,16 @@ export async function startCricketWorker(cricketApp, {
         now,
         limit
       });
+
+      if (!enabled) {
+        await driver.updateSchedule?.(job, {
+          enabled: false,
+          lastRunAt: plan.due.at(-1)?.scheduledFor ?? lastRunAt,
+          nextRunAt: plan.nextRunAt,
+          missed: plan.missed
+        });
+        continue;
+      }
 
       for (let slot of plan.due) {
         let envelope = jobsCapability.plan(job, job.schedule.input(scheduleContext(runtime, {
@@ -839,6 +956,7 @@ export async function startCricketWorker(cricketApp, {
       }
 
       await driver.updateSchedule?.(job, {
+        enabled: true,
         lastRunAt: plan.due.at(-1)?.scheduledFor ?? lastRunAt,
         nextRunAt: plan.nextRunAt,
         missed: plan.missed
@@ -852,30 +970,74 @@ export async function startCricketWorker(cricketApp, {
     return materialized;
   }
 
-  async function run({
-    intervalMs = 1_000,
+  async function nextScheduleBoundary() {
+    let boundaries = [];
+
+    for (let job of jobList) {
+      if (!job.schedule)
+        continue;
+
+      let state = await driver.scheduleState?.(job);
+
+      boundaries.push(state?.nextRunAt);
+    }
+
+    return earliestTimestamp(boundaries);
+  }
+
+  async function nextWorkerBoundary() {
+    return earliestTimestamp([
+      await driver.nextAvailableAt?.(),
+      await nextScheduleBoundary()
+    ]);
+  }
+
+  async function runLoop({
     signal,
     throwOnError = false
   } = {}) {
-    while (!signal?.aborted) {
+    if (!clockCanDriveWorker)
+      throw new Error('worker.run with a custom clock.now needs clock.waitUntil');
+
+    let runSignal = combinedSignal(signal, workerLifecycle.signal);
+
+    while (!runSignal.aborted) {
       await recover({
         throwOnError
       });
       await tickSchedules();
       await drain({
+        signal: runSignal,
         throwOnError
       });
 
       try {
-        await sleep(intervalMs, undefined, {
-          signal
+        let wait = await driver.waitForWork({
+          signal: runSignal,
+          until: await nextWorkerBoundary(),
+          now: clock.now(),
+          waitUntil: clock.waitUntil
         });
+
+        if (wait?.reason === 'aborted')
+          return;
       } catch (error) {
-        if (error?.name === 'AbortError')
+        if (error?.name === 'AbortError' || runSignal.aborted)
           return;
 
         throw error;
       }
+    }
+  }
+
+  async function run(options = {}) {
+    let execution = runLoop(options);
+    activeRuns.add(execution);
+
+    try {
+      return await execution;
+    } finally {
+      activeRuns.delete(execution);
     }
   }
 
@@ -885,6 +1047,11 @@ export async function startCricketWorker(cricketApp, {
   }
 
   async function cleanup() {
+    shuttingDown = true;
+    workerLifecycle.abort();
+    await Promise.allSettled([...activeRuns]);
+    await Promise.allSettled([...activeClaims]);
+
     try {
       await driver.cleanup?.();
     } finally {

@@ -164,11 +164,14 @@ export function createJobLedger({
 
     async retrying(envelope, {
       attempt,
-      error
+      availableAt,
+      error,
+      status
     }) {
       await updateOrInsert(db, tableName, envelope, {
-        status: 'queued',
+        status,
         attempts: attempt,
+        available_at: availableAt,
         last_error: textValue(error),
         updated_at: timestamp()
       });

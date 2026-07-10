@@ -26,6 +26,9 @@ Use this when adding or changing Cricket tests.
 
 - Start jobs with `startCricketWorker(app, { jobs, queues: { test: true } })`.
 - Use fixed clocks for delayed and scheduled work.
+- Direct `worker.schedules.tick()` and `worker.drain()` tests only need
+  `clock.now`. Continuous `worker.run()` tests must also provide
+  `clock.waitUntil` and advance that concrete deadline without sleeping.
 - Call `worker.schedules.tick()` to materialize due cron slots, then `worker.drain()` to execute ready work.
 - Assert product state, job runtime events, traces, progress, retries, failure handlers, and ledger rows when relevant.
 
