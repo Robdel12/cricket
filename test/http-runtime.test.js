@@ -491,6 +491,47 @@ describe('Cricket HTTP runtime', () => {
     );
   });
 
+  it('rejects legacy bare dependency objects from setup', async () => {
+    let cricketApp = defineCricketApp({
+      endpoints: [],
+      setup() {
+        return {
+          cache: {}
+        };
+      }
+    });
+
+    await assert.rejects(
+      createCricketRuntime(cricketApp, {
+        logger() {}
+      }),
+      /setup received unknown option cache/
+    );
+  });
+
+  it('rejects invalid setup return shapes at runtime assembly', async () => {
+    let invalidSetups = [
+      [() => null, /setup must return/],
+      [() => [], /setup must return/],
+      [() => new Date(), /setup must return/],
+      [() => ({ dependencies: null }), /dependencies must be a plain object/],
+      [() => ({ services: [] }), /services must be a plain object/],
+      [() => ({ cleanup: true }), /cleanup must be a function/]
+    ];
+
+    for (let [setup, expectedError] of invalidSetups) {
+      await assert.rejects(
+        createCricketRuntime(defineCricketApp({
+          endpoints: [],
+          setup
+        }), {
+          logger() {}
+        }),
+        expectedError
+      );
+    }
+  });
+
   it('threads read-only lifecycle state through runtime setup and requests', async () => {
     let events = [];
     let endpoint = defineEndpoint({

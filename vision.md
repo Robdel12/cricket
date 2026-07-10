@@ -107,16 +107,23 @@ headers, cookies, redirects, streaming, and cleanup. This keeps domain objects
 from accidentally becoming transport instructions because they happen to have
 a field named `status` or `redirect`.
 
-The runtime should pass one consistent capability shape through setup,
-middleware, rules, handlers, services, jobs, workers, shutdown hooks, logs, and
-traces:
+The runtime should expose capabilities deliberately at the phase that owns
+them, not imply one universal bag:
 
-- `logger`
-- `trace`
-- `lifecycle`
-- `services`
-- `db` when Cricket provides the database handle
-- request or job identity
+- Setup returns one explicit `{ dependencies, services, cleanup }` contract.
+- Setup, service composition, and middleware initialization receive lifecycle
+  and logger before request or job identity exists.
+- Request context, rules, and handlers receive services, lifecycle, setup
+  dependencies, and request-scoped logger and trace capabilities.
+- Job `run` and failure handlers receive services, lifecycle, logger, trace,
+  jobs, and progress. Recovery receives evidence, time, logger, and trace for a
+  pure decision.
+- Shutdown hooks receive the assembled runtime rather than a synthetic request
+  or job trace.
+
+When Cricket provides `db`, it is a setup dependency and follows dependency
+injection into request code. Jobs should normally reach data work through
+services rather than a raw database handle.
 
 Apps may read lifecycle state, but product health remains app responsibility. A Cricket
 runtime can say it is starting, ready, shutting down, or stopped. It should not
@@ -139,8 +146,9 @@ Jobs are Cricket contracts for background work.
 
 A job should be an immutable envelope with validated input, explicit context,
 queue metadata, retry policy, observable execution, recovery policy, and a
-plain `run` function. Job code should receive the same app capabilities as HTTP
-handlers: services, logger, trace, lifecycle, jobs, and progress.
+plain `run` function. Job execution reuses assembled app services, lifecycle,
+and logger, then adds job-scoped trace, jobs, and progress capabilities.
+Recovery reads execution evidence and returns a pure decision.
 
 Queue ownership should always be explicit. Workers wait for driver wakeups or
 the next known delayed or cron boundary, and shutdown aborts that wait. They do
@@ -227,9 +235,12 @@ framework shape.
 
 The CLI should create structure and orientation, not product behavior.
 
-`cricket new domain` scaffolds the standard domain files. `cricket init app`
-scaffolds the small app shell. `cricket init agents` ships project guidance and
-local Cricket skills so agents learn the same architecture humans use.
+`cricket new domain` requires apps to select the files a domain actually needs.
+Its test scaffold is a visible todo until the app proves behavior through the
+HTTP or worker boundary.
+`cricket init app` scaffolds the small app shell. `cricket init agents` ships
+project guidance and local Cricket skills so agents learn the same architecture
+humans use.
 
 The generated guidance is documentation. When Cricket's public contract changes,
 revise the relevant guidance as a whole and remove superseded instructions.

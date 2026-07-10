@@ -12,6 +12,7 @@ export let app = defineCricketApp({
   },
   domains: './api',
   async setup() {
+    // Disposable test fixture setup. Real apps own schema through api/migrations/.
     let db = knex({
       client: 'sqlite3',
       connection: {

@@ -1,4 +1,4 @@
-function isPlainObject(value) {
+export function isPlainObject(value) {
   if (!value || typeof value !== 'object')
     return false;
 

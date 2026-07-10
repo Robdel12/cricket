@@ -9,7 +9,10 @@ Use this when a change touches how a Cricket app explains itself.
 
 ## Logger
 
-- Use the Cricket logger shape passed through setup, services, rules, middleware, handlers, jobs, workers, startup, shutdown, and errors.
+- Use the Cricket logger shape supplied at each runtime phase. Setup, services,
+  middleware initialization, requests, jobs, shutdown, and errors receive a
+  logger appropriate to their scope. Worker runtimes expose that logger to
+  worker entrypoints.
 - Prefer structured metadata over formatted strings.
 - Do not log secrets. Cricket redacts common secret-shaped keys, but app code should still avoid putting sensitive values in logs.
 - Use child metadata for stable facts such as `requestId`, job identity, route identity, account IDs, or operation names.
@@ -19,11 +22,15 @@ Use this when a change touches how a Cricket app explains itself.
 - Use `trace.span(name, metadata, fn)` around meaningful work, especially service calls, external calls, and job steps.
 - Keep span names stable and domain-readable.
 - Do not turn tracing into logging. Spans should explain timing and nesting.
+- Setup receives a no-op startup trace. Real traces belong to request and job
+  execution; shutdown hooks receive the assembled runtime without a synthetic
+  trace.
 - Use `pnpm cricket trace` with newline-delimited JSON logs when debugging one request timeline.
 
 ## Lifecycle
 
-- Read `lifecycle` from setup, services, middleware, context, handlers, jobs, workers, and shutdown hooks.
+- Read `lifecycle` from setup, services, middleware, context, handlers, jobs,
+  and shutdown hooks. Worker runtimes expose it to worker entrypoints.
 - Use lifecycle state for readiness and shutdown decisions. Product health checks still decide whether the app is ready for traffic.
 - Do not invent separate lifecycle globals.
 

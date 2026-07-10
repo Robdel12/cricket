@@ -40,6 +40,7 @@ Start with `pnpm cricket inspect api/index.js`, then read `api/index.js` and the
 - Put auth, existence, ownership, and business checks in `*.rules.js`.
 - Put endpoint contracts in `*.routes.js`.
 - Put asynchronous job contracts in `*.jobs.js`.
+- Put HTTP and worker-boundary behavior tests in `*.test.js`.
 
 The folder is the domain. Optional files stay optional; Cricket auto-loads direct domain-local `*.<type>.js` files.
 
@@ -81,8 +82,14 @@ pnpm cricket init agents .
 pnpm cricket inspect api/index.js
 pnpm cricket docs api/index.js --out openapi.json
 pnpm cricket migrate status api/index.js
-pnpm cricket new domain project api/domains
+pnpm cricket new domain project api/domains --with model,validations,service,routes,test
 pnpm test
 ```
 
-After scaffolding a domain, make sure the app's `domains` value points at the domain root, add table migrations in `api/migrations/` when the domain persists data, and regenerate OpenAPI when HTTP contracts changed.
+Choose only the files the domain needs, or use `--with all` deliberately. A
+selected test starts as a todo until it proves behavior through the HTTP or
+worker boundary. Select `model` with `serializers`, unless the domain already
+has `schema.model.js`. After
+scaffolding, make sure the app's `domains` value points at the domain root, add
+table migrations in `api/migrations/` when the domain persists data, and
+regenerate OpenAPI when HTTP contracts changed.

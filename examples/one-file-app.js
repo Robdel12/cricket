@@ -153,6 +153,7 @@ export let app = defineCricketApp({
     projectDomain
   ],
   async setup({ db }) {
+    // Disposable one-file demo setup. Real apps own schema through api/migrations/.
     await db.schema.createTable('project', table => {
       table.string('id').primary();
       table.string('owner_id').notNullable();

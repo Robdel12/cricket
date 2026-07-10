@@ -25,6 +25,7 @@ import {
   runTestCommand
 } from '../src/test/cli.js';
 import {
+  domainScaffoldFileTypes,
   formatAppScaffoldResult,
   formatAgentScaffoldResult,
   formatScaffoldResult,
@@ -39,7 +40,8 @@ function hasFlag(args, flag) {
 
 let valueFlags = new Set([
   '--env',
-  '--out'
+  '--out',
+  '--with'
 ]);
 
 function withoutFlags(args) {
@@ -76,7 +78,7 @@ function optionValue(args, name) {
 
 function usage() {
   return `Usage:
-  cricket new domain <name> [root] [--force]
+  cricket new domain <name> [root] --with <types|all> [--force]
   cricket init app [root] [--force]
   cricket init agents [root] [--force]
   cricket inspect <appModule>
@@ -90,9 +92,13 @@ function usage() {
   cricket test [targets...] [--grep text] [--reporter cricket|spec|dot|tap] [--json] [--output report.json] [--coverage]
   cricket trace <requestId>
 
+Domain types:
+  ${domainScaffoldFileTypes.join(', ')}
+  serializers requires model in the selection or existing domain
+
 Examples:
   cricket init app .
-  cricket new domain project api/domains
+  cricket new domain project api/domains --with model,validations,serializers,service,rules,routes,test
   cricket init agents .
   cricket inspect api/index.js
   cricket docs api/index.js --out openapi.json
@@ -117,6 +123,7 @@ async function runNewDomain(args) {
   let result = await scaffoldDomain({
     root,
     name,
+    types: optionValue(args, '--with')?.split(',').map(type => type.trim()).filter(Boolean),
     force: hasFlag(args, '--force')
   });
 
