@@ -21,9 +21,6 @@ Use this when adding or changing Cricket tests.
 - Drive requests with `api.get`, `api.post`, `api.patch`, and related helpers.
 - Inspect `testState.request(requestId)`, `testState.trace(requestId)`, logs, lifecycle events, and timings when they matter to behavior.
 - Keep app database setup explicit. The test runtime does not reset product state for you.
-- When transport behavior changes, prove both sides of the boundary: explicit
-  response helpers control HTTP details, while status-shaped domain objects
-  remain ordinary response bodies.
 
 ## Job Tests
 

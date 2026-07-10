@@ -11,18 +11,22 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
 
 ## Why
 
-- The HTTP core is sturdy, but several definition boundaries remain mutable or ambiguous.
+- Cricket's public surface spans definition, HTTP, job, documentation, and
+  generated-guidance contracts; drift in any one of them teaches apps the wrong
+  framework shape.
 - The jobs API advertises retry, concurrency, priority, retention, wakeups, and Redis durability beyond what the runtime currently enforces.
 - Cricket's vision explicitly rejects hidden mutation, transport magic, polling waits, and contract theater.
 
 ## Current Repo Facts
 
+- App, endpoint, rule, model, serializer, normalizer, and job definitions now
+  return stable contracts without freezing caller-owned runtime values.
+- Observer events copy Cricket-owned structure, internal output contract failures
+  are redacted at HTTP, and runtime default statuses agree with OpenAPI.
+- HTTP transport intent now comes from branded response helpers; bare handler,
+  middleware, and fallback values remain response bodies.
 - `src/jobs/runtime.js` immediately requeues exponential retries, polls every second, and never evaluates job concurrency policies.
 - `src/jobs/drivers/redis.js` stores priority/retention-adjacent metadata but claims FIFO and settles work through non-atomic command sequences.
-- `src/app.js`, `src/endpoint.js`, and `src/rule.js` return mutable definition contracts; `src/observability.js` freezes caller-owned nested event values.
-- `src/endpoint.js` treats any bare object with `status` as a transport response.
-- `src/errors.js` exposes Zod issues for internal response/serializer/normalizer failures.
-- `src/openapi.js` documents an undeclared POST response as 200 while runtime behavior defaults to 201.
 - `src/structure.js` scaffolds optional empty files and a passing test with no assertion.
 - `test/jobs.test.js` proves worker behavior mainly through the test driver and protocol doubles, not a real concurrent Redis boundary.
 
@@ -34,6 +38,9 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
 - Every documented job option changes execution behavior; unsupported options do not remain as inspect-only promises.
 - Redis claim, retry, completion, failure, idempotency, and schedule transitions are atomic and tested against real Redis.
 - Workers wait on concrete driver events and abort signals instead of polling timers.
+- README, vision, examples, and generated skills describe one cohesive current
+  framework contract. Revise or remove stale guidance instead of appending
+  patch notes that preserve the order changes happened.
 
 ## Work Checklist
 
@@ -85,6 +92,9 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
 - Focused HTTP, jobs, CLI, and Redis integration commands added by each PR.
 - [ ] Each PR proves user-visible or operator-visible behavior at the boundary that consumes it.
 - [ ] README, `vision.md`, examples, inspect/OpenAPI output, and generated agent guidance agree with runtime truth.
+- [ ] Each PR reads every affected documentation and skill file as a whole,
+  reorganizes existing guidance where needed, and removes superseded or
+  duplicative instructions rather than only appending new sections.
 
 ## Done Criteria
 
@@ -92,6 +102,8 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
 - [ ] Definition-time contracts cannot drift after construction and Cricket never freezes caller-owned values.
 - [ ] HTTP runtime behavior and OpenAPI output agree.
 - [ ] Job execution semantics are deterministic, event-driven, atomic, and proven against real Redis.
+- [ ] Documentation and generated skills read as a cohesive description of the
+  current framework, not a timeline of completed hardening work.
 - [ ] Full verification passes after every PR-sized lane.
 - [ ] This temporary workpad is removed and the active goal can be marked complete.
 
@@ -101,3 +113,6 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
 - 2026-07-09: Prefer clean public-contract cutovers; do not add compatibility shims or dual runtime paths.
 - 2026-07-09: PR 1 preserves opaque schema and runtime-capability identities while copying and freezing Cricket-owned structural arrays and plain snapshots.
 - 2026-07-10: PR 2 brands responses created by small public functions; bare values stay bodies across handlers, middleware, and fallbacks, while composable wrappers add headers, cookies, redirects, and stream cleanup.
+- 2026-07-10: Documentation and generated skills are current-state contracts,
+  not append-only change logs. Every lane must rewrite the surrounding guidance
+  for cohesion and delete stale or redundant instructions.
