@@ -3,6 +3,7 @@ import {
   responseContractFailed,
   validationFailed
 } from './errors.js';
+import { frozenPlain } from './immutable.js';
 import {
   isZodSchema,
   parseZod
@@ -330,17 +331,17 @@ export function defineEndpoint(config) {
     path,
     summary,
     description,
-    tags,
+    tags: frozenPlain(tags),
     operationId,
     traceName,
     maxBodyBytes,
-    rawBody,
+    rawBody: frozenPlain(rawBody),
     body,
     params,
     query,
-    response,
-    responses,
-    rules,
+    response: frozenPlain(response),
+    responses: frozenPlain(responses),
+    rules: Object.freeze([...rules]),
 
     async handle(request, context = {}, {
       timing
@@ -374,7 +375,7 @@ export function defineEndpoint(config) {
     }
   };
 
-  return endpoint;
+  return Object.freeze(endpoint);
 }
 
 /**
@@ -391,10 +392,10 @@ export function deprecateEndpoint(endpoint, deprecation) {
   if (!endpoint || typeof endpoint !== 'object')
     throw new Error('Endpoint is required');
 
-  return {
+  return Object.freeze({
     ...endpoint,
-    deprecation: normalizeDeprecation(deprecation)
-  };
+    deprecation: frozenPlain(normalizeDeprecation(deprecation))
+  });
 }
 
 function parseEndpointResponse(endpoint, result) {

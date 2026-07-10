@@ -110,7 +110,7 @@ function responsesForEndpoint(endpoint) {
   }
 
   return {
-    200: {
+    [defaultStatusForMethod(endpoint.method)]: {
       description: 'Success'
     }
   };

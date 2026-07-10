@@ -24,6 +24,44 @@ import {
 } from './fixtures/http.js';
 
 describe('Cricket HTTP runtime', () => {
+  it('emits immutable events without freezing caller-owned values', async () => {
+    let observed;
+    let app = defineCricketApp({
+      observability: {
+        observe(event) {
+          observed = event;
+        }
+      }
+    });
+    let runtime = await createCricketRuntime(app);
+    let metadata = {
+      progress: {
+        current: 1,
+        total: 2
+      }
+    };
+
+    try {
+      await runtime.observability.emit({
+        type: 'audit.progressed',
+        metadata
+      });
+
+      assert.ok(Object.isFrozen(observed));
+      assert.ok(Object.isFrozen(observed.metadata));
+      assert.ok(Object.isFrozen(observed.metadata.progress));
+      assert.notEqual(observed.metadata, metadata);
+      assert.notEqual(observed.metadata.progress, metadata.progress);
+      assert.equal(Object.isFrozen(metadata), false);
+      assert.equal(Object.isFrozen(metadata.progress), false);
+
+      metadata.progress.current = 2;
+      assert.equal(observed.metadata.progress.current, 1);
+    } finally {
+      await runtime.cleanup();
+    }
+  });
+
   it('emits safe request events with request IDs, route identity, and replay', async () => {
     let events = [];
     let mutatedEvents = [];

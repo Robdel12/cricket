@@ -11,6 +11,21 @@ import {
 } from '../src/index.js';
 
 describe('Cricket OpenAPI', () => {
+  it('documents the runtime default status when no response schema is declared', async () => {
+    let endpoint = defineEndpoint({
+      method: 'post',
+      path: '/events',
+      handler() {
+        return { accepted: true };
+      }
+    });
+    let response = await endpoint.handle({});
+    let docs = generateOpenApi({ endpoints: [endpoint] });
+
+    assert.equal(response.status, 201);
+    assert.deepEqual(Object.keys(docs.paths['/events'].post.responses), ['201']);
+  });
+
   it('generates OpenAPI docs from endpoint and model contracts', () => {
     let Build = defineModel({
       name: 'Build',

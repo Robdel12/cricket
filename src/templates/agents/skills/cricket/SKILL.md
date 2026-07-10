@@ -14,6 +14,9 @@ Start with `pnpm cricket inspect api/index.js`, then read `api/index.js` and the
 ## Principles
 
 - Keep data plain: no model instances, hidden mutation, or ORM lifecycle.
+- Treat Cricket definitions as immutable values. Compose a new definition when
+  behavior changes; do not mutate apps, endpoints, rules, models, serializers,
+  normalizers, or jobs after construction.
 - Put contracts at real boundaries: requests, responses, source payloads, jobs, and database rows.
 - Compose small functions. Keep side effects in services, handlers, jobs, middleware, migrations, or external clients.
 - Preserve predictable files. Agents should be able to guess where behavior lives.

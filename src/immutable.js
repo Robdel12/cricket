@@ -1,5 +1,16 @@
-function copyPlain(value, seen = new WeakMap()) {
+function isPlainObject(value) {
   if (!value || typeof value !== 'object')
+    return false;
+
+  let prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function frozenPlainCopy(value, seen = new WeakMap()) {
+  if (!value || typeof value !== 'object')
+    return value;
+
+  if (!Array.isArray(value) && !isPlainObject(value))
     return value;
 
   if (seen.has(value))
@@ -9,39 +20,17 @@ function copyPlain(value, seen = new WeakMap()) {
     let copy = [];
     seen.set(value, copy);
     for (let item of value)
-      copy.push(copyPlain(item, seen));
-    return copy;
+      copy.push(frozenPlainCopy(item, seen));
+    return Object.freeze(copy);
   }
 
   let copy = {};
   seen.set(value, copy);
 
   for (let [key, child] of Object.entries(value))
-    copy[key] = copyPlain(child, seen);
+    copy[key] = frozenPlainCopy(child, seen);
 
-  return copy;
-}
-
-/**
- * Recursively freeze an object graph in place.
- *
- * Use this when Cricket creates the object being frozen. For caller values,
- * prefer `frozenPlain` so the original object is not mutated.
- *
- * @param {*} value - Value to freeze.
- * @param {WeakSet<object>} [seen] - Internal cycle tracker.
- * @returns {*} The original value, frozen when it is an object.
- */
-export function deepFreeze(value, seen = new WeakSet()) {
-  if (!value || typeof value !== 'object' || seen.has(value))
-    return value;
-
-  seen.add(value);
-
-  for (let child of Object.values(value))
-    deepFreeze(child, seen);
-
-  return Object.freeze(value);
+  return Object.freeze(copy);
 }
 
 /**
@@ -49,11 +38,12 @@ export function deepFreeze(value, seen = new WeakSet()) {
  *
  * This is Cricket's boundary helper for immutable contracts and inspection
  * snapshots. Functions and scalar values are preserved; arrays and plain object
- * containers are copied before freezing.
+ * containers are copied before freezing. Non-plain objects are opaque values:
+ * Cricket preserves their identity and does not freeze caller-owned instances.
  *
  * @param {*} value - Value to copy and freeze.
  * @returns {*} Frozen plain copy of the value.
  */
 export function frozenPlain(value) {
-  return deepFreeze(copyPlain(value));
+  return frozenPlainCopy(value);
 }
