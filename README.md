@@ -539,16 +539,18 @@ selected envelope, so simultaneous workers cannot over-claim a shared limit.
 An idempotency key owns one non-terminal run. Duplicate enqueue attempts return
 the existing envelope while it is queued, delayed, active, or retrying. Cricket
 releases the key after completion or final failure so a later run can start.
-Each claimed attempt owns its lease, evidence, retry, and terminal settlement;
-late work from an older attempt cannot overwrite the current run. Delayed
+Each claimed attempt owns Cricket's lease, evidence, retry, and terminal
+settlement writes; the driver rejects those writes from older attempts. Apps
+must still make product-side effects idempotent or attempt-aware. Delayed
 promotion and schedule-slot materialization use the same atomic coordination
 boundary.
 
-Coordination history, including terminal run data and schedule-slot ownership,
-persists until the app deletes its prefixed Redis keys out of band.
+Terminal envelopes, run state, events, current-attempt evidence, and
+schedule-slot ownership persist until the app deletes those prefixed Redis keys
+out of band.
 `worker.cleanup()` closes runtime resources and driver-owned Redis connections;
 the app still owns any client it supplied. Cleanup does not delete coordination
-history.
+records.
 
 If the app has a Cricket database, add the job ledger deliberately:
 
@@ -568,9 +570,9 @@ The ledger is execution history for debugging and operators. It is not product
 state.
 
 Recovery is app-owned. Cricket renews an active claim's heartbeat while its
-`run` function is working and records the job's normal logs, spans, progress,
-ledger row, and run state. Your `recover` function reads those facts, including
-heartbeat age, and returns a plain decision:
+`run` function is working and records normal logs, spans, progress, and driver
+run state. Your `recover` function reads that snapshot, including heartbeat age
+and ledger-shaped run facts, then returns a plain decision:
 
 ```js
 return { action: 'continue' };
@@ -580,7 +582,11 @@ return { action: 'fail', reason: { code: 'outside_business_window' } };
 
 Use logs for domain breadcrumbs, `trace.span()` for timed work, and
 `progress.update()` for human-readable progress. Cricket does not define
-"stuck" for you. The job does.
+"stuck" for you. The job does. Multiple recoverers may evaluate the same
+attempt, so keep recovery pure and idempotent. Cricket fences the resulting
+transition and reports `applied: false` when a live attempt still owns its
+lease. The optional `cricket_jobs` database ledger remains separate execution
+history; recovery does not require it.
 
 ## Observability
 

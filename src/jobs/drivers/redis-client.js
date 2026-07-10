@@ -243,5 +243,5 @@ export async function redisCommand(client, name, ...args) {
   if (typeof method === 'function')
     return await method.call(client, ...args);
 
-  throw new Error('Redis client needs command, sendCommand, call, or command methods');
+  throw new Error('Redis client needs command(), call(), sendCommand(), or a named Redis command method');
 }

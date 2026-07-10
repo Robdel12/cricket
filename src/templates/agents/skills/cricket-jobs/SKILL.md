@@ -13,17 +13,19 @@ Use this when work leaves the request path but should keep Cricket's contract sh
 - Use `defineJob` with validated `input`, optional `context`, queue metadata, retry policy, recovery policy, failure handlers, state metadata, and a plain `run`.
 - Keep product truth in app tables and services. Redis coordinates hot execution: queues, wakeups, leases, attempts, delayed availability, schedules, and progress.
 - Add `cricket_jobs` with `createJobLedgerTable` in an app migration when the app uses a Cricket database. Treat it as execution history, not product state.
-- Use numeric queue priority when claim order matters; higher values run first
-  with creation time and envelope ID as stable ties.
+- Use numeric queue priority when claim order matters. Claims prefer higher
+  values among the ready work they observe, with creation time and envelope ID
+  as stable ties.
 - Use global concurrency for shared capacity and partition concurrency for
   tenant/account capacity. Cricket resolves both into the immutable envelope so
   queue drivers evaluate the same keys and limits while choosing work.
 - Idempotency blocks duplicate non-terminal runs and releases on completion or
-  final failure. Coordination history remains until the app deletes its
+  final failure. Terminal envelopes, run state, events, current-attempt
+  evidence, and schedule-slot ownership remain until the app deletes those
   prefixed Redis keys out of band.
 - Redis reserves capacity and changes queue state atomically. Each claimed
-  attempt owns its lease, evidence, retry, and terminal settlement; stale
-  attempts cannot overwrite the current run.
+  attempt owns Cricket's lease, evidence, retry, and terminal settlement
+  writes. Apps still make product-side effects idempotent or attempt-aware.
 - The built-in client accepts `redis://` and `rediss://` URLs, ACL credentials,
   numeric database paths, and Node TLS options. App-provided clients also need
   `duplicate()` for blocking wakeups.
@@ -66,4 +68,5 @@ Use this when work leaves the request path but should keep Cricket's contract sh
 - Use normal `logger.info(...)`, `trace.span(...)`, and `progress.update(...)` in `run`. Do not create separate recovery-only signaling.
 - Keep recovery pure and idempotent because multiple recovery workers may
   evaluate the same attempt. It should inspect facts and return a decision,
-  not write product state directly; Cricket fences the resulting transition.
+  not write product state directly. Cricket fences the resulting transition
+  and reports whether it was applied.

@@ -13,7 +13,7 @@ import {
 } from '../src/index.js';
 import { createRedisSocketClient } from '../src/jobs/drivers/redis-client.js';
 import { createRedisQueueDriver } from '../src/jobs/drivers/redis.js';
-import { deferred } from '../test-support/jobs.js';
+import { createManualClock, deferred } from '../test-support/jobs.js';
 
 let redisUrl = process.env.CRICKET_TEST_REDIS_URL;
 
@@ -73,6 +73,70 @@ async function createDrivers(name, queueNames = ['reports']) {
 }
 
 describe('Cricket jobs: real Redis', () => {
+  it('keeps app-owned Redis clients open while owning their blocking duplicate', async () => {
+    let prefix = testPrefix('app-client');
+    let main = await createRedisSocketClient(redisUrl);
+    let blocking = deferred();
+    let duplicateClosed = false;
+    let client = {
+      async command(name, ...args) {
+        return await main.command(name, ...args);
+      },
+      async duplicate() {
+        let duplicate = await createRedisSocketClient(redisUrl);
+
+        return {
+          async command(name, ...args) {
+            if (name === 'BLPOP')
+              blocking.resolve();
+
+            return await duplicate.command(name, ...args);
+          },
+          async disconnect() {
+            duplicateClosed = true;
+            await duplicate.disconnect();
+          }
+        };
+      }
+    };
+    let job = reportJob();
+    let producer = await createCricketJobs({
+      jobs: [job],
+      queues: {
+        redis: {
+          client,
+          prefix
+        }
+      }
+    });
+    let cleaned = false;
+
+    try {
+      let waiting = producer.driver.waitForWork();
+      await blocking.promise;
+
+      await producer.jobs.enqueue(job, {
+        reportId: 'report_app_client',
+        accountId: 'account_app_client'
+      });
+      assert.deepEqual(await waiting, {
+        reason: 'work',
+        queueName: 'reports'
+      });
+
+      await producer.cleanup();
+      cleaned = true;
+
+      assert.equal(duplicateClosed, true);
+      assert.equal(await main.command('PING'), 'PONG');
+    } finally {
+      if (!cleaned)
+        await producer.cleanup();
+
+      await main.quit();
+    }
+  });
+
   it('atomically owns one idempotent enqueue across producers', async () => {
     let drivers = await createDrivers('idempotency');
     let job = reportJob({ idempotent: true });
@@ -301,19 +365,20 @@ describe('Cricket jobs: real Redis', () => {
     }
   });
 
-  it('rejects stale attempt writes after a retry is claimed', async () => {
+  it('keeps idempotency ownership fenced to the current attempt', async () => {
     let drivers = await createDrivers('attempt-owner');
-    let job = reportJob();
+    let job = reportJob({ idempotent: true });
     let producer = await createCricketJobs({
       jobs: [job],
       queues: { driver: drivers.driverA }
     });
+    let input = {
+      reportId: 'report_attempt',
+      accountId: 'account_attempt'
+    };
 
     try {
-      await producer.jobs.enqueue(job, {
-        reportId: 'report_attempt',
-        accountId: 'account_attempt'
-      });
+      await producer.jobs.enqueue(job, input);
 
       let first = await drivers.driverA.claim();
       assert.equal((await drivers.driverA.retry(first.envelope, {
@@ -334,13 +399,135 @@ describe('Cricket jobs: real Redis', () => {
         attempt: first.attempt
       })).renewed, false);
 
+      let duplicate = await producer.jobs.enqueue(job, input);
+      assert.equal(duplicate.duplicate, true);
+      assert.equal(duplicate.envelope.id, second.envelope.id);
+
       let [candidate] = await drivers.driverB.recoveryCandidates();
       assert.equal(candidate.attempt, second.attempt);
       assert.equal(candidate.leaseActive, true);
       assert.deepEqual(candidate.progress, []);
+
+      assert.equal((await drivers.driverB.complete(second.envelope, {}, {
+        attempt: second.attempt
+      })).settled, true);
+      assert.equal((await producer.jobs.enqueue(job, input)).enqueued, true);
     } finally {
       await producer.cleanup();
       await drivers.driverB.cleanup();
+    }
+  });
+
+  it('recovers and retries through the public Redis worker boundary', async () => {
+    let prefix = testPrefix('recovery-workflow');
+    let admin = await createRedisSocketClient(redisUrl);
+    let secondStarted = deferred();
+    let finishSecond = deferred();
+    let recoveryFacts = [];
+    let recoveryEvents = [];
+    let job = defineJob({
+      name: 'reports.redisRecovery',
+      input: z.object({ reportId: z.string() }),
+      queue: redisQueue({ name: 'reports' }),
+      recover({
+        run,
+        logs,
+        progress
+      }) {
+        recoveryFacts.push({
+          leaseActive: run.leaseActive,
+          sawFirstLog: logs.seen('report.first_started'),
+          lastProgress: progress.last()?.progress.phase
+        });
+
+        return {
+          action: 'retry',
+          reason: {
+            code: 'interrupted_attempt',
+            message: 'The first attempt lost its lease'
+          }
+        };
+      },
+      async run({
+        logger,
+        progress
+      }) {
+        logger.info('report.second_started');
+        await progress.update({ phase: 'second' });
+        secondStarted.resolve();
+        await finishSecond.promise;
+
+        return { status: 'completed' };
+      }
+    });
+    let worker = await startCricketWorker(defineCricketApp({
+      logger() {},
+      observability: {
+        observe(event) {
+          if (event.type === 'job.recovery.decided')
+            recoveryEvents.push(event);
+        }
+      }
+    }), {
+      jobs: [job],
+      queues: {
+        redis: {
+          url: redisUrl,
+          prefix
+        }
+      }
+    });
+
+    try {
+      await worker.jobs.enqueue(job, { reportId: 'report_recovery' });
+      let first = await worker.driver.claim();
+
+      await worker.driver.recordLog(first.envelope, {
+        level: 'info',
+        event: 'report.first_started'
+      }, { attempt: first.attempt });
+      await worker.driver.progress(first.envelope, {
+        phase: 'first'
+      }, { attempt: first.attempt });
+
+      let fenced = await worker.recover();
+      assert.equal(fenced[0].decision.action, 'retry');
+      assert.equal(fenced[0].applied, false);
+
+      await admin.command('DEL', `${prefix}:lease:${first.envelope.id}`);
+
+      let recovered = await worker.recover();
+      assert.equal(recovered[0].decision.action, 'retry');
+      assert.equal(recovered[0].applied, true);
+      assert.deepEqual(recoveryFacts, [
+        {
+          leaseActive: true,
+          sawFirstLog: true,
+          lastProgress: 'first'
+        },
+        {
+          leaseActive: false,
+          sawFirstLog: true,
+          lastProgress: 'first'
+        }
+      ]);
+      assert.deepEqual(recoveryEvents.map(event => event.applied), [false, true]);
+
+      let draining = worker.drain();
+      await secondStarted.promise;
+
+      let [active] = await worker.driver.recoveryCandidates();
+      assert.equal(active.attempt, 2);
+      assert.equal(active.logs.some(log => log.event === 'report.first_started'), false);
+      assert.equal(active.logs.some(log => log.event === 'report.second_started'), true);
+      assert.deepEqual(active.progress.map(entry => entry.progress.phase), ['second']);
+
+      finishSecond.resolve();
+      assert.deepEqual(await draining, [{ status: 'completed' }]);
+    } finally {
+      finishSecond.resolve();
+      await admin.quit();
+      await worker.cleanup();
     }
   });
 
@@ -435,6 +622,53 @@ describe('Cricket jobs: real Redis', () => {
     } finally {
       await producer.cleanup();
       await drivers.driverB.cleanup();
+    }
+  });
+
+  it('drains every due retry across bounded promotion batches', async () => {
+    let prefix = testPrefix('delayed-batches');
+    let time = createManualClock('2026-07-10T05:00:00.000Z');
+    let availableAt = '2026-07-10T05:01:00.000Z';
+    let processed = [];
+    let job = defineJob({
+      name: 'reports.delayedBatch',
+      input: z.object({ reportId: z.string() }),
+      queue: redisQueue({ name: 'reports' }),
+      run({ input }) {
+        processed.push(input.reportId);
+        return { status: 'completed' };
+      }
+    });
+    let worker = await startCricketWorker(defineCricketApp({ logger() {} }), {
+      clock: time.clock,
+      jobs: [job],
+      queues: {
+        redis: {
+          url: redisUrl,
+          prefix
+        }
+      }
+    });
+
+    try {
+      for (let index = 0; index < 101; index += 1) {
+        await worker.jobs.enqueue(job, { reportId: `report_${index}` });
+        let claim = await worker.driver.claim();
+
+        assert.equal((await worker.driver.retry(claim.envelope, {
+          attempt: claim.attempt,
+          availableAt,
+          now: time.now()
+        })).settled, true);
+      }
+
+      time.advanceTo(availableAt);
+
+      let results = await worker.drain();
+      assert.equal(results.length, 101);
+      assert.equal(processed.length, 101);
+    } finally {
+      await worker.cleanup();
     }
   });
 

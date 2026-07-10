@@ -794,21 +794,12 @@ export async function startCricketWorker(cricketApp, {
           logger,
           trace
         }));
-
-        if (decision.action !== 'continue') {
-          await emitJobEvent('job.recovery.decided', envelope, {
-            attempt: candidate.attempt,
-            decision
-          });
-          logger.info('job.recovery.decided', {
-            decision
-          });
-        }
+        let applied = true;
 
         if (decision.action === 'retry') {
           let error = errorFromRecoveryDecision(decision);
 
-          await retryJob({
+          applied = await retryJob({
             envelope,
             attempt: candidate.attempt,
             jobRunId: jobRun.jobRunId,
@@ -823,7 +814,7 @@ export async function startCricketWorker(cricketApp, {
         if (decision.action === 'fail') {
           let error = errorFromRecoveryDecision(decision);
 
-          await failJob({
+          applied = await failJob({
             envelope,
             attempt: candidate.attempt,
             jobRunId: jobRun.jobRunId,
@@ -834,9 +825,22 @@ export async function startCricketWorker(cricketApp, {
           });
         }
 
+        if (decision.action !== 'continue') {
+          await emitJobEvent('job.recovery.decided', envelope, {
+            attempt: candidate.attempt,
+            decision,
+            applied
+          });
+          logger.info('job.recovery.decided', {
+            decision,
+            applied
+          });
+        }
+
         results.push({
           envelope,
-          decision
+          decision,
+          ...(decision.action === 'continue' ? {} : { applied })
         });
       } catch (error) {
         if (throwOnError)

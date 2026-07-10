@@ -24,6 +24,40 @@ local function cricket_event(kind, envelope, timestamp, metadata)
 end
 `;
 
+let takeAttemptFunction = `
+local function cricket_take_attempt(running_key, run_key, lease_key, id, attempt, recovering)
+  if redis.call('HGET', run_key, 'status') ~= 'active' then
+    return false
+  end
+
+  if redis.call('HGET', run_key, 'attempts') ~= attempt then
+    return false
+  end
+
+  local lease_owner = redis.call('GET', lease_key)
+  if recovering then
+    if lease_owner == attempt then
+      return false
+    end
+  elseif lease_owner ~= attempt then
+    return false
+  end
+
+  return redis.call('SREM', running_key, id) == 1
+end
+`;
+
+let ownsActiveAttemptFunction = `
+local function cricket_owns_active_attempt(running_key, run_key, lease_key, id, attempt)
+  return redis.call('HGET', run_key, 'status') == 'active'
+    and redis.call('HGET', run_key, 'attempts') == attempt
+    and redis.call('SISMEMBER', running_key, id) == 1
+    and redis.call('GET', lease_key) == attempt
+end
+`;
+
+export let delayedPromotionBatchSize = 100;
+
 export let enqueueScript = `
 ${keyFunction}
 local envelope_json = ARGV[1]
@@ -177,6 +211,7 @@ return cjson.encode({ status = 'claimed', attempt = attempt, envelope = envelope
 `;
 
 export let settleScript = `
+${takeAttemptFunction}
 local id = ARGV[1]
 local attempt = ARGV[2]
 local status = ARGV[3]
@@ -186,24 +221,7 @@ local event_json = ARGV[6]
 local has_duplicate = ARGV[7] == '1'
 local allow_expired_lease = ARGV[8] == '1'
 
-if redis.call('HGET', KEYS[2], 'status') ~= 'active' then
-  return 0
-end
-
-if redis.call('HGET', KEYS[2], 'attempts') ~= attempt then
-  return 0
-end
-
-local lease_owner = redis.call('GET', KEYS[3])
-if allow_expired_lease then
-  if lease_owner == attempt then
-    return 0
-  end
-elseif lease_owner ~= attempt then
-  return 0
-end
-
-if redis.call('SREM', KEYS[1], id) ~= 1 then
+if not cricket_take_attempt(KEYS[1], KEYS[2], KEYS[3], id, attempt, allow_expired_lease) then
   return 0
 end
 
@@ -219,6 +237,7 @@ return 1
 `;
 
 export let retryScript = `
+${takeAttemptFunction}
 local id = ARGV[1]
 local attempt = ARGV[2]
 local ready_member = ARGV[3]
@@ -230,24 +249,7 @@ local event_json = ARGV[8]
 local queue_name = ARGV[9]
 local allow_expired_lease = ARGV[10] == '1'
 
-if redis.call('HGET', KEYS[2], 'status') ~= 'active' then
-  return 0
-end
-
-if redis.call('HGET', KEYS[2], 'attempts') ~= attempt then
-  return 0
-end
-
-local lease_owner = redis.call('GET', KEYS[3])
-if allow_expired_lease then
-  if lease_owner == attempt then
-    return 0
-  end
-elseif lease_owner ~= attempt then
-  return 0
-end
-
-if redis.call('SREM', KEYS[1], id) ~= 1 then
+if not cricket_take_attempt(KEYS[1], KEYS[2], KEYS[3], id, attempt, allow_expired_lease) then
   return 0
 end
 
@@ -267,20 +269,13 @@ return 1
 `;
 
 export let heartbeatScript = `
+${ownsActiveAttemptFunction}
 local id = ARGV[1]
 local attempt = ARGV[2]
 local timestamp = ARGV[3]
 local lease_seconds = ARGV[4]
 
-if redis.call('HGET', KEYS[2], 'status') ~= 'active' or redis.call('HGET', KEYS[2], 'attempts') ~= attempt then
-  return 0
-end
-
-if redis.call('SISMEMBER', KEYS[1], id) ~= 1 then
-  return 0
-end
-
-if redis.call('GET', KEYS[3]) ~= attempt then
+if not cricket_owns_active_attempt(KEYS[1], KEYS[2], KEYS[3], id, attempt) then
   return 0
 end
 
@@ -290,18 +285,11 @@ return 1
 `;
 
 export let progressScript = `
+${ownsActiveAttemptFunction}
 local id = ARGV[1]
 local attempt = ARGV[2]
 
-if redis.call('HGET', KEYS[2], 'status') ~= 'active' or redis.call('HGET', KEYS[2], 'attempts') ~= attempt then
-  return 0
-end
-
-if redis.call('SISMEMBER', KEYS[1], id) ~= 1 then
-  return 0
-end
-
-if redis.call('GET', KEYS[5]) ~= attempt then
+if not cricket_owns_active_attempt(KEYS[1], KEYS[2], KEYS[5], id, attempt) then
   return 0
 end
 
@@ -311,18 +299,11 @@ return 1
 `;
 
 export let evidenceScript = `
+${ownsActiveAttemptFunction}
 local id = ARGV[1]
 local attempt = ARGV[2]
 
-if redis.call('HGET', KEYS[2], 'status') ~= 'active' or redis.call('HGET', KEYS[2], 'attempts') ~= attempt then
-  return 0
-end
-
-if redis.call('SISMEMBER', KEYS[1], id) ~= 1 then
-  return 0
-end
-
-if redis.call('GET', KEYS[4]) ~= attempt then
+if not cricket_owns_active_attempt(KEYS[1], KEYS[2], KEYS[4], id, attempt) then
   return 0
 end
 
@@ -384,7 +365,7 @@ ${eventFunction}
 local prefix = ARGV[1]
 local now_score = ARGV[2]
 local timestamp = ARGV[3]
-local ids = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', now_score, 'LIMIT', 0, 100)
+local ids = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', now_score, 'LIMIT', 0, ${delayedPromotionBatchSize})
 local promoted = {}
 
 for _, id in ipairs(ids) do

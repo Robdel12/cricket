@@ -2,6 +2,7 @@ import { frozenPlain } from '../../immutable.js';
 import { compareClaimOrder } from '../policy.js';
 import {
   claimScript,
+  delayedPromotionBatchSize,
   enqueueScript,
   evidenceScript,
   heartbeatScript,
@@ -211,6 +212,57 @@ export async function createRedisQueueDriver({
     return value ? JSON.parse(value) : undefined;
   }
 
+  async function settleEnvelope(envelope, {
+    attempt,
+    event,
+    recovering = false,
+    status,
+    value,
+    valueField
+  }) {
+    let duplicateKey = duplicateKeyFor(prefix, envelope);
+    let settled = await runScript(settleScript, [
+      runningKey(prefix),
+      runKey(prefix, envelope.id),
+      leaseKey(prefix, envelope.id),
+      eventsKey(prefix, envelope.id),
+      duplicateKey ?? keyFor(prefix, 'unused', 'idempotency')
+    ], [
+      envelope.id,
+      attempt,
+      status,
+      valueField,
+      JSON.stringify(value),
+      JSON.stringify(event),
+      duplicateKey ? 1 : 0,
+      recovering ? 1 : 0
+    ]);
+
+    return frozenPlain({
+      settled: settled === 1
+    });
+  }
+
+  async function recordEvidence(envelope, evidence, key, attempt) {
+    let recorded = await runScript(evidenceScript, [
+      runningKey(prefix),
+      runKey(prefix, envelope.id),
+      key,
+      leaseKey(prefix, envelope.id)
+    ], [
+      envelope.id,
+      attempt,
+      JSON.stringify({
+        ...evidence,
+        timestamp: evidence.timestamp ?? new Date().toISOString()
+      })
+    ]);
+
+    return frozenPlain({
+      recorded: recorded === 1
+    });
+  }
+
   async function readyCandidates() {
     let candidates = new Map();
 
@@ -378,26 +430,12 @@ export async function createRedisQueueDriver({
     async complete(envelope, result, {
       attempt
     } = {}) {
-      let duplicateKey = duplicateKeyFor(prefix, envelope);
-      let settled = await runScript(settleScript, [
-        runningKey(prefix),
-        runKey(prefix, envelope.id),
-        leaseKey(prefix, envelope.id),
-        eventsKey(prefix, envelope.id),
-        duplicateKey ?? keyFor(prefix, 'unused', 'idempotency')
-      ], [
-        envelope.id,
+      return await settleEnvelope(envelope, {
         attempt,
-        'completed',
-        'result',
-        JSON.stringify(result),
-        JSON.stringify(eventFor('completed', envelope, { attempt })),
-        duplicateKey ? 1 : 0,
-        0
-      ]);
-
-      return frozenPlain({
-        settled: settled === 1
+        event: eventFor('completed', envelope, { attempt }),
+        status: 'completed',
+        value: result,
+        valueField: 'result'
       });
     },
 
@@ -405,34 +443,22 @@ export async function createRedisQueueDriver({
       attempt,
       recovering = false
     } = {}) {
-      let duplicateKey = duplicateKeyFor(prefix, envelope);
-      let failure = JSON.stringify({
+      let failure = {
         code: error?.code,
         name: error?.name,
         message: error?.message
-      });
-      let settled = await runScript(settleScript, [
-        runningKey(prefix),
-        runKey(prefix, envelope.id),
-        leaseKey(prefix, envelope.id),
-        eventsKey(prefix, envelope.id),
-        duplicateKey ?? keyFor(prefix, 'unused', 'idempotency')
-      ], [
-        envelope.id,
-        attempt,
-        'failed',
-        'error',
-        failure,
-        JSON.stringify(eventFor('failed', envelope, {
-          attempt,
-          error: JSON.parse(failure)
-        })),
-        duplicateKey ? 1 : 0,
-        recovering ? 1 : 0
-      ]);
+      };
 
-      return frozenPlain({
-        settled: settled === 1
+      return await settleEnvelope(envelope, {
+        attempt,
+        event: eventFor('failed', envelope, {
+          attempt,
+          error: failure
+        }),
+        recovering,
+        status: 'failed',
+        value: failure,
+        valueField: 'error'
       });
     },
 
@@ -500,45 +526,13 @@ export async function createRedisQueueDriver({
     async recordLog(envelope, log, {
       attempt
     } = {}) {
-      let recorded = await runScript(evidenceScript, [
-        runningKey(prefix),
-        runKey(prefix, envelope.id),
-        logsKey(prefix, envelope.id),
-        leaseKey(prefix, envelope.id)
-      ], [
-        envelope.id,
-        attempt,
-        JSON.stringify({
-          ...log,
-          timestamp: log.timestamp ?? new Date().toISOString()
-        })
-      ]);
-
-      return frozenPlain({
-        recorded: recorded === 1
-      });
+      return await recordEvidence(envelope, log, logsKey(prefix, envelope.id), attempt);
     },
 
     async recordSpan(envelope, span, {
       attempt
     } = {}) {
-      let recorded = await runScript(evidenceScript, [
-        runningKey(prefix),
-        runKey(prefix, envelope.id),
-        spansKey(prefix, envelope.id),
-        leaseKey(prefix, envelope.id)
-      ], [
-        envelope.id,
-        attempt,
-        JSON.stringify({
-          ...span,
-          timestamp: span.timestamp ?? new Date().toISOString()
-        })
-      ]);
-
-      return frozenPlain({
-        recorded: recorded === 1
-      });
+      return await recordEvidence(envelope, span, spansKey(prefix, envelope.id), attempt);
     },
 
     async recoveryCandidates() {
@@ -581,16 +575,23 @@ export async function createRedisQueueDriver({
     async promoteDelayed({
       now = new Date()
     } = {}) {
-      let promoted = await runJsonScript(promoteDelayedScript, [
-        delayedKey(prefix),
-        wakeupsKey(prefix)
-      ], [
-        prefix,
-        new Date(now).getTime(),
-        new Date(now).toISOString()
-      ]);
+      let promoted = [];
+      let batch;
 
-      return frozenPlain(Array.isArray(promoted) ? promoted : []);
+      do {
+        batch = await runJsonScript(promoteDelayedScript, [
+          delayedKey(prefix),
+          wakeupsKey(prefix)
+        ], [
+          prefix,
+          new Date(now).getTime(),
+          new Date(now).toISOString()
+        ]);
+        batch = Array.isArray(batch) ? batch : [];
+        promoted.push(...batch);
+      } while (batch.length === delayedPromotionBatchSize);
+
+      return frozenPlain(promoted);
     },
 
     async nextAvailableAt() {

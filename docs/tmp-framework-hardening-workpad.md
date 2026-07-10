@@ -42,8 +42,8 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
   concurrency policy.
 - Redis ready/running coordination now uses atomic enqueue, claim, retry,
   terminal settlement, delayed-promotion, and schedule-materialization paths.
-- Claim attempts own their leases, evidence, retries, and settlement. Late work
-  from a stale attempt cannot overwrite the current run.
+- Claim attempts own Cricket's lease, evidence, retry, and settlement writes;
+  apps still own idempotent or attempt-aware product side effects.
 - The built-in client supports `redis://` and `rediss://`, ACL credentials,
   database selection, and explicit TLS trust. App clients need a dedicated
   `duplicate()` connection for blocking wakeups.
@@ -100,9 +100,9 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
 
 - [x] Make claim, retry, completion, failure, idempotency, delayed promotion, and schedule materialization atomic.
 - [x] Support the Redis URL/auth/TLS contract Cricket documents, including `rediss://`, or require an app-provided client for unsupported connections.
-- [x] Add real Redis integration tests for worker concurrency, lease fencing,
-  retry delays, idempotency, and schedule slots, with socket-boundary coverage
-  for blocking connection cleanup.
+- [x] Add real Redis integration tests for worker concurrency, recovery and
+  lease fencing, delayed batches, idempotency, schedule slots, and app-client
+  ownership, with socket-boundary coverage for blocking connection cleanup.
 
 ### PR 6 - Runtime And Scaffold Cleanup
 

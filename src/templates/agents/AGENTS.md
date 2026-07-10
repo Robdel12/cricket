@@ -79,12 +79,13 @@ want execution history, but do not use it as the domain state model.
 Queue policy is execution behavior. Claims prefer higher numeric priority in
 the ready work they observe, with stable ties. Drivers evaluate resolved global
 and partition limits while choosing work, and blocked partitions do not block
-unrelated keys. Idempotency
-prevents a second non-terminal run and releases after completion or final
-failure. Coordination history remains until the app deletes its prefixed Redis
-keys out of band. Redis reserves capacity and changes queue state atomically. Each
-claimed attempt owns its lease, evidence, retry, and settlement; stale attempts
-must not overwrite the current run.
+unrelated keys. Idempotency prevents a second non-terminal run and releases
+after completion or final
+failure. Terminal envelopes, run state, events, current-attempt evidence, and
+schedule-slot ownership remain until the app deletes those prefixed Redis keys
+out of band. Redis reserves capacity and changes queue state atomically. Each
+claimed attempt owns Cricket's lease, evidence, retry, and settlement writes;
+apps still make product-side effects idempotent or attempt-aware.
 
 The built-in Redis client supports `redis://` and `rediss://` URLs, ACL
 credentials, numeric database paths, and explicit Node TLS options. An
@@ -104,7 +105,8 @@ app-owned recovery. Cricket provides normal job facts; the job decides whether
 to `{ action: 'continue' }`, `{ action: 'retry' }`, or `{ action: 'fail' }`.
 Use normal `logger.info(...)`, `trace.span(...)`, and `progress.update(...)` as
 the signals recovery reads. Recovery may be evaluated concurrently, so keep it
-pure and idempotent; Cricket fences the resulting attempt transition.
+pure and idempotent. Cricket fences the resulting attempt transition and
+reports whether it was applied.
 
 Use `createCricketJobs` in producers that only enqueue work. Use
 `startCricketWorker` in `api/workers/` entrypoints that execute work, then

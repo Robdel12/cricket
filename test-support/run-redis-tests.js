@@ -9,8 +9,29 @@ let activeProcess;
 let pendingContainer;
 let stopping;
 
+function trackProcess(child) {
+  let tracked = {
+    child,
+    closed: new Promise(resolve => child.once('close', resolve))
+  };
+  activeProcess = tracked;
+  tracked.closed.then(() => {
+    if (activeProcess === tracked)
+      activeProcess = undefined;
+  });
+}
+
+async function stopActiveProcess() {
+  let tracked = activeProcess;
+  if (!tracked)
+    return;
+
+  tracked.child.kill('SIGTERM');
+  await tracked.closed;
+}
+
 async function stopContainer() {
-  activeProcess?.kill('SIGTERM');
+  await stopActiveProcess();
 
   let name = activeContainer ?? pendingContainer;
   if (!name)
@@ -18,12 +39,14 @@ async function stopContainer() {
 
   activeContainer = undefined;
   pendingContainer = undefined;
-  await exec('docker', ['rm', '--force', name]).catch(() => {});
+  await exec('docker', ['rm', '--force', name]);
 }
 
 function stopOnSignal(code) {
   return () => {
-    stopping ??= stopContainer().finally(() => process.exit(code));
+    stopping ??= stopContainer()
+      .catch(error => process.stderr.write(`Redis test cleanup failed: ${error.message}\n`))
+      .finally(() => process.exit(code));
   };
 }
 
@@ -43,18 +66,10 @@ function runTests(url) {
       },
       stdio: 'inherit'
     });
-    activeProcess = child;
+    trackProcess(child);
 
-    child.once('error', error => {
-      if (activeProcess === child)
-        activeProcess = undefined;
-
-      reject(error);
-    });
+    child.once('error', reject);
     child.once('exit', code => {
-      if (activeProcess === child)
-        activeProcess = undefined;
-
       if (code === 0)
         resolve();
       else
@@ -67,21 +82,39 @@ function waitForRedis(child) {
   return new Promise((resolve, reject) => {
     let output = '';
 
+    function cleanup() {
+      child.stdout.off('data', inspect);
+      child.stderr.off('data', inspect);
+      child.off('error', onError);
+      child.off('exit', onExit);
+    }
+
+    function finish(callback, value) {
+      cleanup();
+      callback(value);
+    }
+
     function inspect(chunk) {
       let text = chunk.toString('utf8');
       output += text;
       process.stderr.write(text);
 
       if (output.includes('Ready to accept connections'))
-        resolve();
+        finish(resolve);
+    }
+
+    function onError(error) {
+      finish(reject, error);
+    }
+
+    function onExit(code) {
+      finish(reject, new Error(`Redis container exited before readiness with ${code}`));
     }
 
     child.stdout.on('data', inspect);
     child.stderr.on('data', inspect);
-    child.once('error', reject);
-    child.once('exit', code => {
-      reject(new Error(`Redis container exited before readiness with ${code}`));
-    });
+    child.once('error', onError);
+    child.once('exit', onExit);
   });
 }
 
@@ -92,7 +125,7 @@ function createContainer(name) {
       'create',
       '--name', name,
       '--publish', '127.0.0.1::6379',
-      'redis:7-alpine',
+      'redis:7.4.5-alpine@sha256:bb186d083732f669da90be8b0f975a37812b15e913465bb14d845db72a4e3e08',
       'redis-server',
       '--save', '',
       '--appendonly', 'no'
@@ -100,13 +133,10 @@ function createContainer(name) {
       signal: deadline,
       stdio: ['ignore', 'ignore', 'inherit']
     });
-    activeProcess = child;
+    trackProcess(child);
 
     child.once('error', reject);
     child.once('exit', code => {
-      if (activeProcess === child)
-        activeProcess = undefined;
-
       if (code === 0)
         resolve();
       else
@@ -118,6 +148,7 @@ function createContainer(name) {
 async function runWithDocker() {
   let name = `cricket-redis-${randomUUID()}`;
   pendingContainer = name;
+  let failure;
 
   try {
     await createContainer(name);
@@ -136,20 +167,27 @@ async function runWithDocker() {
       signal: AbortSignal.timeout(30_000),
       stdio: ['ignore', 'pipe', 'pipe']
     });
-    activeProcess = logs;
+    trackProcess(logs);
 
     await waitForRedis(logs);
-    logs.kill('SIGTERM');
-
-    if (activeProcess === logs)
-      activeProcess = undefined;
+    await stopActiveProcess();
 
     let { stdout } = await exec('docker', ['port', name, '6379/tcp']);
     let port = stdout.trim().split(':').at(-1);
 
     await runTests(`redis://127.0.0.1:${port}`);
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
-    await stopContainer();
+    try {
+      await stopContainer();
+    } catch (cleanupError) {
+      if (!failure)
+        throw cleanupError;
+
+      process.stderr.write(`Redis test cleanup failed: ${cleanupError.message}\n`);
+    }
   }
 }
 

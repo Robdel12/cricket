@@ -156,11 +156,13 @@ higher numeric priority in the ready work they observe, with stable ties.
 Global and partition limits travel as resolved immutable envelope data so
 drivers evaluate the same keys and limits when choosing work. Idempotency owns
 one non-terminal run and releases after its terminal settlement. Enqueue,
-claim, retry, settlement,
-delayed promotion, and schedule materialization are atomic. Each attempt owns
-its lease, evidence, retry, and settlement so stale workers cannot write into a
-newer attempt. Coordination history remains until the app deletes its prefixed
-Redis keys out of band.
+claim, retry, settlement, delayed promotion, and schedule materialization are
+atomic. Each attempt owns Cricket's lease, evidence, retry, and settlement
+writes. Cricket rejects stale coordination updates to those fields. Apps still
+own idempotency or attempt-awareness for
+product-side effects. Terminal envelopes, run state, events, current-attempt
+evidence, and schedule-slot ownership remain until the app deletes those
+prefixed Redis keys out of band.
 
 Scheduled work should stay inside the job contract. Apps define the cron,
 timezone, enablement rule, and input for each due slot. Cricket uses a thin cron
@@ -171,7 +173,8 @@ Recovery is a job-owned decision over normal Cricket signals: run state,
 ledger, logs, spans, and progress. Cricket keeps those facts available and
 executes the returned decision. The app defines what stuck, dead, or out of
 bounds means. Recovery may be evaluated concurrently, so the decision stays
-pure and idempotent while Cricket fences the resulting attempt transition.
+pure and idempotent while Cricket fences the resulting attempt transition and
+reports whether it was applied.
 
 Failure handling is first-class because retries are where framework truth and
 product truth drift. Retry policy decides whether Cricket schedules another

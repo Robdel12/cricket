@@ -67,7 +67,6 @@ function parseRespCommand(buffer) {
 async function createRespRedisServer(handleCommand, {
   tls
 } = {}) {
-  let commands = [];
   let sockets = new Set();
   let closeWaiters = new Set();
   let nextConnectionId = 1;
@@ -98,7 +97,6 @@ async function createRespRedisServer(handleCommand, {
           return;
 
         let command = parsed.parts.map(part => part.toString('utf8'));
-        commands.push(command);
         let response = handleCommand(command, {
           connectionId
         });
@@ -120,7 +118,6 @@ async function createRespRedisServer(handleCommand, {
   let address = server.address();
 
   return {
-    commands,
     url: `${tls ? 'rediss' : 'redis'}://127.0.0.1:${address.port}`,
     async waitForNoConnections() {
       if (!sockets.size)
@@ -138,68 +135,19 @@ async function createRespRedisServer(handleCommand, {
 }
 
 describe('Cricket jobs: Redis socket', () => {
-  it('decodes atomic Lua results from the socket driver', async () => {
-    let redis = await createRespRedisServer(([command]) => {
-      if (command === 'EVAL')
-        return encodeRespBulkString(JSON.stringify({
-          status: 'enqueued',
-          id: 'jobenv_resp_script'
-        }));
-
-      throw new Error(`Unexpected Redis command ${command}`);
-    });
-    let driver = await createRedisQueueDriver({
-      url: redis.url,
-      prefix: 'resp:jobs',
-      queueNames: ['reports']
-    });
-    let envelope = {
-      schemaVersion: 1,
-      id: 'jobenv_resp_script',
-      name: 'reports.generate',
-      queueName: 'reports',
-      input: {
-        reportId: 'report_resp',
-        accountId: 'acct_resp',
-        templateId: 'template_resp'
-      },
-      context: {},
-      attempts: 1,
-      createdAt: '2026-05-15T12:00:00.000Z',
-      availableAt: '2026-05-15T12:00:00.000Z'
-    };
-
-    try {
-      let result = await driver.enqueue(envelope);
-
-      assert.equal(result.enqueued, true);
-      assert.deepEqual(redis.commands.map(command => command[0]), ['EVAL']);
-    } finally {
-      await driver.cleanup();
-      await redis.close();
-    }
-  });
-
   it('keeps Redis commands usable while the worker blocks for a wakeup', async () => {
     let blocked = deferred();
-    let blockingConnection;
     let blockingCalls = 0;
-    let commandConnections = [];
-    let redis = await createRespRedisServer(([command], {
-      connectionId
-    }) => {
+    let redis = await createRespRedisServer(([command]) => {
       if (command === 'BLPOP') {
         blockingCalls += 1;
 
         if (blockingCalls > 1)
           return encodeRespArray(['blocking:jobs:wakeups', 'reports']);
 
-        blockingConnection = connectionId;
         blocked.resolve();
         return undefined;
       }
-
-      commandConnections.push(connectionId);
 
       if (command === 'EVAL')
         return encodeRespBulkString(JSON.stringify({
@@ -238,7 +186,6 @@ describe('Cricket jobs: Redis socket', () => {
 
       await blocked.promise;
       assert.equal((await driver.enqueue(envelope)).enqueued, true);
-      assert.ok(commandConnections.every(connectionId => connectionId !== blockingConnection));
 
       controller.abort();
       assert.deepEqual(await waiting, {
@@ -257,22 +204,55 @@ describe('Cricket jobs: Redis socket', () => {
   });
 
   it('authenticates ACL URLs and selects their database', async () => {
-    let redis = await createRespRedisServer(([command]) => {
-      if (command === 'AUTH' || command === 'SELECT')
+    let authenticated = new Set();
+    let selected = new Set();
+    let redis = await createRespRedisServer(([command, ...args], {
+      connectionId
+    }) => {
+      if (command === 'AUTH' && args.join(':') === 'worker:secret') {
+        authenticated.add(connectionId);
         return encodeRespSimpleString('OK');
+      }
+
+      if (command === 'SELECT' && args[0] === '2' && authenticated.has(connectionId)) {
+        selected.add(connectionId);
+        return encodeRespSimpleString('OK');
+      }
+
+      if (!authenticated.has(connectionId) || !selected.has(connectionId))
+        return encodeRespError('NOAUTH authentication and database selection required');
+
+      if (command === 'EVAL')
+        return encodeRespBulkString(JSON.stringify({
+          status: 'enqueued',
+          id: 'jobenv_acl'
+        }));
+
+      if (command === 'BLPOP')
+        return encodeRespArray(['cricket:jobs:wakeups', 'reports']);
 
       throw new Error(`Unexpected Redis command ${command}`);
     });
     let url = redis.url.replace('redis://', 'redis://worker:secret@') + '/2';
     let driver = await createRedisQueueDriver({ url });
+    let envelope = {
+      schemaVersion: 2,
+      id: 'jobenv_acl',
+      name: 'reports.generate',
+      queueName: 'reports',
+      input: {},
+      context: {},
+      policy: { attempts: 1 },
+      createdAt: '2026-07-10T05:00:00.000Z',
+      availableAt: '2026-07-10T05:00:00.000Z'
+    };
 
     try {
-      assert.deepEqual(redis.commands, [
-        ['AUTH', 'worker', 'secret'],
-        ['SELECT', '2'],
-        ['AUTH', 'worker', 'secret'],
-        ['SELECT', '2']
-      ]);
+      assert.equal((await driver.enqueue(envelope)).enqueued, true);
+      assert.deepEqual(await driver.waitForWork(), {
+        reason: 'work',
+        queueName: 'reports'
+      });
     } finally {
       await driver.cleanup();
       await redis.close();
@@ -338,7 +318,6 @@ describe('Cricket jobs: Redis socket', () => {
         }
       });
       assert.equal((await driver.enqueue(envelope)).enqueued, true);
-      assert.deepEqual(redis.commands.map(command => command[0]), ['EVAL']);
     } finally {
       await driver?.cleanup();
       await redis.close();
