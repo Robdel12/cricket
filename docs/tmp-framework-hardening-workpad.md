@@ -14,7 +14,9 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
 - Cricket's public surface spans definition, HTTP, job, documentation, and
   generated-guidance contracts; drift in any one of them teaches apps the wrong
   framework shape.
-- The jobs API advertises retry, concurrency, priority, retention, wakeups, and Redis durability beyond what the runtime currently enforces.
+- The remaining job risk is Redis durability: policy behavior exists, but its
+  multi-command transitions are not yet atomic or proven against a real
+  concurrent Redis boundary.
 - Cricket's vision explicitly rejects hidden mutation, transport magic, polling waits, and contract theater.
 
 ## Current Repo Facts
@@ -30,9 +32,15 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
   at calculated exponential-backoff availability times.
 - Active claim heartbeats now use the same injected, abortable clock lifecycle
   as worker deadlines instead of an untestable interval.
-- Job concurrency policies remain inspectable metadata and are not yet enforced
-  during claim or settlement.
-- `src/jobs/drivers/redis.js` stores priority/retention-adjacent metadata but claims FIFO and settles work through non-atomic command sequences.
+- Resolved global and partition concurrency now travels in immutable envelopes.
+  Claims use shared active work for capacity; terminal settlement releases it.
+- Built-in drivers claim higher numeric priority first with creation time and
+  envelope ID as deterministic ties.
+- Idempotency owns one non-terminal run and releases after completion or final
+  failure. The unused `retention` option and duplicate `redisQueue.partition`
+  source of truth have been removed; partition identity comes from resolved
+  concurrency policy.
+- Redis policy transitions remain non-atomic until the production-safety lane.
 - `src/structure.js` scaffolds optional empty files and a passing test with no assertion.
 - `test/jobs.test.js` proves worker behavior mainly through the test driver and protocol doubles, not a real concurrent Redis boundary.
 
@@ -73,10 +81,10 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
 
 ### PR 4 - Queue Policy Truth
 
-- [ ] Enforce global and partition concurrency during claim/settlement across workers.
-- [ ] Make priority affect claim order with deterministic tie-breaking.
-- [ ] Define and enforce idempotency lifetime and queue retention, or remove those options from the public contract.
-- [ ] Keep app product state outside Redis and `cricket_jobs`.
+- [x] Resolve global and partition concurrency into envelopes and enforce it through shared driver state; atomic Redis enforcement belongs to PR 5.
+- [x] Make priority affect claim order with deterministic tie-breaking.
+- [x] Define and enforce idempotency lifetime and queue retention, or remove those options from the public contract.
+- [x] Keep app product state outside Redis and `cricket_jobs`.
 
 ### PR 5 - Redis Production Safety
 
@@ -125,3 +133,6 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
 - 2026-07-10: PR 3 uses one injected clock lifecycle for worker deadlines,
   retry availability, and active heartbeats. Queue drivers wake workers for
   ready work; the runtime supplies delayed and cron boundaries.
+- 2026-07-10: PR 4 resolves queue policy into immutable envelopes. Priority and
+  concurrency affect claims, idempotency lasts for one non-terminal run, and
+  unsupported retention and duplicate partition configuration are removed.

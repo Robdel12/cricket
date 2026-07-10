@@ -6,9 +6,7 @@ import { assertKnownOptions } from '../options.js';
 let redisQueueKeys = new Set([
   'name',
   'idempotencyKey',
-  'partition',
-  'priority',
-  'retention'
+  'priority'
 ]);
 
 /**
@@ -19,10 +17,8 @@ let redisQueueKeys = new Set([
  *
  * @param {object} options - Redis queue options.
  * @param {string} options.name - Queue name.
- * @param {Function} [options.idempotencyKey] - Computes duplicate-prevention key.
- * @param {Function} [options.partition] - Computes partition key for coordination.
- * @param {Function} [options.priority] - Computes priority metadata.
- * @param {object} [options.retention] - Retention metadata for queue drivers.
+ * @param {Function} [options.idempotencyKey] - Prevents another non-terminal run with the same key.
+ * @param {Function} [options.priority] - Computes numeric claim priority; higher values run first.
  * @returns {object} Frozen Redis queue contract.
  */
 export function redisQueue(options = {}) {
@@ -33,9 +29,6 @@ export function redisQueue(options = {}) {
 
   if (options.idempotencyKey !== undefined && typeof options.idempotencyKey !== 'function')
     throw new Error('redisQueue idempotencyKey must be a function');
-
-  if (options.partition !== undefined && typeof options.partition !== 'function')
-    throw new Error('redisQueue partition must be a function');
 
   if (options.priority !== undefined && typeof options.priority !== 'function')
     throw new Error('redisQueue priority must be a function');
@@ -48,14 +41,8 @@ export function redisQueue(options = {}) {
   if (options.idempotencyKey)
     queue.idempotencyKey = options.idempotencyKey;
 
-  if (options.partition)
-    queue.partition = options.partition;
-
   if (options.priority)
     queue.priority = options.priority;
-
-  if (options.retention)
-    queue.retention = options.retention;
 
   return frozenPlain(queue);
 }

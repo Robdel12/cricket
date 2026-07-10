@@ -490,7 +490,6 @@ function reportJob(events = [], options = {}) {
     queue: redisQueue({
       name: 'reports',
       idempotencyKey: ({ input }) => input.reportId,
-      partition: ({ input }) => `account:${input.accountId}`,
       priority: ({ context }) => context.priority
     }),
     retry: retry.exponential({
@@ -606,12 +605,11 @@ describe('Cricket jobs', () => {
       });
 
       assert.deepEqual(envelope, {
-        schemaVersion: 1,
+        schemaVersion: 2,
         id: 'jobenv_test',
         name: 'reports.generate',
         queueName: 'reports',
         idempotencyKey: 'report_123',
-        partition: 'account:acct_456',
         priority: 50,
         input: {
           reportId: 'report_123',
@@ -630,6 +628,11 @@ describe('Cricket jobs', () => {
             delayMs: 10
           }
         },
+        concurrency: [{
+          type: 'partition',
+          key: 'account:acct_456',
+          limit: 2
+        }],
         availableAt: '2026-06-18T12:00:00.000Z',
         createdAt: '2026-06-18T12:00:00.000Z'
       });
@@ -640,6 +643,98 @@ describe('Cricket jobs', () => {
       });
     } finally {
       await worker.cleanup();
+    }
+  });
+
+  it('rejects queue metadata and concurrency that cannot be enforced', async () => {
+    assert.throws(() => redisQueue({
+      name: 'reports',
+      retention: {
+        completedMs: 60_000
+      }
+    }), /redisQueue received unknown option retention/);
+    assert.throws(() => redisQueue({
+      name: 'reports',
+      partition: ({ input }) => input.accountId
+    }), /redisQueue received unknown option partition/);
+    assert.throws(() => concurrency.global({
+      key: 'reports',
+      limit: 0
+    }), /limit must be a positive safe integer or function/);
+    assert.throws(() => defineJob({
+      name: 'reports.unsupportedConcurrency',
+      input: z.object({}),
+      concurrency: {
+        type: 'custom',
+        key: 'reports',
+        limit: 1
+      },
+      run() {}
+    }), /unsupported type custom/);
+    assert.throws(() => defineJob({
+      name: 'reports.multiplePartitions',
+      input: z.object({}),
+      concurrency: [
+        concurrency.partition({ key: 'account', limit: 1 }),
+        concurrency.partition({ key: 'region', limit: 1 })
+      ],
+      run() {}
+    }), /accepts one partition concurrency policy/);
+
+    let invalidPriority = defineJob({
+      name: 'reports.invalidPriority',
+      input: z.object({}),
+      queue: redisQueue({
+        name: 'reports',
+        priority: () => 1.5
+      }),
+      run() {}
+    });
+    let invalidConcurrency = defineJob({
+      name: 'reports.invalidConcurrency',
+      input: z.object({}),
+      queue: redisQueue({
+        name: 'reports'
+      }),
+      concurrency: concurrency.partition({
+        key: () => '',
+        limit: 1
+      }),
+      run() {}
+    });
+    let duplicateConcurrency = defineJob({
+      name: 'reports.duplicateConcurrency',
+      input: z.object({}),
+      queue: redisQueue({
+        name: 'reports'
+      }),
+      concurrency: [
+        concurrency.global({ key: 'reports', limit: 2 }),
+        concurrency.global({ key: 'reports', limit: 1 })
+      ],
+      run() {}
+    });
+
+    let producer = await createCricketJobs({
+      jobs: [invalidPriority, invalidConcurrency, duplicateConcurrency],
+      queues: { test: true }
+    });
+
+    try {
+      await assert.rejects(
+        producer.jobs.enqueue(invalidPriority, {}),
+        /priority must resolve to a safe integer/
+      );
+      await assert.rejects(
+        producer.jobs.enqueue(invalidConcurrency, {}),
+        /key must resolve to a non-empty string/
+      );
+      await assert.rejects(
+        producer.jobs.enqueue(duplicateConcurrency, {}),
+        /Duplicate concurrency policy global:reports/
+      );
+    } finally {
+      await producer.cleanup();
     }
   });
 
@@ -690,12 +785,314 @@ describe('Cricket jobs', () => {
         }
       ]);
       assert.deepEqual(processed, ['report_123']);
+      let afterCompletion = await worker.jobs.enqueue(job, {
+        reportId: 'report_123',
+        accountId: 'acct_456',
+        templateId: 'template_789'
+      });
+
+      assert.equal(afterCompletion.enqueued, true);
       assert.ok(testState.jobs().some(event => event.type === 'job.completed'));
       assert.ok(testState.jobs().some(event => event.type === 'job.progressed'));
       assert.ok(testState.logs().some(log => log.event === 'report.started'));
       assert.ok(testState.events().some(event => event.type === 'trace.span.finished'));
     } finally {
       await worker.cleanup();
+    }
+  });
+
+  it('keeps idempotency ownership while a run is active', async () => {
+    let started = deferred();
+    let release = deferred();
+    let job = defineJob({
+      name: 'reports.activeIdempotency',
+      input: z.object({
+        reportId: z.string()
+      }),
+      queue: redisQueue({
+        name: 'reports',
+        idempotencyKey: ({ input }) => input.reportId
+      }),
+      async run() {
+        started.resolve();
+        await release.promise;
+
+        return { status: 'completed' };
+      }
+    });
+    let worker = await startCricketWorker(defineCricketApp({ logger() {} }), {
+      jobs: [job],
+      queues: { test: true }
+    });
+
+    try {
+      let first = await worker.jobs.enqueue(job, { reportId: 'report_active' });
+      let draining = worker.drain();
+
+      await started.promise;
+
+      let duplicate = await worker.jobs.enqueue(job, { reportId: 'report_active' });
+
+      assert.equal(duplicate.duplicate, true);
+      assert.equal(duplicate.envelope.id, first.envelope.id);
+
+      release.resolve();
+      assert.deepEqual(await draining, [{ status: 'completed' }]);
+    } finally {
+      release.resolve();
+      await worker.cleanup();
+    }
+  });
+
+  it('keeps idempotency ownership while a run is delayed', async () => {
+    let time = createManualClock('2026-06-18T12:00:00.000Z');
+    let job = defineJob({
+      name: 'reports.delayedIdempotency',
+      input: z.object({
+        reportId: z.string()
+      }),
+      queue: redisQueue({
+        name: 'reports',
+        idempotencyKey: ({ input }) => input.reportId
+      }),
+      run() {
+        return { status: 'completed' };
+      }
+    });
+    let worker = await startCricketWorker(defineCricketApp({ logger() {} }), {
+      clock: time.clock,
+      jobs: [job],
+      queues: { test: true }
+    });
+
+    try {
+      let first = await worker.jobs.enqueue(job, { reportId: 'report_delayed' }, {
+        delayMs: 10
+      });
+      let duplicate = await worker.jobs.enqueue(job, { reportId: 'report_delayed' });
+
+      assert.equal(duplicate.duplicate, true);
+      assert.equal(duplicate.envelope.id, first.envelope.id);
+      assert.deepEqual(await worker.drain(), []);
+
+      time.advanceBy(10);
+      assert.deepEqual(await worker.drain(), [{ status: 'completed' }]);
+      assert.equal((await worker.jobs.enqueue(job, {
+        reportId: 'report_delayed'
+      })).enqueued, true);
+    } finally {
+      await worker.cleanup();
+    }
+  });
+
+  it('claims higher priority first with stable creation and id tie-breaking', async () => {
+    let processed = [];
+    let older = () => new Date('2026-06-18T11:59:00.000Z');
+    let sameTime = () => new Date('2026-06-18T12:00:00.000Z');
+    let job = defineJob({
+      name: 'reports.priority',
+      input: z.object({
+        reportId: z.string()
+      }),
+      context: z.object({
+        priority: z.number().int()
+      }),
+      queue: redisQueue({
+        name: 'reports',
+        priority: ({ context }) => context.priority
+      }),
+      run({ input }) {
+        processed.push(input.reportId);
+        return {
+          status: 'completed'
+        };
+      }
+    });
+    let worker = await startCricketWorker(defineCricketApp({
+      logger() {}
+    }), {
+      jobs: [job],
+      queues: {
+        test: true
+      }
+    });
+
+    try {
+      await worker.jobs.enqueue(job, {
+        reportId: 'low'
+      }, {
+        context: { priority: 1 },
+        createId: () => 'jobenv_low',
+        now: older
+      });
+      await worker.jobs.enqueue(job, {
+        reportId: 'high_old'
+      }, {
+        context: { priority: 10 },
+        createId: () => 'jobenv_high_z',
+        now: older
+      });
+      await worker.jobs.enqueue(job, {
+        reportId: 'high_b'
+      }, {
+        context: { priority: 10 },
+        createId: () => 'jobenv_high_b',
+        now: sameTime
+      });
+      await worker.jobs.enqueue(job, {
+        reportId: 'high_a'
+      }, {
+        context: { priority: 10 },
+        createId: () => 'jobenv_high_a',
+        now: sameTime
+      });
+
+      await worker.drain();
+
+      assert.deepEqual(processed, [
+        'high_old',
+        'high_a',
+        'high_b',
+        'low'
+      ]);
+    } finally {
+      await worker.cleanup();
+    }
+  });
+
+  it('enforces global concurrency across workers sharing a queue driver', async () => {
+    let started = deferred();
+    let release = deferred();
+    let processed = [];
+    let controller = new AbortController();
+    let driver = createTestQueueDriver();
+    let job = defineJob({
+      name: 'reports.globalConcurrency',
+      input: z.object({
+        reportId: z.string()
+      }),
+      queue: redisQueue({
+        name: 'reports'
+      }),
+      concurrency: concurrency.global({
+        key: 'reports:rendering',
+        limit: ({ input }) => input.reportId === 'first' ? 1 : 5
+      }),
+      async run({ input }) {
+        if (input.reportId === 'first') {
+          started.resolve();
+          await release.promise;
+        }
+
+        processed.push(input.reportId);
+        return {
+          status: 'completed'
+        };
+      }
+    });
+    let workerA = await startCricketWorker(defineCricketApp({ logger() {} }), {
+      jobs: [job],
+      queues: { driver }
+    });
+    let workerB = await startCricketWorker(defineCricketApp({ logger() {} }), {
+      jobs: [job],
+      queues: { driver }
+    });
+
+    try {
+      await workerA.jobs.enqueue(job, { reportId: 'first' }, {
+        createId: () => 'jobenv_global_1'
+      });
+      await workerA.jobs.enqueue(job, { reportId: 'second' }, {
+        createId: () => 'jobenv_global_2'
+      });
+
+      let first = workerA.drain({ signal: controller.signal });
+      await started.promise;
+
+      assert.deepEqual(await workerB.drain(), []);
+
+      controller.abort();
+      release.resolve();
+      assert.deepEqual(await first, [{ status: 'completed' }]);
+      assert.deepEqual(await workerB.drain(), [{ status: 'completed' }]);
+      assert.deepEqual(processed, ['first', 'second']);
+    } finally {
+      release.resolve();
+      await workerA.cleanup();
+      await workerB.cleanup();
+    }
+  });
+
+  it('uses available partitions while another partition is at capacity', async () => {
+    let started = deferred();
+    let release = deferred();
+    let controller = new AbortController();
+    let driver = createTestQueueDriver();
+    let job = defineJob({
+      name: 'reports.partitionConcurrency',
+      input: z.object({
+        reportId: z.string(),
+        accountId: z.string()
+      }),
+      queue: redisQueue({
+        name: 'reports'
+      }),
+      concurrency: concurrency.partition({
+        key: ({ input }) => `account:${input.accountId}`,
+        limit: 1
+      }),
+      async run({ input }) {
+        if (input.reportId === 'account_a_1') {
+          started.resolve();
+          await release.promise;
+        }
+
+        return {
+          reportId: input.reportId
+        };
+      }
+    });
+    let workerA = await startCricketWorker(defineCricketApp({ logger() {} }), {
+      jobs: [job],
+      queues: { driver }
+    });
+    let workerB = await startCricketWorker(defineCricketApp({ logger() {} }), {
+      jobs: [job],
+      queues: { driver }
+    });
+
+    try {
+      await workerA.jobs.enqueue(job, {
+        reportId: 'account_a_1',
+        accountId: 'a'
+      }, { createId: () => 'jobenv_partition_1' });
+      await workerA.jobs.enqueue(job, {
+        reportId: 'account_a_2',
+        accountId: 'a'
+      }, { createId: () => 'jobenv_partition_2' });
+      await workerA.jobs.enqueue(job, {
+        reportId: 'account_b_1',
+        accountId: 'b'
+      }, { createId: () => 'jobenv_partition_3' });
+
+      let first = workerA.drain({ signal: controller.signal });
+      await started.promise;
+
+      assert.deepEqual(await workerB.drain(), [{
+        reportId: 'account_b_1'
+      }]);
+
+      controller.abort();
+      release.resolve();
+      await first;
+      assert.deepEqual(await workerB.drain(), [{
+        reportId: 'account_a_2'
+      }]);
+    } finally {
+      release.resolve();
+      await workerA.cleanup();
+      await workerB.cleanup();
     }
   });
 
@@ -1218,6 +1615,12 @@ describe('Cricket jobs', () => {
       assert.deepEqual(await worker.drain(), []);
       assert.equal(worker.driver.snapshot().items[0].availableAt, '2026-06-18T12:00:00.010Z');
       assert.equal(worker.driver.snapshot().items[0].envelope.availableAt, originalAvailableAt);
+
+      let retryDuplicate = await worker.jobs.enqueue(job, {
+        reportId: 'report_retry'
+      });
+
+      assert.equal(retryDuplicate.duplicate, true);
 
       time.advanceBy(9);
       assert.deepEqual(await worker.drain(), []);
@@ -2158,9 +2561,143 @@ describe('Cricket jobs', () => {
         status: 'completed'
       });
 
+      let afterCompletion = await worker.jobs.enqueue(job, input);
+      let secondClaim = await driver.claim();
+
+      await driver.fail(secondClaim.envelope, new Error('terminal failure'));
+
+      let afterFailure = await worker.jobs.enqueue(job, input);
+
       assert.equal(redis.published.some(event => event.message === 'reports'), true);
+      assert.equal(afterCompletion.enqueued, true);
+      assert.equal(afterFailure.enqueued, true);
     } finally {
       await worker.cleanup();
+    }
+  });
+
+  it('claims Redis work by priority with deterministic ties', async () => {
+    let redis = createFakeRedis();
+    let driver = await createRedisQueueDriver({
+      client: redis,
+      prefix: 'priority:jobs',
+      queueNames: ['reports']
+    });
+    let job = defineJob({
+      name: 'reports.redisPriority',
+      input: z.object({
+        reportId: z.string()
+      }),
+      context: z.object({
+        priority: z.number().int()
+      }),
+      queue: redisQueue({
+        name: 'reports',
+        priority: ({ context }) => context.priority
+      }),
+      run() {}
+    });
+    let worker = await startCricketWorker(defineCricketApp({ logger() {} }), {
+      jobs: [job],
+      queues: { driver }
+    });
+    let now = () => new Date('2026-06-18T12:00:00.000Z');
+
+    try {
+      await worker.jobs.enqueue(job, { reportId: 'low' }, {
+        context: { priority: 1 },
+        createId: () => 'jobenv_redis_low',
+        now
+      });
+      await worker.jobs.enqueue(job, { reportId: 'high_b' }, {
+        context: { priority: 10 },
+        createId: () => 'jobenv_redis_high_b',
+        now
+      });
+      await worker.jobs.enqueue(job, { reportId: 'high_a' }, {
+        context: { priority: 10 },
+        createId: () => 'jobenv_redis_high_a',
+        now
+      });
+
+      let first = await driver.claim();
+      assert.equal(first.envelope.input.reportId, 'high_a');
+      await driver.complete(first.envelope, {});
+
+      let second = await driver.claim();
+      assert.equal(second.envelope.input.reportId, 'high_b');
+      await driver.complete(second.envelope, {});
+
+      let third = await driver.claim();
+      assert.equal(third.envelope.input.reportId, 'low');
+    } finally {
+      await worker.cleanup();
+    }
+  });
+
+  it('enforces shared Redis partition capacity across driver instances', async () => {
+    let redis = createFakeRedis();
+    let driverA = await createRedisQueueDriver({
+      client: redis,
+      prefix: 'concurrency:jobs',
+      queueNames: ['reports']
+    });
+    let driverB = await createRedisQueueDriver({
+      client: redis,
+      prefix: 'concurrency:jobs',
+      queueNames: ['reports']
+    });
+    let job = defineJob({
+      name: 'reports.redisConcurrency',
+      input: z.object({
+        reportId: z.string(),
+        accountId: z.string()
+      }),
+      queue: redisQueue({
+        name: 'reports'
+      }),
+      concurrency: concurrency.partition({
+        key: ({ input }) => `account:${input.accountId}`,
+        limit: 1
+      }),
+      run() {}
+    });
+    let workerA = await startCricketWorker(defineCricketApp({ logger() {} }), {
+      jobs: [job],
+      queues: { driver: driverA }
+    });
+    let workerB = await startCricketWorker(defineCricketApp({ logger() {} }), {
+      jobs: [job],
+      queues: { driver: driverB }
+    });
+
+    try {
+      await workerA.jobs.enqueue(job, {
+        reportId: 'account_a_1',
+        accountId: 'a'
+      }, { createId: () => 'jobenv_redis_partition_1' });
+      await workerA.jobs.enqueue(job, {
+        reportId: 'account_a_2',
+        accountId: 'a'
+      }, { createId: () => 'jobenv_redis_partition_2' });
+      await workerA.jobs.enqueue(job, {
+        reportId: 'account_b_1',
+        accountId: 'b'
+      }, { createId: () => 'jobenv_redis_partition_3' });
+
+      let accountA = await driverA.claim();
+      let accountB = await driverB.claim();
+
+      assert.equal(accountA.envelope.input.reportId, 'account_a_1');
+      assert.equal(accountB.envelope.input.reportId, 'account_b_1');
+
+      await driverA.complete(accountA.envelope, {});
+
+      let nextAccountA = await driverB.claim();
+      assert.equal(nextAccountA.envelope.input.reportId, 'account_a_2');
+    } finally {
+      await workerA.cleanup();
+      await workerB.cleanup();
     }
   });
 

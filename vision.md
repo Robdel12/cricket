@@ -151,6 +151,13 @@ delayed availability, schedule materialization, and short-lived progress. The
 app database keeps product truth. Cricket's `cricket_jobs` table is an
 execution ledger for debugging and operators, not a domain state model.
 
+Queue policy should be executable, not descriptive metadata. Higher numeric
+priority determines claim order with stable ties. Global and partition limits
+travel as resolved immutable envelope data so drivers evaluate the same keys
+and limits when choosing work. Idempotency owns one non-terminal run and
+releases after its terminal settlement. Terminal coordination records remain
+until explicit app or driver cleanup.
+
 Scheduled work should stay inside the job contract. Apps define the cron,
 timezone, enablement rule, and input for each due slot. Cricket uses a thin cron
 parser for schedule math, then materializes due slots into normal immutable job

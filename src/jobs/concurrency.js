@@ -16,18 +16,18 @@ function assertPolicy(options, type) {
     limit
   } = options;
 
-  if (typeof key !== 'string' && typeof key !== 'function')
-    throw new Error(`${type} key must be a string or function`);
+  if ((typeof key !== 'string' || !key) && typeof key !== 'function')
+    throw new Error(`${type} key must be a non-empty string or function`);
 
-  if (!Number.isInteger(limit) && typeof limit !== 'function')
-    throw new Error(`${type} limit must be an integer or function`);
+  if ((!Number.isSafeInteger(limit) || limit < 1) && typeof limit !== 'function')
+    throw new Error(`${type} limit must be a positive safe integer or function`);
 }
 
 /**
  * Concurrency policy builders for Cricket jobs.
  *
- * Policies are inspectable coordination metadata. Queue drivers may use them
- * while claiming work; they are not baked into the immutable envelope.
+ * Policy functions resolve while Cricket plans the immutable envelope. Queue
+ * drivers enforce those resolved keys and limits while claiming work.
  */
 export let concurrency = Object.freeze({
   /**

@@ -8,13 +8,14 @@ function timestamp(now = new Date()) {
 
 function ledgerRowForEnvelope(envelope, now) {
   let queuedAt = timestamp(now);
+  let partition = envelope.concurrency?.find(policy => policy.type === 'partition');
 
   return {
     id: envelope.id,
     job_name: envelope.name,
     queue_name: envelope.queueName,
     idempotency_key: envelope.idempotencyKey,
-    partition_key: envelope.partition,
+    partition_key: partition?.key,
     request_id: envelope.context?.requestId,
     source: envelope.context?.source,
     priority: envelope.priority,
