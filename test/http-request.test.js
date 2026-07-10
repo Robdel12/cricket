@@ -5,6 +5,7 @@ import request from 'supertest';
 import {
   defineEndpoint,
   ok,
+  respond,
   toHttpError,
   unauthenticated,
   z
@@ -146,15 +147,12 @@ describe('Cricket HTTP requests', () => {
       middleware: [
         async requestContext => {
           if (!requestContext.request.headers.authorization)
-            return {
-              status: 401,
-              body: {
+            return respond(401, {
                 error: {
                   code: 'UNAUTHENTICATED',
                   message: 'Unauthenticated'
                 }
-              }
-            };
+            });
         }
       ]
     });

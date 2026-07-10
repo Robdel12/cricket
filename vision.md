@@ -96,6 +96,12 @@ Cricket's standard suffixes.
 Cricket provides its HTTP runtime. It should not wrap another web framework or pass
 foreign request/response objects through app code as an escape hatch.
 
+Handler, middleware, and fallback return values are domain bodies by default.
+Only explicit, function-shaped Cricket response helpers control status,
+headers, cookies, redirects, streaming, and cleanup. This keeps domain objects
+from accidentally becoming transport instructions because they happen to have
+a field named `status` or `redirect`.
+
 The runtime should pass one consistent capability shape through setup,
 middleware, rules, handlers, services, jobs, workers, shutdown hooks, logs, and
 traces:

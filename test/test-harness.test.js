@@ -10,6 +10,10 @@ import {
   defineCricketApp,
   defineEndpoint,
   ok,
+  redirect,
+  respond,
+  withCookies,
+  withHeaders,
   z
 } from '../src/index.js';
 import {
@@ -253,15 +257,12 @@ describe('Cricket test harness', () => {
       method: 'get',
       path: '/problem',
       handler() {
-        return {
-          status: 400,
-          headers: {
+        return withHeaders(
+          respond(400, { title: 'Bad request' }),
+          {
             'content-type': 'application/problem+json'
-          },
-          body: {
-            title: 'Bad request'
           }
-        };
+        );
       }
     });
     let app = defineCricketApp({
@@ -287,13 +288,12 @@ describe('Cricket test harness', () => {
       method: 'get',
       path: '/image.png',
       handler() {
-        return {
-          status: 200,
-          headers: {
+        return withHeaders(
+          ok(image),
+          {
             'content-type': 'image/png'
-          },
-          body: image
-        };
+          }
+        );
       }
     });
     let app = defineCricketApp({
@@ -317,12 +317,7 @@ describe('Cricket test harness', () => {
       method: 'get',
       path: '/legacy',
       handler() {
-        return {
-          status: 302,
-          headers: {
-            Location: '/current'
-          }
-        };
+        return redirect('/current', 302);
       }
     });
     let app = defineCricketApp({
@@ -380,9 +375,9 @@ describe('Cricket test harness', () => {
       method: 'post',
       path: '/session',
       handler() {
-        return {
-          status: 200,
-          cookies: [
+        return withCookies(
+          ok({ ok: true }),
+          [
             {
               name: 'accessToken',
               value: 'access-token',
@@ -397,11 +392,8 @@ describe('Cricket test harness', () => {
                 httpOnly: true
               }
             }
-          ],
-          body: {
-            ok: true
-          }
-        };
+          ]
+        );
       }
     });
     let app = defineCricketApp({

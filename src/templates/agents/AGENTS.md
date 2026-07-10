@@ -40,6 +40,12 @@ Request validation errors may be descriptive to clients. Response, serializer,
 and normalizer contract details are internal: inspect them through logs,
 `onError`, or test state rather than exposing their schema issues over HTTP.
 
+Bare handler, middleware, and fallback return values are response bodies. Use
+Cricket's `ok`, `created`, `respond`, and `redirect` functions when transport
+status matters, then compose `withHeaders`, `withCookies`, or
+`withResponseCleanup` when needed. Never use a `{ status, body }`-shaped object
+as an implicit HTTP response.
+
 The folder is the domain. Keep services boring, rules named, and routes thin.
 Keep HTTP request behavior in `middleware/`, not in rules. Keep app-wide clients
 and shared capabilities in `services/`, not in one random domain.

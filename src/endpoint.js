@@ -9,6 +9,10 @@ import {
   parseZod
 } from './schema.js';
 import { operationIdFor } from './route-identity.js';
+import {
+  resolveHttpResponse,
+  withResponseBody
+} from './response.js';
 
 export let supportedEndpointMethods = Object.freeze([
   'DELETE',
@@ -94,23 +98,6 @@ function responseSchemaFrom(definition) {
   if (isZodSchema(definition)) return definition;
 
   return definition.schema ?? definition.body;
-}
-
-function normalizeResponse(endpoint, response) {
-  if (response && typeof response === 'object' && 'status' in response)
-    return response;
-
-  if (response && typeof response === 'object' && response.redirect) {
-    return {
-      status: 303,
-      ...response
-    };
-  }
-
-  return {
-    status: defaultStatusForMethod(endpoint.method),
-    body: response
-  };
 }
 
 function parseResponse(schema, value) {
@@ -399,7 +386,7 @@ export function deprecateEndpoint(endpoint, deprecation) {
 }
 
 function parseEndpointResponse(endpoint, result) {
-  let response = normalizeResponse(endpoint, result);
+  let response = resolveHttpResponse(result, defaultStatusForMethod(endpoint.method));
 
   if (response.redirect)
     return response;
@@ -408,34 +395,5 @@ function parseEndpointResponse(endpoint, result) {
     responseDefinitionFor(endpoint, response.status)
   );
 
-  return {
-    ...response,
-    body: parseResponse(schema, response.body)
-  };
-}
-
-/**
- * Mark a handler result as a created resource response.
- *
- * @param {any} body
- * @returns {{ status: number, body: any }}
- */
-export function created(body) {
-  return {
-    status: 201,
-    body
-  };
-}
-
-/**
- * Mark a handler result as a standard success response.
- *
- * @param {any} body
- * @returns {{ status: number, body: any }}
- */
-export function ok(body) {
-  return {
-    status: 200,
-    body
-  };
+  return withResponseBody(response, parseResponse(schema, response.body));
 }

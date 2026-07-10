@@ -16,6 +16,9 @@ import {
   generateOpenApi,
   ok,
   startCricketApp,
+  withCookies,
+  withHeaders,
+  withResponseCleanup,
   z
 } from '../src/index.js';
 import {
@@ -76,9 +79,12 @@ describe('Cricket HTTP runtime', () => {
       handler({ logger, request }) {
         logger.info('handler.called');
 
-        return {
-          status: 201,
-          cookies: [
+        return withCookies(
+          created({
+            id: request.params.projectId,
+            name: request.body.name
+          }),
+          [
             {
               name: 'session',
               value: 'response-secret',
@@ -86,12 +92,8 @@ describe('Cricket HTTP runtime', () => {
                 httpOnly: true
               }
             }
-          ],
-          body: {
-            id: request.params.projectId,
-            name: request.body.name
-          }
-        };
+          ]
+        );
       }
     });
     let cricketApp = defineCricketApp({
@@ -277,17 +279,14 @@ describe('Cricket HTTP runtime', () => {
       method: 'get',
       path: '/legacy-health',
       handler() {
-        return {
-          status: 200,
-          headers: {
+        return withHeaders(
+          ok({ success: true }),
+          {
             Deprecation: 'false',
             Sunset: 'Tue, 01 Sep 2026 00:00:00 GMT',
             Link: '</manual-health>; rel="successor-version"'
-          },
-          body: {
-            success: true
           }
-        };
+        );
       }
     }), {
       sunset: '2026-09-01',
@@ -959,13 +958,12 @@ describe('Cricket HTTP runtime', () => {
       method: 'get',
       path: '/events',
       handler() {
-        return {
-          status: 200,
-          headers: {
+        return withHeaders(
+          ok(stream),
+          {
             'content-type': 'text/plain'
-          },
-          body: stream
-        };
+          }
+        );
       }
     });
     let runtime = await startCricketApp(defineCricketApp({
@@ -1301,16 +1299,17 @@ describe('Cricket HTTP runtime', () => {
       method: 'get',
       path: '/events',
       handler() {
-        return {
-          status: 200,
-          headers: {
+        return withResponseCleanup(
+          withHeaders(
+            ok(stream),
+            {
             'content-type': 'text/plain'
-          },
-          body: stream,
-          onClose() {
+            }
+          ),
+          () => {
             events.push('response:closed');
           }
-        };
+        );
       }
     });
     let cricketApp = defineCricketApp({

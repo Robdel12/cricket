@@ -10,7 +10,12 @@ import {
   defineRule,
   field,
   ok,
+  redirect,
+  respond,
   tooManyRequests,
+  withCookies,
+  withHeaders,
+  withResponseCleanup,
   z
 } from '../src/index.js';
 import {
@@ -21,6 +26,41 @@ import {
 } from './fixtures/http.js';
 
 describe('Cricket HTTP responses', () => {
+  it('composes immutable transport metadata without freezing response bodies', () => {
+    let body = {
+      status: 'active'
+    };
+    let headers = {
+      'X-Request-Id': 'req_123'
+    };
+    let cookies = [{
+      name: 'session',
+      value: 'signed-token'
+    }];
+    let cleanup = () => {};
+    let response = withResponseCleanup(
+      withCookies(
+        withHeaders(respond(202, body), headers),
+        cookies
+      ),
+      cleanup
+    );
+
+    headers['X-Request-Id'] = 'changed';
+    cookies[0].value = 'changed';
+    body.status = 'complete';
+
+    assert.equal(Object.isFrozen(response), true);
+    assert.equal(Object.isFrozen(response.headers), true);
+    assert.equal(Object.isFrozen(response.cookies), true);
+    assert.equal(response.status, 202);
+    assert.equal(response.body, body);
+    assert.equal(response.body.status, 'complete');
+    assert.equal(response.headers['X-Request-Id'], 'req_123');
+    assert.equal(response.cookies[0].value, 'signed-token');
+    assert.equal(response.onClose, cleanup);
+  });
+
   it('validates endpoint response contracts before sending success', async () => {
     let User = defineModel({
       name: 'User',
@@ -148,33 +188,27 @@ describe('Cricket HTTP responses', () => {
     let failures = [
       {
         name: 'invalid status',
-        result: {
-          status: 101,
-          headers: { 'x-success': 'nope' },
-          body: 'bad'
-        }
+        result: () => respond(101, 'bad')
       },
       {
         name: 'hop-by-hop header',
-        result: {
-          status: 200,
-          headers: {
+        result: withHeaders(
+          ok({ ok: true }),
+          {
             'Transfer-Encoding': 'chunked',
             'x-success': 'nope'
-          },
-          body: { ok: true }
-        }
+          }
+        )
       },
       {
         name: 'bad content length',
-        result: {
-          status: 200,
-          headers: {
+        result: withHeaders(
+          ok('short'),
+          {
             'content-length': '100',
             'x-success': 'nope'
-          },
-          body: 'short'
-        }
+          }
+        )
       }
     ];
 
@@ -189,13 +223,12 @@ describe('Cricket HTTP responses', () => {
 
   it('destroys stream bodies when response preparation fails', async () => {
     let stream = new PassThrough();
-    let response = await responseForHandlerResult({
-      status: 200,
-      headers: {
+    let response = await responseForHandlerResult(withHeaders(
+      ok(stream),
+      {
         'Content-Length': '12'
-      },
-      body: stream
-    });
+      }
+    ));
 
     assertInternalErrorResponse(response);
     assert.equal(stream.destroyed, true);
@@ -227,6 +260,53 @@ describe('Cricket HTTP responses', () => {
     assert.equal(response.status, 200);
     assert.deepEqual(response.body, {
       status: 'active'
+    });
+  });
+
+  it('treats transport-shaped handler objects as plain response bodies', async () => {
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/jobs/current',
+      response: z.object({
+        status: z.literal('active'),
+        redirect: z.string(),
+        headers: z.object({
+          owner: z.string()
+        }),
+        body: z.object({
+          progress: z.number()
+        })
+      }),
+      handler() {
+        return {
+          status: 'active',
+          redirect: '/not-a-redirect',
+          headers: {
+            owner: 'app'
+          },
+          body: {
+            progress: 50
+          }
+        };
+      }
+    });
+    let app = await createHttpApp({
+      endpoints: [endpoint]
+    });
+    let response = await request(app)
+      .get('/jobs/current');
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.location, undefined);
+    assert.deepEqual(response.body, {
+      status: 'active',
+      redirect: '/not-a-redirect',
+      headers: {
+        owner: 'app'
+      },
+      body: {
+        progress: 50
+      }
     });
   });
 
@@ -265,15 +345,12 @@ describe('Cricket HTTP responses', () => {
       defineEndpoint({
         method: 'get',
         path: '/headers',
-        handler: () => ({
-          status: 200,
-          headers: {
+        handler: () => withHeaders(
+          ok({ ok: true }),
+          {
             'X-Request-Id': 'req_123'
-          },
-          body: {
-            ok: true
           }
-        })
+        )
       }),
       defineEndpoint({
         method: 'post',
@@ -285,32 +362,27 @@ describe('Cricket HTTP responses', () => {
       defineEndpoint({
         method: 'get',
         path: '/redirect',
-        handler: () => ({
-          status: 303,
-          redirect: '/login'
-        })
+        handler: () => redirect('/login')
       }),
       defineEndpoint({
         method: 'get',
         path: '/text',
-        handler: () => ({
-          status: 200,
-          headers: {
+        handler: () => withHeaders(
+          ok('hello'),
+          {
             'Content-Type': 'text/plain'
-          },
-          body: 'hello'
-        })
+          }
+        )
       }),
       defineEndpoint({
         method: 'get',
         path: '/buffer',
-        handler: () => ({
-          status: 200,
-          headers: {
+        handler: () => withHeaders(
+          ok(Buffer.from('ABC')),
+          {
             'Content-Type': 'application/octet-stream'
-          },
-          body: Buffer.from('ABC')
-        })
+          }
+        )
       })
     ];
     let app = await createHttpApp({
@@ -318,7 +390,7 @@ describe('Cricket HTTP responses', () => {
     });
     let headers = await request(app).get('/headers');
     let createdResponse = await request(app).post('/sessions');
-    let redirect = await request(app).get('/redirect');
+    let redirectResponse = await request(app).get('/redirect');
     let text = await request(app).get('/text');
     let buffer = await request(app).get('/buffer');
 
@@ -326,16 +398,16 @@ describe('Cricket HTTP responses', () => {
     assert.deepEqual(headers.body, { ok: true });
     assert.equal(createdResponse.status, 201);
     assert.deepEqual(createdResponse.body, { success: true });
-    assert.equal(redirect.status, 303);
-    assert.equal(redirect.headers.location, '/login');
+    assert.equal(redirectResponse.status, 303);
+    assert.equal(redirectResponse.headers.location, '/login');
     assert.equal(text.text, 'hello');
     assert.deepEqual(buffer.body, Buffer.from('ABC'));
   });
 
   it('serializes secure cookies and rejects unsafe cookie output', async () => {
-    let good = await responseForHandlerResult({
-      status: 200,
-      cookies: [
+    let good = await responseForHandlerResult(withCookies(
+      ok({ ok: true }),
+      [
         {
           name: '__Host-session',
           value: 'signed-token',
@@ -347,20 +419,14 @@ describe('Cricket HTTP responses', () => {
             path: '/'
           }
         }
-      ],
-      body: {
-        ok: true
-      }
-    });
-    let bad = await responseForHandlerResult({
-      status: 200,
-      headers: {
+      ]
+    ));
+    let bad = await responseForHandlerResult(withHeaders(
+      ok({ ok: true }),
+      {
         'Set-Cookie': '__Host-session=token; Path=/'
-      },
-      body: {
-        ok: true
       }
-    });
+    ));
 
     assert.match(good.headers['set-cookie'][0], /__Host-session=signed-token/);
     assert.match(good.headers['set-cookie'][0], /Secure/);
@@ -431,38 +497,28 @@ describe('Cricket HTTP responses', () => {
       defineEndpoint({
         method: 'get',
         path: '/head',
-        handler: () => ({
-          status: 200,
-          headers: {
+        handler: () => withHeaders(
+          ok(stream),
+          {
             'Content-Type': 'text/plain'
-          },
-          body: stream
-        })
+          }
+        )
       }),
       defineEndpoint({
         method: 'delete',
         path: '/sessions/current',
-        handler: () => ({
-          status: 204,
-          headers: {
+        handler: () => withHeaders(
+          respond(204, { success: true }),
+          {
             'Content-Length': '16',
             'Content-Type': 'application/json'
-          },
-          body: {
-            success: true
           }
-        })
+        )
       }),
       defineEndpoint({
         method: 'get',
         path: '/redirect-body',
-        handler: () => ({
-          status: 303,
-          redirect: '/login',
-          body: {
-            ignored: true
-          }
-        })
+        handler: () => redirect('/login')
       })
     ];
     let app = await createHttpApp({
@@ -470,15 +526,15 @@ describe('Cricket HTTP responses', () => {
     });
     let head = await request(app).head('/head');
     let empty = await request(app).delete('/sessions/current');
-    let redirect = await request(app).get('/redirect-body');
+    let redirectResponse = await request(app).get('/redirect-body');
 
     assert.equal(head.text, undefined);
     assert.equal(stream.destroyed, true);
     assert.equal(empty.status, 204);
     assert.equal(empty.headers['content-type'], undefined);
     assert.equal(empty.text, '');
-    assert.equal(redirect.status, 303);
-    assert.equal(redirect.text, '');
+    assert.equal(redirectResponse.status, 303);
+    assert.equal(redirectResponse.text, '');
   });
 
   it('streams Node response bodies and runs cleanup on close', async () => {
@@ -487,16 +543,17 @@ describe('Cricket HTTP responses', () => {
       method: 'get',
       path: '/events',
       handler() {
-        return {
-          status: 200,
-          headers: {
+        return withResponseCleanup(
+          withHeaders(
+            ok(Readable.from(['event: snapshot\n', 'data: {"ok":true}\n\n'])),
+            {
             'Content-Type': 'text/event-stream'
-          },
-          body: Readable.from(['event: snapshot\n', 'data: {"ok":true}\n\n']),
-          onClose() {
+            }
+          ),
+          () => {
             cleanedUp = true;
           }
-        };
+        );
       }
     });
     let app = await createHttpApp({

@@ -47,9 +47,9 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
 
 ### PR 2 - Explicit HTTP Responses
 
-- [ ] `src/endpoint.js`, `src/http/response.js` - make function-shaped response helpers the only transport-control values; bare objects containing `status` or `redirect` remain bodies.
-- [ ] Add explicit helpers for the transport outcomes Cricket supports without introducing an open-ended response builder object.
-- [ ] Update HTTP, OpenAPI, examples, README, and generated guidance together.
+- [x] `src/endpoint.js`, `src/http/response.js` - make function-shaped response helpers the only transport-control values; bare objects containing `status` or `redirect` remain bodies.
+- [x] Add explicit helpers for the transport outcomes Cricket supports without introducing an open-ended response builder object.
+- [x] Update HTTP, OpenAPI, examples, README, and generated guidance together.
 
 ### PR 3 - Worker Loop And Retry Truth
 
@@ -100,3 +100,4 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
 - 2026-07-09: Work proceeds as a sequence of reviewable PRs. Stop after each coherent lane for human review before continuing.
 - 2026-07-09: Prefer clean public-contract cutovers; do not add compatibility shims or dual runtime paths.
 - 2026-07-09: PR 1 preserves opaque schema and runtime-capability identities while copying and freezing Cricket-owned structural arrays and plain snapshots.
+- 2026-07-10: PR 2 brands responses created by small public functions; bare values stay bodies across handlers, middleware, and fallbacks, while composable wrappers add headers, cookies, redirects, and stream cleanup.

@@ -20,6 +20,10 @@ Start with `pnpm cricket inspect api/index.js`, then read `api/index.js` and the
 - Put contracts at real boundaries: requests, responses, source payloads, jobs, and database rows.
 - Compose small functions. Keep side effects in services, handlers, jobs, middleware, migrations, or external clients.
 - Preserve predictable files. Agents should be able to guess where behavior lives.
+- Treat bare handler, middleware, and fallback returns as response bodies. Use
+  `ok`, `created`, `respond`, or `redirect` for transport intent, then compose
+  headers, cookies, or cleanup with Cricket's response helpers. Do not return
+  implicit `{ status, body }` transport objects.
 
 ## App Shape
 

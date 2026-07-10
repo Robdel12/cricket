@@ -538,10 +538,7 @@ describe('Cricket core', () => {
         path: '/admin/social-posts',
         async handle() {
           return {
-            status: 200,
-            body: {
-              posts: []
-            }
+            posts: []
           };
         }
       };
@@ -588,10 +585,7 @@ describe('Cricket core', () => {
         path: '/storm-events/health',
         async handle() {
           return {
-            status: 200,
-            body: {
-              ok: true
-            }
+            ok: true
           };
         }
       };
@@ -643,10 +637,7 @@ describe('Cricket core', () => {
         path: '/storm-events/health',
         async handle() {
           return {
-            status: 200,
-            body: {
-              ok: true
-            }
+            ok: true
           };
         }
       };
@@ -978,10 +969,7 @@ describe('Cricket core', () => {
         path: '/projects',
         async handle() {
           return {
-            status: 200,
-            body: {
-              projects: []
-            }
+            projects: []
           };
         }
       };

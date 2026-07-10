@@ -280,6 +280,56 @@ definition time. Request validation failures may include useful issues for API
 clients. Response, serializer, and normalizer contract failures remain detailed
 in logs and `onError`, but their HTTP response is a redacted internal error.
 
+## Explicit HTTP Responses
+
+Bare values returned by handlers, middleware, and fallbacks are response bodies.
+Only Cricket's response functions control HTTP transport details, so a domain
+object containing fields such as `status`, `headers`, or `redirect` stays a
+normal JSON body.
+
+```js
+import {
+  ok,
+  redirect,
+  respond,
+  withCookies,
+  withHeaders,
+  withResponseCleanup
+} from '@robdel12/cricket';
+
+return withHeaders(respond(202, {
+  queued: true
+}), {
+  'Retry-After': '5'
+});
+
+return withCookies(ok({
+  signedIn: true
+}), [{
+  name: 'session',
+  value: session.id,
+  options: {
+    httpOnly: true,
+    secure: true
+  }
+}]);
+
+return redirect('/projects', 303);
+
+return withResponseCleanup(
+  withHeaders(ok(stream), {
+    'Content-Type': 'text/event-stream'
+  }),
+  () => stream.destroy()
+);
+```
+
+Use `ok(body)` for 200, `created(body)` for 201, and `respond(status, body)` for
+other statuses. Compose `withHeaders`, `withCookies`, and
+`withResponseCleanup` around an explicit response. Streams and buffers remain
+ordinary body values; the helpers add transport intent without wrapping them in
+a mutable response builder.
+
 ## Database
 
 Cricket uses Knex as the database path. It creates one `db` handle for the
@@ -566,6 +616,13 @@ import {
   createCricketRuntime,
   defineEndpoint,
   deprecateEndpoint,
+  respond,
+  ok,
+  created,
+  redirect,
+  withHeaders,
+  withCookies,
+  withResponseCleanup,
   defineModel,
   defineRule,
   defineSerializer,
