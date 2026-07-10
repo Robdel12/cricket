@@ -1,7 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import net from 'node:net';
+import nodeTls from 'node:tls';
 
+import { createRedisSocketClient } from '../src/jobs/drivers/redis-client.js';
 import { createRedisQueueDriver } from '../src/jobs/drivers/redis.js';
 import { deferred } from '../test-support/jobs.js';
 
@@ -9,8 +12,8 @@ function encodeRespSimpleString(value) {
   return `+${value}\r\n`;
 }
 
-function encodeRespInteger(value) {
-  return `:${value}\r\n`;
+function encodeRespError(value) {
+  return `-${value}\r\n`;
 }
 
 function encodeRespBulkString(value) {
@@ -18,6 +21,10 @@ function encodeRespBulkString(value) {
     return '$-1\r\n';
 
   return `$${Buffer.byteLength(value)}\r\n${value}\r\n`;
+}
+
+function encodeRespArray(values) {
+  return `*${values.length}\r\n${values.map(encodeRespBulkString).join('')}`;
 }
 
 function parseRespCommand(buffer) {
@@ -57,11 +64,13 @@ function parseRespCommand(buffer) {
   };
 }
 
-async function createRespRedisServer(handleCommand) {
-  let commands = [];
+async function createRespRedisServer(handleCommand, {
+  tls
+} = {}) {
   let sockets = new Set();
+  let closeWaiters = new Set();
   let nextConnectionId = 1;
-  let server = net.createServer(socket => {
+  function handleSocket(socket) {
     let buffer = '';
     let connectionId = nextConnectionId;
 
@@ -70,6 +79,13 @@ async function createRespRedisServer(handleCommand) {
     sockets.add(socket);
     socket.on('close', () => {
       sockets.delete(socket);
+
+      if (!sockets.size) {
+        for (let resolve of closeWaiters)
+          resolve();
+
+        closeWaiters.clear();
+      }
     });
     socket.on('data', chunk => {
       buffer += chunk.toString('utf8');
@@ -81,7 +97,6 @@ async function createRespRedisServer(handleCommand) {
           return;
 
         let command = parsed.parts.map(part => part.toString('utf8'));
-        commands.push(command);
         let response = handleCommand(command, {
           connectionId
         });
@@ -91,7 +106,10 @@ async function createRespRedisServer(handleCommand) {
         buffer = parsed.rest;
       }
     });
-  });
+  }
+  let server = tls
+    ? nodeTls.createServer(tls, handleSocket)
+    : net.createServer(handleSocket);
 
   await new Promise(resolve => {
     server.listen(0, '127.0.0.1', resolve);
@@ -100,8 +118,13 @@ async function createRespRedisServer(handleCommand) {
   let address = server.address();
 
   return {
-    commands,
-    url: `redis://127.0.0.1:${address.port}`,
+    url: `${tls ? 'rediss' : 'redis'}://127.0.0.1:${address.port}`,
+    async waitForNoConnections() {
+      if (!sockets.size)
+        return;
+
+      await new Promise(resolve => closeWaiters.add(resolve));
+    },
     async close() {
       for (let socket of sockets)
         socket.destroy();
@@ -112,82 +135,25 @@ async function createRespRedisServer(handleCommand) {
 }
 
 describe('Cricket jobs: Redis socket', () => {
-  it('accepts Redis simple string responses from the socket driver', async () => {
-    let redis = await createRespRedisServer(([command]) => {
-      if (command === 'GET')
-        return encodeRespBulkString(null);
-
-      if (command === 'SET')
-        return encodeRespSimpleString('OK');
-
-      if (['HSET', 'RPUSH', 'PUBLISH'].includes(command))
-        return encodeRespInteger(1);
-
-      return encodeRespSimpleString('OK');
-    });
-    let driver = await createRedisQueueDriver({
-      url: redis.url,
-      prefix: 'resp:jobs',
-      queueNames: ['reports']
-    });
-    let envelope = {
-      schemaVersion: 1,
-      id: 'jobenv_resp_simple_string',
-      name: 'reports.generate',
-      queueName: 'reports',
-      input: {
-        reportId: 'report_resp',
-        accountId: 'acct_resp',
-        templateId: 'template_resp'
-      },
-      context: {},
-      attempts: 1,
-      createdAt: '2026-05-15T12:00:00.000Z',
-      availableAt: '2026-05-15T12:00:00.000Z'
-    };
-
-    try {
-      let result = await driver.enqueue(envelope);
-
-      assert.equal(result.enqueued, true);
-      assert.deepEqual(redis.commands.map(command => command[0]), [
-        'GET',
-        'SET',
-        'HSET',
-        'RPUSH',
-        'RPUSH',
-        'RPUSH',
-        'PUBLISH'
-      ]);
-    } finally {
-      await driver.cleanup();
-      await redis.close();
-    }
-  });
-
   it('keeps Redis commands usable while the worker blocks for a wakeup', async () => {
     let blocked = deferred();
-    let blockingConnection;
-    let commandConnections = [];
-    let redis = await createRespRedisServer(([command], {
-      connectionId
-    }) => {
+    let blockingCalls = 0;
+    let redis = await createRespRedisServer(([command]) => {
       if (command === 'BLPOP') {
-        blockingConnection = connectionId;
+        blockingCalls += 1;
+
+        if (blockingCalls > 1)
+          return encodeRespArray(['blocking:jobs:wakeups', 'reports']);
+
         blocked.resolve();
         return undefined;
       }
 
-      commandConnections.push(connectionId);
-
-      if (command === 'GET')
-        return encodeRespBulkString(null);
-
-      if (command === 'SET')
-        return encodeRespSimpleString('OK');
-
-      if (['HSET', 'RPUSH', 'PUBLISH'].includes(command))
-        return encodeRespInteger(1);
+      if (command === 'EVAL')
+        return encodeRespBulkString(JSON.stringify({
+          status: 'enqueued',
+          id: 'jobenv_blocking_connection'
+        }));
 
       return encodeRespSimpleString('OK');
     });
@@ -220,16 +186,167 @@ describe('Cricket jobs: Redis socket', () => {
 
       await blocked.promise;
       assert.equal((await driver.enqueue(envelope)).enqueued, true);
-      assert.ok(commandConnections.every(connectionId => connectionId !== blockingConnection));
 
       controller.abort();
       assert.deepEqual(await waiting, {
         reason: 'aborted'
       });
+      assert.deepEqual(await driver.waitForWork(), {
+        reason: 'work',
+        queueName: 'reports'
+      });
     } finally {
       controller.abort();
       await driver.cleanup();
+      await redis.waitForNoConnections();
       await redis.close();
     }
+  });
+
+  it('authenticates ACL URLs and selects their database', async () => {
+    let authenticated = new Set();
+    let selected = new Set();
+    let redis = await createRespRedisServer(([command, ...args], {
+      connectionId
+    }) => {
+      if (command === 'AUTH' && args.join(':') === 'worker:secret') {
+        authenticated.add(connectionId);
+        return encodeRespSimpleString('OK');
+      }
+
+      if (command === 'SELECT' && args[0] === '2' && authenticated.has(connectionId)) {
+        selected.add(connectionId);
+        return encodeRespSimpleString('OK');
+      }
+
+      if (!authenticated.has(connectionId) || !selected.has(connectionId))
+        return encodeRespError('NOAUTH authentication and database selection required');
+
+      if (command === 'EVAL')
+        return encodeRespBulkString(JSON.stringify({
+          status: 'enqueued',
+          id: 'jobenv_acl'
+        }));
+
+      if (command === 'BLPOP')
+        return encodeRespArray(['cricket:jobs:wakeups', 'reports']);
+
+      throw new Error(`Unexpected Redis command ${command}`);
+    });
+    let url = redis.url.replace('redis://', 'redis://worker:secret@') + '/2';
+    let driver = await createRedisQueueDriver({ url });
+    let envelope = {
+      schemaVersion: 2,
+      id: 'jobenv_acl',
+      name: 'reports.generate',
+      queueName: 'reports',
+      input: {},
+      context: {},
+      policy: { attempts: 1 },
+      createdAt: '2026-07-10T05:00:00.000Z',
+      availableAt: '2026-07-10T05:00:00.000Z'
+    };
+
+    try {
+      assert.equal((await driver.enqueue(envelope)).enqueued, true);
+      assert.deepEqual(await driver.waitForWork(), {
+        reason: 'work',
+        queueName: 'reports'
+      });
+    } finally {
+      await driver.cleanup();
+      await redis.close();
+    }
+  });
+
+  it('keeps the socket synchronized after a Redis command error', async () => {
+    let redis = await createRespRedisServer(([command]) => {
+      if (command === 'FAIL')
+        return encodeRespError('ERR expected failure');
+
+      if (command === 'PING')
+        return encodeRespSimpleString('PONG');
+
+      throw new Error(`Unexpected Redis command ${command}`);
+    });
+    let client = await createRedisSocketClient(redis.url);
+
+    try {
+      await assert.rejects(client.command('FAIL'), /expected failure/);
+      assert.equal(await client.command('PING'), 'PONG');
+    } finally {
+      await client.quit();
+      await redis.close();
+    }
+  });
+
+  it('connects to rediss URLs with explicit trust options', async () => {
+    let certificate = fs.readFileSync(new URL('./fixtures/redis-cert.pem', import.meta.url));
+    let key = fs.readFileSync(new URL('./fixtures/redis-key.pem', import.meta.url));
+    let redis = await createRespRedisServer(([command]) => {
+      if (command === 'EVAL')
+        return encodeRespBulkString(JSON.stringify({
+          status: 'enqueued',
+          id: 'jobenv_tls'
+        }));
+
+      throw new Error(`Unexpected Redis command ${command}`);
+    }, {
+      tls: {
+        cert: certificate,
+        key
+      }
+    });
+    let driver;
+    let envelope = {
+      schemaVersion: 2,
+      id: 'jobenv_tls',
+      name: 'reports.generate',
+      queueName: 'reports',
+      input: {},
+      context: {},
+      policy: { attempts: 1 },
+      createdAt: '2026-07-10T05:00:00.000Z',
+      availableAt: '2026-07-10T05:00:00.000Z'
+    };
+
+    try {
+      driver = await createRedisQueueDriver({
+        url: redis.url,
+        tls: {
+          ca: certificate
+        }
+      });
+      assert.equal((await driver.enqueue(envelope)).enqueued, true);
+    } finally {
+      await driver?.cleanup();
+      await redis.close();
+    }
+  });
+
+  it('rejects unsupported URLs before opening a Redis connection', async () => {
+    await assert.rejects(
+      createRedisQueueDriver({ url: 'http://127.0.0.1:6379' }),
+      /must use redis:\/\/ or rediss:\/\//
+    );
+    await assert.rejects(
+      createRedisQueueDriver({ url: 'redis://worker@127.0.0.1:6379' }),
+      /username requires a password/
+    );
+    await assert.rejects(
+      createRedisQueueDriver({ url: 'redis://127.0.0.1:6379/not-a-database' }),
+      /database must be a non-negative integer/
+    );
+    await assert.rejects(
+      createRedisQueueDriver({
+        url: 'redis://127.0.0.1:6379',
+        tls: { rejectUnauthorized: false }
+      }),
+      /TLS options require a rediss:\/\/ URL/
+    );
+    await assert.rejects(
+      createRedisQueueDriver({ client: {} }),
+      /need duplicate\(\)/
+    );
   });
 });

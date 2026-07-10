@@ -1,214 +1,20 @@
-import net from 'node:net';
-import { once } from 'node:events';
-
 import { frozenPlain } from '../../immutable.js';
+import { compareClaimOrder } from '../policy.js';
 import {
-  canClaimEnvelope,
-  compareClaimOrder
-} from '../policy.js';
-
-function encodeCommand(parts) {
-  return `*${parts.length}\r\n${parts.map(part => {
-    let value = String(part);
-    return `$${Buffer.byteLength(value)}\r\n${value}\r\n`;
-  }).join('')}`;
-}
-
-function parseLine(buffer, offset) {
-  let end = buffer.indexOf('\r\n', offset);
-
-  if (end === -1)
-    return undefined;
-
-  return {
-    value: buffer.slice(offset, end),
-    offset: end + 2
-  };
-}
-
-function parseResp(buffer, offset = 0) {
-  let typeByte = buffer[offset];
-
-  if (typeByte === undefined)
-    return undefined;
-
-  let type = String.fromCharCode(typeByte);
-
-  if (type === '+' || type === '-') {
-    let line = parseLine(buffer, offset + 1);
-    if (!line)
-      return undefined;
-
-    if (type === '-')
-      throw new Error(line.value.toString('utf8'));
-
-    return {
-      value: line.value,
-      offset: line.offset
-    };
-  }
-
-  if (type === ':') {
-    let line = parseLine(buffer, offset + 1);
-    if (!line)
-      return undefined;
-
-    return {
-      value: Number(line.value),
-      offset: line.offset
-    };
-  }
-
-  if (type === '$') {
-    let line = parseLine(buffer, offset + 1);
-    if (!line)
-      return undefined;
-
-    let length = Number(line.value);
-    if (length === -1)
-      return {
-        value: null,
-        offset: line.offset
-      };
-
-    let start = line.offset;
-    let end = start + length;
-    if (buffer.length < end + 2)
-      return undefined;
-
-    return {
-      value: buffer.slice(start, end),
-      offset: end + 2
-    };
-  }
-
-  if (type === '*') {
-    let line = parseLine(buffer, offset + 1);
-    if (!line)
-      return undefined;
-
-    let length = Number(line.value);
-    if (length === -1)
-      return {
-        value: null,
-        offset: line.offset
-      };
-
-    let values = [];
-    let nextOffset = line.offset;
-
-    for (let index = 0; index < length; index += 1) {
-      let parsed = parseResp(buffer, nextOffset);
-      if (!parsed)
-        return undefined;
-
-      values.push(parsed.value);
-      nextOffset = parsed.offset;
-    }
-
-    return {
-      value: values,
-      offset: nextOffset
-    };
-  }
-
-  throw new Error(`Unsupported Redis response type ${String.fromCharCode(type)}`);
-}
-
-function decodeRedisValue(value) {
-  if (Buffer.isBuffer(value))
-    return value.toString('utf8');
-
-  if (Array.isArray(value))
-    return value.map(decodeRedisValue);
-
-  return value;
-}
-
-async function createRespClient(url) {
-  let parsed = new URL(url);
-  let socket = net.createConnection({
-    host: parsed.hostname,
-    port: Number(parsed.port || 6379)
-  });
-  let pending = [];
-  let buffer = Buffer.alloc(0);
-
-  function rejectPending(error) {
-    while (pending.length)
-      pending.shift().reject(error);
-  }
-
-  socket.on('data', chunk => {
-    buffer = Buffer.concat([buffer, chunk]);
-
-    while (pending.length) {
-      let response;
-
-      try {
-        response = parseResp(buffer);
-      } catch (error) {
-        pending.shift().reject(error);
-        continue;
-      }
-
-      if (!response)
-        return;
-
-      buffer = buffer.slice(response.offset);
-      pending.shift().resolve(decodeRedisValue(response.value));
-    }
-  });
-  socket.on('error', error => rejectPending(error));
-  socket.on('close', () => rejectPending(new Error('Redis connection closed')));
-
-  await once(socket, 'connect');
-
-  function sendCommand(...parts) {
-    return new Promise((resolve, reject) => {
-      pending.push({
-        resolve,
-        reject
-      });
-      socket.write(encodeCommand(parts));
-    });
-  }
-
-  if (parsed.password)
-    await sendCommand('AUTH', parsed.password);
-
-  if (parsed.pathname && parsed.pathname !== '/') {
-    let db = parsed.pathname.replace('/', '');
-    if (db)
-      await sendCommand('SELECT', db);
-  }
-
-  return {
-    command: sendCommand,
-    async quit() {
-      socket.end();
-      socket.destroy();
-    }
-  };
-}
-
-async function commandFor(client, name, ...args) {
-  if (typeof client.command === 'function')
-    return await client.command.call(client, name, ...args);
-
-  if (typeof client.sendCommand === 'function')
-    return await client.sendCommand.call(client, [name, ...args.map(String)]);
-
-  if (typeof client.call === 'function')
-    return await client.call.call(client, name, ...args);
-
-  let method = client[name.toLowerCase()];
-
-  if (typeof method === 'function')
-    return await method.call(client, ...args);
-
-  throw new Error('Redis client needs command, sendCommand, call, or command methods');
-}
+  claimScript,
+  delayedPromotionBatchSize,
+  enqueueScript,
+  evidenceScript,
+  heartbeatScript,
+  progressScript,
+  promoteDelayedScript,
+  recoveryHeaderScript,
+  registerScheduleScript,
+  retryScript,
+  settleScript,
+  updateScheduleScript
+} from './redis-scripts.js';
+import { createRedisSocketClient, redisCommand } from './redis-client.js';
 
 function keyFor(prefix, ...parts) {
   return [prefix, ...parts].join(':');
@@ -226,8 +32,8 @@ function leaseKey(prefix, id) {
   return keyFor(prefix, 'lease', id);
 }
 
-function queueKey(prefix, queueName) {
-  return keyFor(prefix, 'queue', queueName);
+function readyKey(prefix, queueName) {
+  return keyFor(prefix, 'ready', queueName);
 }
 
 function eventsKey(prefix, id) {
@@ -246,8 +52,8 @@ function spansKey(prefix, id) {
   return keyFor(prefix, 'spans', id);
 }
 
-function activeKey(prefix) {
-  return keyFor(prefix, 'active');
+function runningKey(prefix) {
+  return keyFor(prefix, 'running');
 }
 
 function wakeupsKey(prefix) {
@@ -273,69 +79,55 @@ function duplicateKeyFor(prefix, envelope) {
   return keyFor(prefix, 'idempotency', envelope.name, envelope.idempotencyKey);
 }
 
-async function readDuplicateEnvelope(command, duplicateKey, envelope, readEnvelope) {
-  let existingId = await command('GET', duplicateKey);
-
-  if (!existingId)
-    return envelope;
-
-  let existingEnvelope = await readEnvelope(existingId);
-  return existingEnvelope ?? envelope;
-}
-
 function addQueueName(queues, queueName) {
   if (!queues.includes(queueName))
     queues.push(queueName);
 }
 
-function hashFromRedis(value) {
-  if (!Array.isArray(value))
-    return value ?? {};
+function readyMember(envelope) {
+  return JSON.stringify([
+    envelope.createdAt,
+    envelope.id
+  ]);
+}
 
-  let hash = {};
-
-  for (let index = 0; index < value.length; index += 2)
-    hash[value[index]] = value[index + 1];
-
-  return hash;
+function priorityScore(envelope) {
+  return -(envelope.priority ?? 0);
 }
 
 /**
  * Create a Redis-backed Cricket queue driver.
  *
  * Redis stores Cricket job coordination structures: immutable envelopes,
- * queue lists, run hashes, leases, progress streams, schedule metadata, and
- * wakeup tokens. Product records stay outside the driver.
+ * ordered ready sets, running membership, run hashes, leases, progress streams,
+ * schedule metadata, and wakeup tokens. Product records stay outside the driver.
  *
  * @param {object} [options]
  * @param {object} [options.client] - Existing Redis client-like object.
- * @param {object} [options.waitClient] - Dedicated client-like object for blocking waits.
  * @param {string} [options.prefix='cricket:jobs'] - Redis key prefix.
  * @param {string[]} [options.queueNames] - Queue names to claim from.
  * @param {string} [options.url] - Redis URL used when no client is supplied.
+ * @param {object} [options.tls] - Node TLS options for `rediss://` URLs.
  * @returns {Promise<object>} Redis queue driver.
  */
 export async function createRedisQueueDriver({
   client,
   prefix = 'cricket:jobs',
   queueNames = [],
-  waitClient,
+  tls: tlsOptions,
   url
 } = {}) {
   let ownsClient = !client;
-  let redis = client ?? await createRespClient(url);
-  let ownsWaitClient = false;
-  let waitRedis = waitClient;
+  let redis = client ?? await createRedisSocketClient(url, tlsOptions);
+  let waitRedis;
 
-  if (!waitRedis && ownsClient) {
-    try {
-      waitRedis = await createRespClient(url);
-      ownsWaitClient = true;
-    } catch (error) {
-      await redis.quit?.();
-      throw error;
-    }
-  } else if (!waitRedis && typeof redis.duplicate === 'function') {
+  async function createWaitClient() {
+    if (ownsClient)
+      return await createRedisSocketClient(url, tlsOptions);
+
+    if (typeof redis.duplicate !== 'function')
+      throw new Error('App-provided Redis clients need duplicate() for blocking waits');
+
     let duplicate = await redis.duplicate();
 
     try {
@@ -346,19 +138,35 @@ export async function createRedisQueueDriver({
       throw error;
     }
 
-    waitRedis = duplicate;
-    ownsWaitClient = true;
+    return duplicate;
   }
 
-  waitRedis ??= redis;
+  async function disconnectWaitClient() {
+    let client = waitRedis;
+    waitRedis = undefined;
+
+    if (typeof client?.disconnect === 'function')
+      await client.disconnect();
+    else
+      await client?.quit?.();
+  }
+
+  try {
+    waitRedis = await createWaitClient();
+  } catch (error) {
+    if (ownsClient)
+      await redis.quit?.();
+    throw error;
+  }
+
   let queues = [...new Set(queueNames)];
 
   async function callRedis(name, ...args) {
-    return await commandFor(redis, name, ...args);
+    return await redisCommand(redis, name, ...args);
   }
 
   async function callWaitRedis(name, ...args) {
-    return await commandFor(waitRedis, name, ...args);
+    return await redisCommand(waitRedis, name, ...args);
   }
 
   async function readEnvelope(id) {
@@ -366,8 +174,26 @@ export async function createRedisQueueDriver({
     return text ? JSON.parse(text) : undefined;
   }
 
-  async function writeEvent(type, envelope, metadata = {}) {
-    let event = {
+  async function readList(key) {
+    let length = Number(await callRedis('LLEN', key));
+    let values = [];
+
+    for (let start = 0; start < length; start += 100) {
+      let batch = await callRedis(
+        'LRANGE',
+        key,
+        String(start),
+        String(Math.min(start + 99, length - 1))
+      );
+
+      values.push(...(batch ?? []).map(value => JSON.parse(value)));
+    }
+
+    return values;
+  }
+
+  function eventFor(type, envelope, metadata = {}) {
+    return {
       type,
       envelopeId: envelope.id,
       jobName: envelope.name,
@@ -375,291 +201,372 @@ export async function createRedisQueueDriver({
       timestamp: new Date().toISOString(),
       ...metadata
     };
-
-    await callRedis('RPUSH', eventsKey(prefix, envelope.id), JSON.stringify(event));
   }
 
-  async function readList(key) {
-    let values = await callRedis('LRANGE', key, '0', '-1');
-    return (values ?? []).map(value => JSON.parse(value));
+  async function runScript(script, keys, args = []) {
+    return await callRedis('EVAL', script, String(keys.length), ...keys, ...args.map(String));
   }
 
-  async function activeEnvelopes() {
-    let ids = await callRedis('LRANGE', activeKey(prefix), '0', '-1');
-    let envelopes = [];
+  async function runJsonScript(script, keys, args = []) {
+    let value = await runScript(script, keys, args);
+    return value ? JSON.parse(value) : undefined;
+  }
 
-    for (let id of ids ?? []) {
-      let envelope = await readEnvelope(id);
+  async function settleEnvelope(envelope, {
+    attempt,
+    event,
+    recovering = false,
+    status,
+    value,
+    valueField
+  }) {
+    let duplicateKey = duplicateKeyFor(prefix, envelope);
+    let settled = await runScript(settleScript, [
+      runningKey(prefix),
+      runKey(prefix, envelope.id),
+      leaseKey(prefix, envelope.id),
+      eventsKey(prefix, envelope.id),
+      duplicateKey ?? keyFor(prefix, 'unused', 'idempotency')
+    ], [
+      envelope.id,
+      attempt,
+      status,
+      valueField,
+      JSON.stringify(value),
+      JSON.stringify(event),
+      duplicateKey ? 1 : 0,
+      recovering ? 1 : 0
+    ]);
 
-      if (envelope)
-        envelopes.push(envelope);
-      else
-        await callRedis('LREM', activeKey(prefix), '0', id);
+    return frozenPlain({
+      settled: settled === 1
+    });
+  }
+
+  async function recordEvidence(envelope, evidence, key, attempt) {
+    let recorded = await runScript(evidenceScript, [
+      runningKey(prefix),
+      runKey(prefix, envelope.id),
+      key,
+      leaseKey(prefix, envelope.id)
+    ], [
+      envelope.id,
+      attempt,
+      JSON.stringify({
+        ...evidence,
+        timestamp: evidence.timestamp ?? new Date().toISOString()
+      })
+    ]);
+
+    return frozenPlain({
+      recorded: recorded === 1
+    });
+  }
+
+  async function readyCandidates() {
+    let candidates = new Map();
+
+    for (let queueName of queues) {
+      let key = readyKey(prefix, queueName);
+      let cursor = '0';
+
+      do {
+        let result = await callRedis('ZSCAN', key, cursor, 'COUNT', '100');
+        cursor = String(result?.[0] ?? '0');
+        let entries = result?.[1] ?? [];
+        let members = [];
+
+        for (let index = 0; index < entries.length; index += 2)
+          members.push(entries[index]);
+
+        if (!members.length)
+          continue;
+
+        let identities = members.map(member => ({
+          id: JSON.parse(member)[1],
+          member
+        }));
+        let envelopes = await callRedis(
+          'MGET',
+          ...identities.map(({ id }) => envelopeKey(prefix, id))
+        );
+
+        for (let index = 0; index < identities.length; index += 1) {
+          let identity = identities[index];
+          let text = envelopes?.[index];
+
+          if (!text) {
+            await callRedis('ZREM', key, identity.member);
+            continue;
+          }
+
+          candidates.set(identity.id, {
+            envelope: JSON.parse(text),
+            member: identity.member,
+            readyKey: key
+          });
+        }
+      } while (cursor !== '0');
     }
 
-    return envelopes;
-  }
-
-  async function wakeWorker(envelope) {
-    await callRedis('RPUSH', wakeupsKey(prefix), envelope.queueName);
-    await callRedis('PUBLISH', wakeupsKey(prefix), envelope.queueName);
-  }
-
-  async function updateRunStatus(id, status, ...args) {
-    await callRedis('HSET', runKey(prefix, id), 'status', status, ...args);
+    return [...candidates.values()]
+      .sort((left, right) => compareClaimOrder(left.envelope, right.envelope));
   }
 
   function isAvailable(envelope, now) {
     return new Date(envelope.availableAt ?? envelope.createdAt) <= new Date(now ?? envelope.createdAt);
   }
 
+  async function enqueueEnvelope(envelope, {
+    slotId
+  } = {}) {
+    addQueueName(queues, envelope.queueName);
+
+    let duplicateKey = duplicateKeyFor(prefix, envelope);
+    let slotKey = slotId ? scheduleSlotKey(prefix, slotId) : undefined;
+    let ready = isAvailable(envelope);
+    let result = await runJsonScript(enqueueScript, [
+      envelopeKey(prefix, envelope.id),
+      runKey(prefix, envelope.id),
+      readyKey(prefix, envelope.queueName),
+      delayedKey(prefix),
+      eventsKey(prefix, envelope.id),
+      wakeupsKey(prefix),
+      duplicateKey ?? keyFor(prefix, 'unused', 'idempotency'),
+      slotKey ?? keyFor(prefix, 'unused', 'schedule-slot')
+    ], [
+      JSON.stringify(envelope),
+      envelope.id,
+      prefix,
+      readyMember(envelope),
+      priorityScore(envelope),
+      new Date(envelope.availableAt).getTime(),
+      ready ? 1 : 0,
+      JSON.stringify(eventFor('queued', envelope)),
+      envelope.queueName,
+      duplicateKey ? 1 : 0,
+      slotKey ? 1 : 0
+    ]);
+
+    if (result.status === 'duplicate')
+      return frozenPlain({
+        enqueued: false,
+        duplicate: true,
+        envelope: await readEnvelope(result.id) ?? envelope
+      });
+
+    return frozenPlain({
+      enqueued: true,
+      duplicate: false,
+      envelope
+    });
+  }
+
   return {
     async enqueue(envelope) {
-      let existingEnvelope = await readEnvelope(envelope.id);
-
-      if (existingEnvelope)
-        return frozenPlain({
-          enqueued: false,
-          duplicate: true,
-          envelope: existingEnvelope
-        });
-
-      let duplicateKey = duplicateKeyFor(prefix, envelope);
-
-      if (duplicateKey) {
-        let didSet = await callRedis('SET', duplicateKey, envelope.id, 'NX');
-
-        if (didSet !== 'OK')
-          return frozenPlain({
-            enqueued: false,
-            duplicate: true,
-            envelope: await readDuplicateEnvelope(callRedis, duplicateKey, envelope, readEnvelope)
-          });
-      }
-
-      addQueueName(queues, envelope.queueName);
-
-      await callRedis('SET', envelopeKey(prefix, envelope.id), JSON.stringify(envelope));
-      await updateRunStatus(envelope.id, isAvailable(envelope) ? 'queued' : 'delayed', 'attempts', '0');
-
-      if (isAvailable(envelope))
-        await callRedis('RPUSH', queueKey(prefix, envelope.queueName), envelope.id);
-      else
-        await callRedis('ZADD', delayedKey(prefix), new Date(envelope.availableAt).getTime(), envelope.id);
-
-      await writeEvent('queued', envelope);
-
-      await wakeWorker(envelope);
-
-      return frozenPlain({
-        enqueued: true,
-        duplicate: false,
-        envelope
-      });
+      return await enqueueEnvelope(envelope);
     },
 
     async claim() {
-      let active = await activeEnvelopes();
-      let candidates = [];
+      let candidates = await readyCandidates();
 
-      for (let queueName of queues) {
-        let ids = await callRedis('LRANGE', queueKey(prefix, queueName), '0', '-1');
+      for (let candidate of candidates) {
+        let envelope = candidate.envelope;
+        let result = await runJsonScript(claimScript, [
+          runningKey(prefix),
+          candidate.readyKey,
+          envelopeKey(prefix, envelope.id),
+          runKey(prefix, envelope.id),
+          leaseKey(prefix, envelope.id),
+          eventsKey(prefix, envelope.id),
+          logsKey(prefix, envelope.id),
+          spansKey(prefix, envelope.id),
+          progressKey(prefix, envelope.id)
+        ], [
+          prefix,
+          new Date().toISOString(),
+          60,
+          envelope.id,
+          candidate.member
+        ]);
 
-        for (let id of ids ?? []) {
-          let envelope = await readEnvelope(id);
-
-          if (envelope)
-            candidates.push(envelope);
-          else
-            await callRedis('LREM', queueKey(prefix, queueName), '0', id);
-        }
-      }
-
-      candidates.sort(compareClaimOrder);
-
-      for (let envelope of candidates) {
-        if (!canClaimEnvelope(envelope, active))
+        if (result.status !== 'claimed')
           continue;
-
-        let removed = await callRedis('LREM', queueKey(prefix, envelope.queueName), '1', envelope.id);
-
-        if (!removed)
-          continue;
-
-        await callRedis('RPUSH', activeKey(prefix), envelope.id);
-
-        let id = envelope.id;
-        let attempt = await callRedis('HINCRBY', runKey(prefix, id), 'attempts', '1');
-        let now = new Date().toISOString();
-
-        await callRedis('DEL', logsKey(prefix, id), spansKey(prefix, id), progressKey(prefix, id));
-        await updateRunStatus(id, 'active', 'startedAt', now, 'lastHeartbeatAt', now);
-        await callRedis('SET', leaseKey(prefix, id), 'active', 'EX', '60');
-        await writeEvent('claimed', envelope, {
-          attempt
-        });
 
         return frozenPlain({
-          envelope,
-          attempt
+          envelope: result.envelope,
+          attempt: Number(result.attempt)
         });
       }
 
       return undefined;
     },
 
-    async progress(envelope, progress) {
-      await callRedis('RPUSH', progressKey(prefix, envelope.id), JSON.stringify({
+    async progress(envelope, progress, {
+      attempt
+    } = {}) {
+      let progressEntry = JSON.stringify({
         progress,
         timestamp: new Date().toISOString()
-      }));
-      await writeEvent('progressed', envelope, {
-        progress
       });
-    },
+      let result = await runScript(progressScript, [
+        runningKey(prefix),
+        runKey(prefix, envelope.id),
+        progressKey(prefix, envelope.id),
+        eventsKey(prefix, envelope.id),
+        leaseKey(prefix, envelope.id)
+      ], [
+        envelope.id,
+        attempt,
+        progressEntry,
+        JSON.stringify(eventFor('progressed', envelope, { progress }))
+      ]);
 
-    async complete(envelope, result) {
-      let removed = await callRedis('LREM', activeKey(prefix), '0', envelope.id);
-
-      if (!removed)
-        return frozenPlain({
-          settled: false
-        });
-
-      await callRedis('HSET', runKey(prefix, envelope.id), 'status', 'completed', 'result', JSON.stringify(result));
-      await callRedis('DEL', leaseKey(prefix, envelope.id));
-      let duplicateKey = duplicateKeyFor(prefix, envelope);
-
-      if (duplicateKey)
-        await callRedis('DEL', duplicateKey);
-
-      await writeEvent('completed', envelope);
       return frozenPlain({
-        settled: true
+        recorded: result === 1
       });
     },
 
-    async fail(envelope, error) {
-      let removed = await callRedis('LREM', activeKey(prefix), '0', envelope.id);
+    async complete(envelope, result, {
+      attempt
+    } = {}) {
+      return await settleEnvelope(envelope, {
+        attempt,
+        event: eventFor('completed', envelope, { attempt }),
+        status: 'completed',
+        value: result,
+        valueField: 'result'
+      });
+    },
 
-      if (!removed)
-        return frozenPlain({
-          settled: false
-        });
-
-      await callRedis('HSET', runKey(prefix, envelope.id), 'status', 'failed', 'error', JSON.stringify({
+    async fail(envelope, error, {
+      attempt,
+      recovering = false
+    } = {}) {
+      let failure = {
         code: error?.code,
         name: error?.name,
         message: error?.message
-      }));
-      await callRedis('DEL', leaseKey(prefix, envelope.id));
-      let duplicateKey = duplicateKeyFor(prefix, envelope);
+      };
 
-      if (duplicateKey)
-        await callRedis('DEL', duplicateKey);
-
-      await writeEvent('failed', envelope);
-      return frozenPlain({
-        settled: true
+      return await settleEnvelope(envelope, {
+        attempt,
+        event: eventFor('failed', envelope, {
+          attempt,
+          error: failure
+        }),
+        recovering,
+        status: 'failed',
+        value: failure,
+        valueField: 'error'
       });
     },
 
     async retry(envelope, {
+      attempt,
       availableAt,
-      now = new Date()
+      now = new Date(),
+      recovering = false
     } = {}) {
-      let removed = await callRedis('LREM', activeKey(prefix), '0', envelope.id);
-
-      if (!removed)
-        return frozenPlain({
-          settled: false
-        });
-
       let retryEnvelope = {
         ...envelope,
         availableAt: availableAt ?? new Date(now).toISOString()
       };
       let ready = isAvailable(retryEnvelope, now);
-
-      await updateRunStatus(
+      let settled = await runScript(retryScript, [
+        runningKey(prefix),
+        runKey(prefix, envelope.id),
+        leaseKey(prefix, envelope.id),
+        readyKey(prefix, envelope.queueName),
+        delayedKey(prefix),
+        eventsKey(prefix, envelope.id),
+        wakeupsKey(prefix)
+      ], [
         envelope.id,
-        ready ? 'queued' : 'delayed',
-        'availableAt',
-        retryEnvelope.availableAt
-      );
-      await callRedis('DEL', leaseKey(prefix, envelope.id));
-
-      if (ready)
-        await callRedis('RPUSH', queueKey(prefix, envelope.queueName), envelope.id);
-      else
-        await callRedis('ZADD', delayedKey(prefix), new Date(retryEnvelope.availableAt).getTime(), envelope.id);
-
-      await writeEvent('retry_scheduled', envelope, {
-        availableAt: retryEnvelope.availableAt
-      });
-
-      await wakeWorker(envelope);
+        attempt,
+        readyMember(envelope),
+        priorityScore(envelope),
+        new Date(retryEnvelope.availableAt).getTime(),
+        retryEnvelope.availableAt,
+        ready ? 1 : 0,
+        JSON.stringify(eventFor('retry_scheduled', envelope, {
+          attempt,
+          availableAt: retryEnvelope.availableAt
+        })),
+        envelope.queueName,
+        recovering ? 1 : 0
+      ]);
 
       return frozenPlain({
-        settled: true
+        settled: settled === 1
       });
     },
 
     async heartbeat(envelope, {
+      attempt,
       now = new Date()
     } = {}) {
       let timestamp = now instanceof Date ? now.toISOString() : String(now);
+      let renewed = await runScript(heartbeatScript, [
+        runningKey(prefix),
+        runKey(prefix, envelope.id),
+        leaseKey(prefix, envelope.id)
+      ], [
+        envelope.id,
+        attempt,
+        timestamp,
+        60
+      ]);
 
-      await callRedis('HSET', runKey(prefix, envelope.id), 'lastHeartbeatAt', timestamp);
-      await callRedis('SET', leaseKey(prefix, envelope.id), 'active', 'EX', '60');
+      return frozenPlain({
+        renewed: renewed === 1
+      });
     },
 
-    async recordLog(envelope, log) {
-      await callRedis('RPUSH', logsKey(prefix, envelope.id), JSON.stringify({
-        ...log,
-        timestamp: log.timestamp ?? new Date().toISOString()
-      }));
+    async recordLog(envelope, log, {
+      attempt
+    } = {}) {
+      return await recordEvidence(envelope, log, logsKey(prefix, envelope.id), attempt);
     },
 
-    async recordSpan(envelope, span) {
-      await callRedis('RPUSH', spansKey(prefix, envelope.id), JSON.stringify({
-        ...span,
-        timestamp: span.timestamp ?? new Date().toISOString()
-      }));
+    async recordSpan(envelope, span, {
+      attempt
+    } = {}) {
+      return await recordEvidence(envelope, span, spansKey(prefix, envelope.id), attempt);
     },
 
     async recoveryCandidates() {
-      let ids = await callRedis('LRANGE', activeKey(prefix), '0', '-1');
+      let ids = await callRedis('SMEMBERS', runningKey(prefix));
       let candidates = [];
 
       for (let id of ids ?? []) {
-        let envelope = await readEnvelope(id);
+        let keys = [
+          runningKey(prefix),
+          envelopeKey(prefix, id),
+          runKey(prefix, id),
+          leaseKey(prefix, id)
+        ];
+        let before = await runJsonScript(recoveryHeaderScript, keys, [id]);
 
-        if (!envelope) {
-          await callRedis('LREM', activeKey(prefix), '0', id);
+        if (!before)
           continue;
-        }
 
-        let run = hashFromRedis(await callRedis('HGETALL', runKey(prefix, id)));
-        let leaseActive = await callRedis('GET', leaseKey(prefix, id));
+        let [logs, spans, progress] = await Promise.all([
+          readList(logsKey(prefix, id)),
+          readList(spansKey(prefix, id)),
+          readList(progressKey(prefix, id))
+        ]);
+        let after = await runJsonScript(recoveryHeaderScript, keys, [id]);
 
-        candidates.push(frozenPlain({
-          envelope,
-          attempt: Number(run?.attempts ?? 0),
-          startedAt: run?.startedAt,
-          lastHeartbeatAt: run?.lastHeartbeatAt,
-          leaseActive: Boolean(leaseActive),
-          logs: await readList(logsKey(prefix, id)),
-          spans: await readList(spansKey(prefix, id)),
-          progress: await readList(progressKey(prefix, id)),
-          ledger: {
-            status: run?.status,
-            attempts: Number(run?.attempts ?? 0),
-            startedAt: run?.startedAt,
-            updatedAt: run?.lastHeartbeatAt,
-            error: run?.error ? JSON.parse(run.error) : undefined
-          }
-        }));
+        if (!after || before.attempt !== after.attempt || before.status !== after.status)
+          continue;
+
+        candidates.push({
+          ...after,
+          logs,
+          spans,
+          progress
+        });
       }
 
       return frozenPlain(candidates);
@@ -668,26 +575,21 @@ export async function createRedisQueueDriver({
     async promoteDelayed({
       now = new Date()
     } = {}) {
-      let ids = await callRedis('ZRANGEBYSCORE', delayedKey(prefix), '-inf', new Date(now).getTime());
       let promoted = [];
+      let batch;
 
-      for (let id of ids ?? []) {
-        let removed = await callRedis('ZREM', delayedKey(prefix), id);
-
-        if (!removed)
-          continue;
-
-        let envelope = await readEnvelope(id);
-
-        if (!envelope)
-          continue;
-
-        await updateRunStatus(envelope.id, 'queued');
-        await callRedis('RPUSH', queueKey(prefix, envelope.queueName), envelope.id);
-        await writeEvent('delay_promoted', envelope);
-        await wakeWorker(envelope);
-        promoted.push(envelope);
-      }
+      do {
+        batch = await runJsonScript(promoteDelayedScript, [
+          delayedKey(prefix),
+          wakeupsKey(prefix)
+        ], [
+          prefix,
+          new Date(now).getTime(),
+          new Date(now).toISOString()
+        ]);
+        batch = Array.isArray(batch) ? batch : [];
+        promoted.push(...batch);
+      } while (batch.length === delayedPromotionBatchSize);
 
       return frozenPlain(promoted);
     },
@@ -724,6 +626,7 @@ export async function createRedisQueueDriver({
         timeout = String(remainingMs / 1_000);
       }
 
+      waitRedis ??= await createWaitClient();
       let work = callWaitRedis('BLPOP', wakeupsKey(prefix), timeout);
       let result;
 
@@ -731,7 +634,11 @@ export async function createRedisQueueDriver({
         result = await work;
       } else {
         result = await new Promise((resolve, reject) => {
-          let onAbort = () => resolve(undefined);
+          let aborting;
+          let onAbort = () => {
+            aborting = disconnectWaitClient();
+            aborting.then(() => resolve(undefined), reject);
+          };
 
           signal.addEventListener('abort', onAbort, {
             once: true
@@ -741,7 +648,9 @@ export async function createRedisQueueDriver({
             resolve(value);
           }, error => {
             signal.removeEventListener('abort', onAbort);
-            reject(error);
+
+            if (!aborting)
+              reject(error);
           });
         });
       }
@@ -768,21 +677,16 @@ export async function createRedisQueueDriver({
       nextRunAt
     } = {}) {
       let scheduleKeyValue = scheduleKey(prefix, job.schedule.key);
-
-      let existingText = await callRedis('GET', scheduleKeyValue);
-      let existing = existingText ? JSON.parse(existingText) : {};
-
-      await callRedis('SET', scheduleKeyValue, JSON.stringify({
-        ...existing,
+      await runScript(registerScheduleScript, [scheduleKeyValue], [JSON.stringify({
         key: job.schedule.key,
         jobName: job.name,
         cron: job.schedule.cron,
         timezone: job.schedule.timezone,
         enabled: enabled !== false,
         runOnStartup: job.schedule.runOnStartup === true,
-        lastRunAt: existing.lastRunAt ?? lastRunAt,
-        nextRunAt: nextRunAt ?? existing.nextRunAt
-      }));
+        lastRunAt,
+        nextRunAt
+      })]);
     },
 
     async scheduleState(job) {
@@ -792,45 +696,21 @@ export async function createRedisQueueDriver({
 
     async updateSchedule(job, values = {}) {
       let scheduleKeyValue = scheduleKey(prefix, job.schedule.key);
-      let text = await callRedis('GET', scheduleKeyValue);
-      let existing = text ? JSON.parse(text) : {
+      await runScript(updateScheduleScript, [scheduleKeyValue], [JSON.stringify({
         key: job.schedule.key,
         jobName: job.name
-      };
-
-      await callRedis('SET', scheduleKeyValue, JSON.stringify({
-        ...existing,
-        ...values
-      }));
+      }), JSON.stringify(values)]);
     },
 
     async materializeSchedule(envelope, {
       slotId
     }) {
-      let slotKey = scheduleSlotKey(prefix, slotId);
-      let didSet = await callRedis('SET', slotKey, envelope.id, 'NX', 'EX', '60');
-
-      if (didSet !== 'OK') {
-        let existingId = await callRedis('GET', slotKey);
-
-        return frozenPlain({
-          enqueued: false,
-          duplicate: true,
-          envelope: existingId ? await readEnvelope(existingId) : envelope
-        });
-      }
-
-      let result = await this.enqueue(envelope);
-
-      await callRedis('DEL', slotKey);
-
-      return result;
+      return await enqueueEnvelope(envelope, { slotId });
     },
 
     async cleanup() {
       try {
-        if (ownsWaitClient)
-          await waitRedis.quit?.();
+        await disconnectWaitClient();
       } finally {
         if (ownsClient)
           await redis.quit?.();

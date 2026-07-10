@@ -315,13 +315,17 @@ describe('Cricket jobs: recovery', () => {
         };
       },
       async run({
-        input
+        input,
+        progress
       }) {
         runs.push(input.reportId);
 
         if (runs.length === 1) {
           releaseFirstRun();
           await firstRunFinished;
+          await progress.update({ attempt: 1 });
+        } else {
+          await progress.update({ attempt: 2 });
         }
 
         return {
@@ -361,6 +365,9 @@ describe('Cricket jobs: recovery', () => {
       ]);
       assert.deepEqual(runs, ['report_late_complete', 'report_late_complete']);
       assert.equal(testState.jobs().filter(event => event.type === 'job.completed').length, 1);
+      assert.deepEqual(testState.jobs()
+        .filter(event => event.type === 'job.progressed')
+        .map(event => event.progress.attempt), [2]);
     } finally {
       finishFirstRun();
       await worker.cleanup();
@@ -418,10 +425,10 @@ describe('Cricket jobs: recovery', () => {
       await worker.driver.recordLog(firstAttempt.envelope, {
         level: 'info',
         event: 'report.started'
-      });
+      }, { attempt: firstAttempt.attempt });
       await worker.driver.progress(firstAttempt.envelope, {
         phase: 'first'
-      });
+      }, { attempt: firstAttempt.attempt });
       await worker.recover();
 
       let secondAttempt = await worker.driver.claim();

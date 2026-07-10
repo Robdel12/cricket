@@ -147,16 +147,22 @@ the next known delayed or cron boundary, and shutdown aborts that wait. They do
 not poll on a framework interval.
 
 Redis coordinates hot execution: queues, wakeups, leases, attempts, idempotency,
-delayed availability, schedule materialization, and short-lived progress. The
+delayed availability, schedule materialization, and attempt evidence. The
 app database keeps product truth. Cricket's `cricket_jobs` table is an
 execution ledger for debugging and operators, not a domain state model.
 
-Queue policy should be executable, not descriptive metadata. Higher numeric
-priority determines claim order with stable ties. Global and partition limits
-travel as resolved immutable envelope data so drivers evaluate the same keys
-and limits when choosing work. Idempotency owns one non-terminal run and
-releases after its terminal settlement. Terminal coordination records remain
-until explicit app or driver cleanup.
+Queue policy should be executable, not descriptive metadata. Claims prefer
+higher numeric priority in the ready work they observe, with stable ties.
+Global and partition limits travel as resolved immutable envelope data so
+drivers evaluate the same keys and limits when choosing work. Idempotency owns
+one non-terminal run and releases after its terminal settlement. Enqueue,
+claim, retry, settlement, delayed promotion, and schedule materialization are
+atomic. Each attempt owns Cricket's lease, evidence, retry, and settlement
+writes. Cricket rejects stale coordination updates to those fields. Apps still
+own idempotency or attempt-awareness for
+product-side effects. Terminal envelopes, run state, events, current-attempt
+evidence, and schedule-slot ownership remain until the app deletes those
+prefixed Redis keys out of band.
 
 Scheduled work should stay inside the job contract. Apps define the cron,
 timezone, enablement rule, and input for each due slot. Cricket uses a thin cron
@@ -166,7 +172,9 @@ envelopes. No separate app cron sidecars.
 Recovery is a job-owned decision over normal Cricket signals: run state,
 ledger, logs, spans, and progress. Cricket keeps those facts available and
 executes the returned decision. The app defines what stuck, dead, or out of
-bounds means.
+bounds means. Recovery may be evaluated concurrently, so the decision stays
+pure and idempotent while Cricket fences the resulting attempt transition and
+reports whether it was applied.
 
 Failure handling is first-class because retries are where framework truth and
 product truth drift. Retry policy decides whether Cricket schedules another

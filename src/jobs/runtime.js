@@ -60,16 +60,21 @@ function createLedgerRecorder({
   };
 }
 
-function createProgressCapability(driver, recordLedger, envelope, emitJobEvent) {
+function createProgressCapability(driver, recordLedger, envelope, attempt, emitJobEvent) {
   return {
     async update(progress) {
-      await driver.progress?.(envelope, progress);
+      let result = await driver.progress?.(envelope, progress, { attempt });
+
+      if (result?.recorded === false)
+        return false;
+
       await recordLedger('progressed', envelope, ledger => ledger.progressed(envelope, {
         progress
       }));
       await emitJobEvent('job.progressed', envelope, {
         progress
       });
+      return true;
     }
   };
 }
@@ -185,13 +190,13 @@ function createFailureHandler({
   };
 }
 
-function createRecordingLogger(logger, driver, envelope) {
+function createRecordingLogger(logger, driver, envelope, attempt) {
   function recordJobLog(level, event, metadata) {
     driver.recordLog?.(envelope, {
       level,
       event,
       metadata
-    })?.catch?.(() => {});
+    }, { attempt })?.catch?.(() => {});
   }
 
   function recordJobSpan(event, metadata) {
@@ -202,7 +207,7 @@ function createRecordingLogger(logger, driver, envelope) {
       ...metadata.span,
       requestId: metadata.requestId,
       route: metadata.route
-    })?.catch?.(() => {});
+    }, { attempt })?.catch?.(() => {});
   }
 
   function record(level, event, metadata = {}) {
@@ -229,7 +234,7 @@ function createRecordingLogger(logger, driver, envelope) {
     },
 
     child(metadata = {}) {
-      return createRecordingLogger(logger.child(metadata), driver, envelope);
+      return createRecordingLogger(logger.child(metadata), driver, envelope, attempt);
     }
   };
 }
@@ -252,6 +257,7 @@ async function maintainHeartbeat({
   clock,
   driver,
   envelope,
+  attempt,
   logger,
   signal
 }) {
@@ -277,6 +283,7 @@ async function maintainHeartbeat({
 
     try {
       await driver.heartbeat?.(envelope, {
+        attempt,
         now: clock.now()
       });
     } catch (error) {
@@ -502,16 +509,19 @@ export async function startCricketWorker(cricketApp, {
     job,
     logger,
     jobRunId,
-    runFailureHandler
+    runFailureHandler,
+    recovering = false
   }) {
     let failure = safeError(error);
     let now = clock.now();
     let retry = retryAvailability(job.retry, attempt, now);
 
     let result = await driver.retry(envelope, {
+      attempt,
       error,
       now,
-      availableAt: retry.availableAt
+      availableAt: retry.availableAt,
+      recovering
     });
 
     if (result?.settled === false)
@@ -545,11 +555,15 @@ export async function startCricketWorker(cricketApp, {
     error,
     logger,
     jobRunId,
-    runFailureHandler
+    runFailureHandler,
+    recovering = false
   }) {
     let failure = safeError(error);
 
-    let result = await driver.fail(envelope, error);
+    let result = await driver.fail(envelope, error, {
+      attempt,
+      recovering
+    });
 
     if (result?.settled === false)
       return false;
@@ -587,7 +601,7 @@ export async function startCricketWorker(cricketApp, {
       ...(envelope.scheduleKey ? { scheduleKey: envelope.scheduleKey } : {}),
       ...(envelope.scheduledFor ? { scheduledFor: envelope.scheduledFor } : {}),
       ...(jobRun.requestId ? { requestId: jobRun.requestId } : {})
-    }), driver, envelope);
+    }), driver, envelope, claim.attempt);
     let replay = runtime.observability.createReplay();
     let trace = createTrace({
       logger,
@@ -602,7 +616,7 @@ export async function startCricketWorker(cricketApp, {
         ...(envelope.scheduledFor ? { scheduledFor: envelope.scheduledFor } : {})
       }
     });
-    let progress = createProgressCapability(driver, recordLedger, envelope, emitJobEvent);
+    let progress = createProgressCapability(driver, recordLedger, envelope, claim.attempt, emitJobEvent);
     let runFailureHandler = createFailureHandler({
       envelope,
       attempt: claim.attempt,
@@ -621,6 +635,7 @@ export async function startCricketWorker(cricketApp, {
       jobRunId: jobRun.jobRunId
     }));
     await driver.heartbeat?.(envelope, {
+      attempt: claim.attempt,
       now: clock.now()
     });
     await emitJobEvent('job.started', envelope, {
@@ -633,6 +648,7 @@ export async function startCricketWorker(cricketApp, {
       clock,
       driver,
       envelope,
+      attempt: claim.attempt,
       logger,
       signal: claimLifecycle.signal
     });
@@ -650,7 +666,9 @@ export async function startCricketWorker(cricketApp, {
       }));
       let parsedResult = parseJobResult(job, result);
 
-      let settlement = await driver.complete(envelope, parsedResult);
+      let settlement = await driver.complete(envelope, parsedResult, {
+        attempt: claim.attempt
+      });
 
       if (settlement?.settled === false)
         return undefined;
@@ -730,7 +748,7 @@ export async function startCricketWorker(cricketApp, {
         envelopeId: envelope.id,
         queueName: envelope.queueName,
         attempt: candidate.attempt
-      }), driver, envelope);
+      }), driver, envelope, candidate.attempt);
       let trace = createTrace({
         logger,
         replay: runtime.observability.createReplay(),
@@ -741,7 +759,13 @@ export async function startCricketWorker(cricketApp, {
           queueName: envelope.queueName
         }
       });
-      let progress = createProgressCapability(driver, recordLedger, envelope, emitJobEvent);
+      let progress = createProgressCapability(
+        driver,
+        recordLedger,
+        envelope,
+        candidate.attempt,
+        emitJobEvent
+      );
       let jobRun = {
         jobRunId: candidate.jobRunId ?? `jobrun_${randomUUID()}`,
         requestId: envelope.context?.requestId
@@ -770,47 +794,53 @@ export async function startCricketWorker(cricketApp, {
           logger,
           trace
         }));
-
-        if (decision.action !== 'continue') {
-          await emitJobEvent('job.recovery.decided', envelope, {
-            attempt: candidate.attempt,
-            decision
-          });
-          logger.info('job.recovery.decided', {
-            decision
-          });
-        }
+        let applied = true;
 
         if (decision.action === 'retry') {
           let error = errorFromRecoveryDecision(decision);
 
-          await retryJob({
+          applied = await retryJob({
             envelope,
             attempt: candidate.attempt,
             jobRunId: jobRun.jobRunId,
             error,
             job,
             logger,
-            runFailureHandler
+            runFailureHandler,
+            recovering: true
           });
         }
 
         if (decision.action === 'fail') {
           let error = errorFromRecoveryDecision(decision);
 
-          await failJob({
+          applied = await failJob({
             envelope,
             attempt: candidate.attempt,
             jobRunId: jobRun.jobRunId,
             error,
             logger,
-            runFailureHandler
+            runFailureHandler,
+            recovering: true
+          });
+        }
+
+        if (decision.action !== 'continue') {
+          await emitJobEvent('job.recovery.decided', envelope, {
+            attempt: candidate.attempt,
+            decision,
+            applied
+          });
+          logger.info('job.recovery.decided', {
+            decision,
+            applied
           });
         }
 
         results.push({
           envelope,
-          decision
+          decision,
+          ...(decision.action === 'continue' ? {} : { applied })
         });
       } catch (error) {
         if (throwOnError)

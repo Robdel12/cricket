@@ -14,9 +14,9 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
 - Cricket's public surface spans definition, HTTP, job, documentation, and
   generated-guidance contracts; drift in any one of them teaches apps the wrong
   framework shape.
-- The remaining job risk is Redis durability: policy behavior exists, but its
-  multi-command transitions are not yet atomic or proven against a real
-  concurrent Redis boundary.
+- The remaining audit work is runtime and scaffold cohesion: setup still has a
+  dual return shape, scaffolding creates optional noise, and normal test
+  discovery still runs source/support files as empty tests.
 - Cricket's vision explicitly rejects hidden mutation, transport magic, polling waits, and contract theater.
 
 ## Current Repo Facts
@@ -34,17 +34,25 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
   as worker deadlines instead of an untestable interval.
 - Resolved global and partition concurrency now travels in immutable envelopes.
   Claims use shared active work for capacity; terminal settlement releases it.
-- Built-in drivers claim higher numeric priority first with creation time and
-  envelope ID as deterministic ties.
+- Built-in drivers prefer higher numeric priority in the ready work observed by
+  a claim, with creation time and envelope ID as deterministic ties.
 - Idempotency owns one non-terminal run and releases after completion or final
   failure. The unused `retention` option and duplicate `redisQueue.partition`
   source of truth have been removed; partition identity comes from resolved
   concurrency policy.
-- Redis policy transitions remain non-atomic until the production-safety lane.
+- Redis ready/running coordination now uses atomic enqueue, claim, retry,
+  terminal settlement, delayed-promotion, and schedule-materialization paths.
+- Claim attempts own Cricket's lease, evidence, retry, and settlement writes;
+  apps still own idempotent or attempt-aware product side effects.
+- The built-in client supports `redis://` and `rediss://`, ACL credentials,
+  database selection, and explicit TLS trust. App clients need a dedicated
+  `duplicate()` connection for blocking wakeups.
+- The built-in driver targets standalone Redis. Redis Cluster is not supported
+  by that driver.
 - `src/structure.js` scaffolds optional empty files and a passing test with no assertion.
 - The job suites are organized by definition, policy, worker lifecycle,
-  failure, recovery, Redis, ledger, and schedule contracts. Redis behavior is
-  still proven through protocol doubles, not a real concurrent Redis boundary.
+  failure, recovery, Redis socket, ledger, and schedule contracts. A separate
+  Docker-backed suite proves concurrent transitions against real Redis 7.
 
 ## Target Shape
 
@@ -90,9 +98,11 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
 
 ### PR 5 - Redis Production Safety
 
-- [ ] Make claim, retry, completion, failure, idempotency, delayed promotion, and schedule materialization atomic.
-- [ ] Support the Redis URL/auth/TLS contract Cricket documents, including `rediss://`, or require an app-provided client for unsupported connections.
-- [ ] Add real Redis integration tests for concurrent workers, crashes between transitions, leases, retry delays, idempotency, and cleanup.
+- [x] Make claim, retry, completion, failure, idempotency, delayed promotion, and schedule materialization atomic.
+- [x] Support the Redis URL/auth/TLS contract Cricket documents, including `rediss://`, or require an app-provided client for unsupported connections.
+- [x] Add real Redis integration tests for worker concurrency, recovery and
+  lease fencing, delayed batches, idempotency, schedule slots, and app-client
+  ownership, with socket-boundary coverage for blocking connection cleanup.
 
 ### PR 6 - Runtime And Scaffold Cleanup
 
@@ -138,3 +148,10 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
 - 2026-07-10: PR 4 resolves queue policy into immutable envelopes. Priority and
   concurrency affect claims, idempotency lasts for one non-terminal run, and
   unsupported retention and duplicate partition configuration are removed.
+- 2026-07-10: PR 5 uses ordered ready sets, attempt-owned running state, and
+  atomic Redis scripts for enqueue, claim, retry, settlement, delayed
+  promotion, and schedule materialization. Real Redis 7 tests replace protocol
+  doubles for concurrency and durability behavior.
+- 2026-07-10: PR 5 is a clean Redis coordination cutover. Deployments must
+  drain active work and clear or deliberately re-enqueue old queue keys before
+  running the new worker; no legacy key reader is retained.
