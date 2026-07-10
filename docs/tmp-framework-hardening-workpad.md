@@ -42,7 +42,9 @@ Temporary workpad: keep this file current across the hardening PRs, then remove 
   concurrency policy.
 - Redis policy transitions remain non-atomic until the production-safety lane.
 - `src/structure.js` scaffolds optional empty files and a passing test with no assertion.
-- `test/jobs.test.js` proves worker behavior mainly through the test driver and protocol doubles, not a real concurrent Redis boundary.
+- The job suites are organized by definition, policy, worker lifecycle,
+  failure, recovery, Redis, ledger, and schedule contracts. Redis behavior is
+  still proven through protocol doubles, not a real concurrent Redis boundary.
 
 ## Target Shape
 
