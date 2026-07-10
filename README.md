@@ -360,6 +360,7 @@ services your HTTP handlers use.
 ```js
 import { z } from '@robdel12/cricket';
 import {
+  concurrency,
   createCricketJobs,
   cronSchedule,
   defineJob,
@@ -374,11 +375,24 @@ export let generateReport = defineJob({
     reportId: z.string(),
     accountId: z.string()
   }),
+  context: z.object({
+    priority: z.number().int().default(0)
+  }).default({}),
   queue: redisQueue({
     name: 'reports',
     idempotencyKey: ({ input }) => input.reportId,
-    partition: ({ input }) => `account:${input.accountId}`
+    priority: ({ context }) => context.priority
   }),
+  concurrency: [
+    concurrency.global({
+      key: 'reports:rendering',
+      limit: 4
+    }),
+    concurrency.partition({
+      key: ({ input }) => `account:${input.accountId}`,
+      limit: 1
+    })
+  ],
   retry: retry.exponential({
     attempts: 3,
     delayMs: 2_000,
@@ -502,6 +516,20 @@ Exponential retries use the job policy as execution behavior. The first retry
 waits `delayMs`, each later retry doubles that delay, and `maxDelayMs` caps it.
 The retry stays unclaimable until that calculated availability time, while the
 original immutable envelope stays unchanged.
+
+Queue policy travels with that immutable envelope. Higher numeric priority runs
+first; equal priorities use creation time and then envelope ID for stable order.
+Global concurrency limits shared work, while partition limits keep one account
+or tenant from consuming all capacity. A blocked partition does not prevent
+another partition from running. Drivers evaluate the resolved envelope policy
+when choosing work. Redis policy selection is not yet atomic, so simultaneous
+Redis claimers cannot rely on strict capacity enforcement.
+
+An idempotency key owns one non-terminal run. Duplicate enqueue attempts return
+the existing envelope while it is queued, delayed, active, or retrying. Cricket
+releases the key after completion or final failure so a later run can start.
+Terminal coordination records remain until explicit driver or app cleanup;
+Cricket performs no automatic terminal cleanup.
 
 If the app has a Cricket database, add the job ledger deliberately:
 

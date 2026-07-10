@@ -2,6 +2,10 @@ import net from 'node:net';
 import { once } from 'node:events';
 
 import { frozenPlain } from '../../immutable.js';
+import {
+  canClaimEnvelope,
+  compareClaimOrder
+} from '../policy.js';
 
 function encodeCommand(parts) {
   return `*${parts.length}\r\n${parts.map(part => {
@@ -380,6 +384,22 @@ export async function createRedisQueueDriver({
     return (values ?? []).map(value => JSON.parse(value));
   }
 
+  async function activeEnvelopes() {
+    let ids = await callRedis('LRANGE', activeKey(prefix), '0', '-1');
+    let envelopes = [];
+
+    for (let id of ids ?? []) {
+      let envelope = await readEnvelope(id);
+
+      if (envelope)
+        envelopes.push(envelope);
+      else
+        await callRedis('LREM', activeKey(prefix), '0', id);
+    }
+
+    return envelopes;
+  }
+
   async function wakeWorker(envelope) {
     await callRedis('RPUSH', wakeupsKey(prefix), envelope.queueName);
     await callRedis('PUBLISH', wakeupsKey(prefix), envelope.queueName);
@@ -439,18 +459,36 @@ export async function createRedisQueueDriver({
     },
 
     async claim() {
+      let active = await activeEnvelopes();
+      let candidates = [];
+
       for (let queueName of queues) {
-        let id = await callRedis('LMOVE', queueKey(prefix, queueName), activeKey(prefix), 'LEFT', 'RIGHT');
+        let ids = await callRedis('LRANGE', queueKey(prefix, queueName), '0', '-1');
 
-        if (!id)
-          continue;
+        for (let id of ids ?? []) {
+          let envelope = await readEnvelope(id);
 
-        let envelope = await readEnvelope(id);
-        if (!envelope) {
-          await callRedis('LREM', activeKey(prefix), '0', id);
-          continue;
+          if (envelope)
+            candidates.push(envelope);
+          else
+            await callRedis('LREM', queueKey(prefix, queueName), '0', id);
         }
+      }
 
+      candidates.sort(compareClaimOrder);
+
+      for (let envelope of candidates) {
+        if (!canClaimEnvelope(envelope, active))
+          continue;
+
+        let removed = await callRedis('LREM', queueKey(prefix, envelope.queueName), '1', envelope.id);
+
+        if (!removed)
+          continue;
+
+        await callRedis('RPUSH', activeKey(prefix), envelope.id);
+
+        let id = envelope.id;
         let attempt = await callRedis('HINCRBY', runKey(prefix, id), 'attempts', '1');
         let now = new Date().toISOString();
 
@@ -490,6 +528,11 @@ export async function createRedisQueueDriver({
 
       await callRedis('HSET', runKey(prefix, envelope.id), 'status', 'completed', 'result', JSON.stringify(result));
       await callRedis('DEL', leaseKey(prefix, envelope.id));
+      let duplicateKey = duplicateKeyFor(prefix, envelope);
+
+      if (duplicateKey)
+        await callRedis('DEL', duplicateKey);
+
       await writeEvent('completed', envelope);
       return frozenPlain({
         settled: true
@@ -510,6 +553,11 @@ export async function createRedisQueueDriver({
         message: error?.message
       }));
       await callRedis('DEL', leaseKey(prefix, envelope.id));
+      let duplicateKey = duplicateKeyFor(prefix, envelope);
+
+      if (duplicateKey)
+        await callRedis('DEL', duplicateKey);
+
       await writeEvent('failed', envelope);
       return frozenPlain({
         settled: true

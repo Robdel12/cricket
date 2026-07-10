@@ -76,6 +76,14 @@ availability, schedule materialization, and progress. App tables keep product
 truth. Add Cricket's `cricket_jobs` ledger in a normal app migration when you
 want execution history, but do not use it as the domain state model.
 
+Queue policy is execution behavior. Higher numeric priority claims first with
+stable ties. Drivers evaluate resolved global and partition limits while
+choosing work, and blocked partitions do not block unrelated keys. Idempotency
+prevents a second non-terminal run and releases after completion or final
+failure. Terminal coordination records remain until explicit app or driver
+cleanup. Redis policy selection is not atomic, so do not rely on strict
+capacity enforcement between simultaneous Redis claimers.
+
 Use `cronSchedule` for recurring work. Schedules live on job contracts, not in
 separate app cron sidecars. Test schedules through the worker boundary with a fixed
 clock and `worker.schedules.tick()`.

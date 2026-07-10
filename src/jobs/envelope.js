@@ -7,9 +7,30 @@ import {
   jobContextFailed,
   jobInputFailed
 } from './errors.js';
+import { resolveConcurrency } from './policy.js';
 
 function callMaybeFunction(value, context) {
   return typeof value === 'function' ? value(context) : value;
+}
+
+function optionalStringMetadata(value, name) {
+  if (value === undefined)
+    return undefined;
+
+  if (typeof value !== 'string' || !value)
+    throw new Error(`${name} must resolve to a non-empty string`);
+
+  return value;
+}
+
+function optionalPriority(value) {
+  if (value === undefined)
+    return undefined;
+
+  if (!Number.isSafeInteger(value))
+    throw new Error('Job queue priority must resolve to a safe integer');
+
+  return value;
 }
 
 function retryPolicyFor(job) {
@@ -111,21 +132,23 @@ export function planJobEnvelope(job, input, {
     delayMs,
     createdAt: createdAtDate
   });
+  let idempotencyKey = optionalStringMetadata(
+    callMaybeFunction(job.queue.idempotencyKey, calculationContext),
+    'Job queue idempotencyKey'
+  );
+  let priority = optionalPriority(
+    callMaybeFunction(job.queue.priority, calculationContext)
+  );
+  let concurrency = resolveConcurrency(job, calculationContext);
 
   return frozenPlain({
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: createId(),
     name: job.name,
     queueName: job.queue.name,
-    ...(job.queue.idempotencyKey ? {
-      idempotencyKey: callMaybeFunction(job.queue.idempotencyKey, calculationContext)
-    } : {}),
-    ...(job.queue.partition ? {
-      partition: callMaybeFunction(job.queue.partition, calculationContext)
-    } : {}),
-    ...(job.queue.priority ? {
-      priority: callMaybeFunction(job.queue.priority, calculationContext)
-    } : {}),
+    ...(idempotencyKey ? { idempotencyKey } : {}),
+    ...(priority === undefined ? {} : { priority }),
+    ...(concurrency.length ? { concurrency } : {}),
     input: parsedInput,
     context: parsedContext,
     policy: retryPolicyFor(job),

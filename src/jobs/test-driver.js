@@ -1,4 +1,8 @@
 import { frozenPlain } from '../immutable.js';
+import {
+  canClaimEnvelope,
+  compareClaimOrder
+} from './policy.js';
 
 function duplicateFor(items, envelope) {
   let duplicateId = items.find(item => item.envelope.id === envelope.id);
@@ -97,7 +101,13 @@ export function createTestQueueDriver() {
     },
 
     async claim() {
-      let item = items.find(candidate => candidate.status === 'queued');
+      let activeEnvelopes = items
+        .filter(candidate => candidate.status === 'active')
+        .map(candidate => candidate.envelope);
+      let item = items
+        .filter(candidate => candidate.status === 'queued')
+        .sort((left, right) => compareClaimOrder(left.envelope, right.envelope))
+        .find(candidate => canClaimEnvelope(candidate.envelope, activeEnvelopes));
 
       if (!item)
         return undefined;

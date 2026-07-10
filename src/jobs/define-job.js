@@ -19,6 +19,11 @@ let jobOptionKeys = new Set([
   'schedule',
   'run'
 ]);
+let concurrencyPolicyKeys = new Set([
+  'type',
+  'key',
+  'limit'
+]);
 
 function assertSchema(schema, name) {
   if (!isZodSchema(schema))
@@ -29,7 +34,32 @@ function normalizeConcurrency(value) {
   if (value === undefined)
     return [];
 
-  return Array.isArray(value) ? value : [value];
+  let policies = Array.isArray(value) ? value : [value];
+  let partitionPolicies = 0;
+
+  for (let policy of policies) {
+    if (!policy || typeof policy !== 'object')
+      throw new Error('defineJob concurrency must use a Cricket concurrency policy');
+
+    assertKnownOptions(policy, concurrencyPolicyKeys, 'defineJob concurrency');
+
+    if (policy.type !== 'global' && policy.type !== 'partition')
+      throw new Error(`defineJob concurrency received unsupported type ${policy.type}`);
+
+    if (policy.type === 'partition')
+      partitionPolicies += 1;
+
+    if ((typeof policy.key !== 'string' || !policy.key) && typeof policy.key !== 'function')
+      throw new Error(`${policy.type} concurrency key must be a non-empty string or function`);
+
+    if ((!Number.isSafeInteger(policy.limit) || policy.limit < 1) && typeof policy.limit !== 'function')
+      throw new Error(`${policy.type} concurrency limit must be a positive safe integer or function`);
+  }
+
+  if (partitionPolicies > 1)
+    throw new Error('defineJob accepts one partition concurrency policy');
+
+  return policies;
 }
 
 function assertSchedule(schedule) {

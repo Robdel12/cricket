@@ -13,6 +13,16 @@ Use this when work leaves the request path but should keep Cricket's contract sh
 - Use `defineJob` with validated `input`, optional `context`, queue metadata, retry policy, recovery policy, failure handlers, state metadata, and a plain `run`.
 - Keep product truth in app tables and services. Redis coordinates hot execution: queues, wakeups, leases, attempts, delayed availability, schedules, and progress.
 - Add `cricket_jobs` with `createJobLedgerTable` in an app migration when the app uses a Cricket database. Treat it as execution history, not product state.
+- Use numeric queue priority when claim order matters; higher values run first
+  with creation time and envelope ID as stable ties.
+- Use global concurrency for shared capacity and partition concurrency for
+  tenant/account capacity. Cricket resolves both into the immutable envelope so
+  queue drivers evaluate the same keys and limits while choosing work.
+- Idempotency blocks duplicate non-terminal runs and releases on completion or
+  final failure. Terminal coordination records remain until explicit app or
+  driver cleanup.
+- Redis policy selection is not atomic. Do not rely on strict capacity
+  enforcement between simultaneous Redis claimers.
 
 ## Producers And Workers
 

@@ -31,7 +31,7 @@
   "scripts": {
     "cricket": "node bin/cricket.js",
     "test": "node --test",
-    "check": "node --check bin/*.js src/*.js src/**/*.js test/*.test.js test/fixtures/*.js fixtures/**/*.js examples/*.js",
+    "check": "node --check bin/*.js src/*.js src/**/*.js test/*.test.js test/fixtures/*.js test-support/*.js fixtures/**/*.js examples/*.js",
     "prepublishOnly": "pnpm run check && pnpm test"
   },
   "repository": {
