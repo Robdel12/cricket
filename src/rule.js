@@ -15,8 +15,10 @@ export function defineRule(name, check) {
     throw new Error(`Rule ${name} needs a check function`);
 
   let rule = async context => check(context);
-  rule.ruleName = name;
-  return rule;
+  Object.defineProperty(rule, 'ruleName', {
+    value: name
+  });
+  return Object.freeze(rule);
 }
 
 /**

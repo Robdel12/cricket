@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { deepFreeze } from './immutable.js';
+import { frozenPlain } from './immutable.js';
 
 function toArray(value) {
   if (!value)
@@ -17,7 +17,7 @@ function observerListFrom(config) {
 }
 
 function freezeEvent(event) {
-  return deepFreeze({
+  return frozenPlain({
     timestamp: new Date().toISOString(),
     ...event
   });

@@ -559,6 +559,12 @@ describe('Cricket HTTP routing', () => {
     }), /Endpoint deprecation headers must be a boolean/);
   });
 
+  it('rejects unsupported app options at definition time', () => {
+    assert.throws(() => defineCricketApp({
+      midleware: []
+    }), /defineCricketApp received unknown option midleware/);
+  });
+
   it('composes deprecation metadata around normal endpoint behavior', async () => {
     let endpoint = deprecateEndpoint(defineEndpoint({
       method: 'get',

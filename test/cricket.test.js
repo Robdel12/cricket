@@ -19,6 +19,7 @@ import {
   createServices,
   defineCricketApp,
   defineEndpoint,
+  defineJob,
   defineModel,
   defineNormalizer,
   defineRule,
@@ -33,6 +34,7 @@ import {
   ok,
   pickFields,
   renameFields,
+  redisQueue,
   resolveLogger,
   z
 } from '../src/index.js';
@@ -45,6 +47,59 @@ async function tempRoot() {
 }
 
 describe('Cricket core', () => {
+  it('keeps app, endpoint, and rule definitions stable after construction', () => {
+    let rules = [defineRule('requireUser', () => {})];
+    let tags = ['projects'];
+    let endpoints = [defineEndpoint({
+      method: 'get',
+      path: '/projects',
+      tags,
+      rules,
+      handler() {
+        return ok({ success: true });
+      }
+    })];
+    let app = defineCricketApp({
+      name: 'Stable API',
+      endpoints
+    });
+
+    tags.push('mutated');
+    rules.push(defineRule('lateRule', () => {}));
+    endpoints.push(defineEndpoint({
+      method: 'get',
+      path: '/late',
+      handler() {
+        return ok({ success: true });
+      }
+    }));
+
+    assert.ok(Object.isFrozen(app));
+    assert.ok(Object.isFrozen(app.endpoints));
+    assert.ok(Object.isFrozen(app.endpoints[0]));
+    assert.ok(Object.isFrozen(app.endpoints[0].tags));
+    assert.ok(Object.isFrozen(app.endpoints[0].rules));
+    assert.ok(Object.isFrozen(app.endpoints[0].rules[0]));
+    assert.deepEqual(app.endpoints[0].tags, ['projects']);
+    assert.deepEqual(app.endpoints[0].rules.map(rule => rule.ruleName), ['requireUser']);
+    assert.deepEqual(app.endpoints.map(endpoint => endpoint.path), ['/projects']);
+  });
+
+  it('keeps schema identity inside immutable job definitions', () => {
+    let input = z.object({
+      projectId: z.string()
+    });
+    let job = defineJob({
+      name: 'projects.refresh',
+      input,
+      queue: redisQueue({ name: 'projects' }),
+      async run() {}
+    });
+
+    assert.equal(job.input, input);
+    assert.ok(Object.isFrozen(job));
+  });
+
   it('derives public and named model views from field visibility', () => {
     let Account = defineModel({
       name: 'Account',

@@ -15,6 +15,10 @@ routes, jobs, and middleware should be plain functions and plain objects.
 **Data stays plain.** Cricket should not introduce model instances, hidden
 mutation, decorators, or ORM-style lifecycles.
 
+**Definitions stay stable.** Cricket-owned app, endpoint, rule, model,
+serializer, normalizer, and job contracts should not drift after construction.
+Immutable snapshots must copy caller-owned plain data before freezing it.
+
 **Composition beats magic.** Prefer explicit inputs and outputs over containers,
 class hierarchies, auto-wiring by name, or hidden runtime behavior.
 
@@ -158,6 +162,9 @@ heavy observability product.
 Cricket should never emit raw auth headers, cookies, query values, request
 bodies, response bodies, `Set-Cookie` values, raw error objects, or open-ended
 trace dumps by default.
+
+Observer events are immutable copies. Emitting an event must never freeze or
+otherwise mutate the app value used to create it.
 
 `cricket trace` is a log renderer, not a storage backend or dashboard.
 

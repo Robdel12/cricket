@@ -8,7 +8,56 @@ import {
   loadDomains
 } from './domain.js';
 import { flattenRoutes } from './http/router.js';
+import { assertKnownOptions } from './options.js';
 import { normalizeDatabaseConfig } from './persistence/database.js';
+
+let appOptionKeys = new Set([
+  'allowedHosts',
+  'baseUrl',
+  'context',
+  'database',
+  'description',
+  'domains',
+  'endpoints',
+  'fallback',
+  'jobs',
+  'logger',
+  'middleware',
+  'models',
+  'name',
+  'observability',
+  'onError',
+  'onShutdown',
+  'prefix',
+  'services',
+  'setup',
+  'trustProxy',
+  'version'
+]);
+
+function stableList(value) {
+  return Array.isArray(value) ? Object.freeze([...value]) : value;
+}
+
+function freezeAppContract(contract) {
+  let stable = {
+    ...contract
+  };
+
+  for (let key of [
+    'allowedHosts',
+    'domains',
+    'endpoints',
+    'jobs',
+    'middleware',
+    'models'
+  ]) {
+    if (Object.hasOwn(stable, key))
+      stable[key] = stableList(stable[key]);
+  }
+
+  return Object.freeze(stable);
+}
 
 function hasLoadedDomains(domains) {
   return Array.isArray(domains) && domains.every(domain =>
@@ -24,6 +73,8 @@ function hasLoadedDomains(domains) {
  * @returns {object} Normalized Cricket app contract.
  */
 export function defineCricketApp(options = {}) {
+  assertKnownOptions(options, appOptionKeys, 'defineCricketApp');
+
   let domains = options.domains ?? [];
   let loadedDomains = hasLoadedDomains(domains);
   let hasExplicitEndpoints = Object.hasOwn(options, 'endpoints');
@@ -43,7 +94,7 @@ export function defineCricketApp(options = {}) {
   let middleware = options.middleware ?? [];
   let database = normalizeDatabaseConfig(options.database);
 
-  return {
+  return freezeAppContract({
     ...options,
     domains,
     allowedHosts,
@@ -54,7 +105,7 @@ export function defineCricketApp(options = {}) {
     ...(endpoints === undefined ? {} : { endpoints }),
     ...(jobs === undefined ? {} : { jobs }),
     ...(models === undefined ? {} : { models })
-  };
+  });
 }
 
 /**
@@ -75,13 +126,13 @@ export async function resolveCricketApp(app, {
   let hasExplicitJobs = Object.hasOwn(app, 'jobs');
   let hasExplicitModels = Object.hasOwn(app, 'models');
 
-  return {
+  return freezeAppContract({
     ...app,
     domains,
     endpoints: flattenRoutes(hasExplicitEndpoints ? app.endpoints : collectEndpoints(domains)),
     jobs: hasExplicitJobs ? app.jobs : collectJobs(domains),
     models: hasExplicitModels ? app.models : collectModels(domains)
-  };
+  });
 }
 
 /**

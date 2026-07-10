@@ -55,6 +55,40 @@ describe('Cricket HTTP responses', () => {
 
     assert.equal(response.status, 500);
     assert.equal(response.body.error.code, 'RESPONSE_CONTRACT_FAILED');
+    assert.equal(response.body.error.message, 'Internal server error');
+    assert.equal(response.body.error.issues, undefined);
+  });
+
+  it('keeps internal contract details available to error hooks', async () => {
+    let observed;
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/contract-failure',
+      response: z.object({
+        internalReference: z.string()
+      }),
+      handler() {
+        return ok({});
+      }
+    });
+    let app = await createHttpApp({
+      endpoints: [endpoint],
+      onError(error) {
+        observed = error;
+      }
+    });
+    let response = await request(app)
+      .get('/contract-failure');
+
+    assert.equal(response.status, 500);
+    assert.deepEqual(response.body, {
+      error: {
+        code: 'RESPONSE_CONTRACT_FAILED',
+        message: 'Internal server error'
+      }
+    });
+    assert.equal(observed.code, 'RESPONSE_CONTRACT_FAILED');
+    assert.deepEqual(observed.details.issues[0].path, ['internalReference']);
   });
 
   it('sends redacted internal errors and lets app error hooks observe failures', async () => {

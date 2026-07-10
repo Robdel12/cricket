@@ -122,9 +122,11 @@ export function validationFailed(error) {
  * @returns {Error & { code: string, details: { issues: Array<any> } }}
  */
 export function responseContractFailed(error) {
-  return cricketError('RESPONSE_CONTRACT_FAILED', 'Response contract failed', {
+  let contractError = cricketError('RESPONSE_CONTRACT_FAILED', 'Response contract failed', {
     issues: error.issues ?? []
   });
+  contractError.expose = false;
+  return contractError;
 }
 
 /**
@@ -134,9 +136,11 @@ export function responseContractFailed(error) {
  * @returns {Error & { code: string, details: { issues: Array<any> } }}
  */
 export function serializerContractFailed(error) {
-  return cricketError('SERIALIZER_CONTRACT_FAILED', 'Serializer contract failed', {
+  let contractError = cricketError('SERIALIZER_CONTRACT_FAILED', 'Serializer contract failed', {
     issues: error.issues ?? []
   });
+  contractError.expose = false;
+  return contractError;
 }
 
 /**
@@ -146,9 +150,11 @@ export function serializerContractFailed(error) {
  * @returns {Error & { code: string, details: { issues: Array<any> } }}
  */
 export function normalizerContractFailed(error) {
-  return cricketError('NORMALIZER_CONTRACT_FAILED', 'Normalizer contract failed', {
+  let contractError = cricketError('NORMALIZER_CONTRACT_FAILED', 'Normalizer contract failed', {
     issues: error.issues ?? []
   });
+  contractError.expose = false;
+  return contractError;
 }
 
 /**
@@ -168,7 +174,7 @@ export function toHttpError(error) {
       error: {
         code,
         message: expose ? (error?.message ?? 'Internal server error') : 'Internal server error',
-        ...(error?.details?.issues ? { issues: error.details.issues } : {})
+        ...(expose && error?.details?.issues ? { issues: error.details.issues } : {})
       }
     }
   };

@@ -15,6 +15,10 @@ Cricket provides the architecture. Your app defines the behavior.
 
 First-class means scaffolded, documented, inspectable, and agent-readable. It does not mean Cricket takes over auth policy, table design, product data policy, local tooling, or deployment.
 
+Cricket definition builders return stable contracts and reject unknown app or
+endpoint options. Compose new definitions instead of mutating existing apps,
+endpoints, rules, models, serializers, normalizers, or jobs after construction.
+
 Cricket passes runtime capabilities such as `lifecycle`, `logger`, `services`,
 `trace`, `jobs`, and `progress` through setup, middleware, context, handlers,
 workers, and shutdown hooks. Product health checks may read `lifecycle`, but
@@ -31,6 +35,10 @@ they still own database, worker, and deploy readiness.
 - `*.routes.js` owns endpoint contracts.
 - `*.jobs.js` owns background job contracts for validated asynchronous work.
 - `*.test.js` tests endpoint behavior through HTTP and job behavior through the worker boundary.
+
+Request validation errors may be descriptive to clients. Response, serializer,
+and normalizer contract details are internal: inspect them through logs,
+`onError`, or test state rather than exposing their schema issues over HTTP.
 
 The folder is the domain. Keep services boring, rules named, and routes thin.
 Keep HTTP request behavior in `middleware/`, not in rules. Keep app-wide clients
