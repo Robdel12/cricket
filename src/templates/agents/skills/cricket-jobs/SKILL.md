@@ -17,7 +17,12 @@ Use this when work leaves the request path but should keep Cricket's contract sh
 ## Producers And Workers
 
 - Use `createCricketJobs` when code only needs to enqueue work.
-- Use `startCricketWorker` in `api/workers/` entrypoints that execute jobs, then call `worker.run()`.
+- Use `startCricketWorker` in `api/workers/` entrypoints that execute jobs, then call `worker.run({ signal })`.
+- Configure `queues.redis` or an app-provided `queues.driver` explicitly. Use
+  `queues.test: true` only in tests; Cricket does not silently choose an
+  in-memory queue.
+- Worker loops block on queue wakeups and the next delayed or cron boundary.
+  Abort the signal or call `worker.cleanup()` to stop that wait.
 - Job `run` functions receive `input`, `context`, `services`, `logger`, `trace`, `lifecycle`, `jobs`, and `progress`. They should not receive Redis clients.
 - Enqueue with `runAt` or `delayMs` for one-off delayed work.
 
@@ -30,7 +35,9 @@ Use this when work leaves the request path but should keep Cricket's contract sh
 
 ## Failure And Retry
 
-- Use `retry` to decide whether Cricket should try again.
+- Use `retry.exponential` to decide whether Cricket should try again and when
+  the next attempt becomes claimable. Delays double after each failed attempt
+  and stop growing at `maxDelayMs`.
 - Use `jobFailure({ retrying, exhausted })` when product records need to follow retry decisions.
 - Failure handlers receive app capabilities plus `error`, `failure`, `envelope`, and `attempt`. Keep them focused on product state sync.
 - If failure handlers throw, Cricket logs that handler failure and keeps the original job failure as the important error.

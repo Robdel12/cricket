@@ -305,6 +305,7 @@ function hashFromRedis(value) {
  *
  * @param {object} [options]
  * @param {object} [options.client] - Existing Redis client-like object.
+ * @param {object} [options.waitClient] - Dedicated client-like object for blocking waits.
  * @param {string} [options.prefix='cricket:jobs'] - Redis key prefix.
  * @param {string[]} [options.queueNames] - Queue names to claim from.
  * @param {string} [options.url] - Redis URL used when no client is supplied.
@@ -314,14 +315,46 @@ export async function createRedisQueueDriver({
   client,
   prefix = 'cricket:jobs',
   queueNames = [],
+  waitClient,
   url
 } = {}) {
   let ownsClient = !client;
   let redis = client ?? await createRespClient(url);
+  let ownsWaitClient = false;
+  let waitRedis = waitClient;
+
+  if (!waitRedis && ownsClient) {
+    try {
+      waitRedis = await createRespClient(url);
+      ownsWaitClient = true;
+    } catch (error) {
+      await redis.quit?.();
+      throw error;
+    }
+  } else if (!waitRedis && typeof redis.duplicate === 'function') {
+    let duplicate = await redis.duplicate();
+
+    try {
+      if (duplicate.isOpen === false && typeof duplicate.connect === 'function')
+        await duplicate.connect();
+    } catch (error) {
+      await duplicate.quit?.();
+      throw error;
+    }
+
+    waitRedis = duplicate;
+    ownsWaitClient = true;
+  }
+
+  waitRedis ??= redis;
   let queues = [...new Set(queueNames)];
 
   async function callRedis(name, ...args) {
     return await commandFor(redis, name, ...args);
+  }
+
+  async function callWaitRedis(name, ...args) {
+    return await commandFor(waitRedis, name, ...args);
   }
 
   async function readEnvelope(id) {
@@ -396,8 +429,7 @@ export async function createRedisQueueDriver({
 
       await writeEvent('queued', envelope);
 
-      if (isAvailable(envelope))
-        await wakeWorker(envelope);
+      await wakeWorker(envelope);
 
       return frozenPlain({
         enqueued: true,
@@ -484,7 +516,10 @@ export async function createRedisQueueDriver({
       });
     },
 
-    async retry(envelope) {
+    async retry(envelope, {
+      availableAt,
+      now = new Date()
+    } = {}) {
       let removed = await callRedis('LREM', activeKey(prefix), '0', envelope.id);
 
       if (!removed)
@@ -492,11 +527,31 @@ export async function createRedisQueueDriver({
           settled: false
         });
 
-      await updateRunStatus(envelope.id, 'queued');
+      let retryEnvelope = {
+        ...envelope,
+        availableAt: availableAt ?? new Date(now).toISOString()
+      };
+      let ready = isAvailable(retryEnvelope, now);
+
+      await updateRunStatus(
+        envelope.id,
+        ready ? 'queued' : 'delayed',
+        'availableAt',
+        retryEnvelope.availableAt
+      );
       await callRedis('DEL', leaseKey(prefix, envelope.id));
-      await callRedis('RPUSH', queueKey(prefix, envelope.queueName), envelope.id);
-      await writeEvent('retry_scheduled', envelope);
+
+      if (ready)
+        await callRedis('RPUSH', queueKey(prefix, envelope.queueName), envelope.id);
+      else
+        await callRedis('ZADD', delayedKey(prefix), new Date(retryEnvelope.availableAt).getTime(), envelope.id);
+
+      await writeEvent('retry_scheduled', envelope, {
+        availableAt: retryEnvelope.availableAt
+      });
+
       await wakeWorker(envelope);
+
       return frozenPlain({
         settled: true
       });
@@ -589,10 +644,74 @@ export async function createRedisQueueDriver({
       return frozenPlain(promoted);
     },
 
-    async waitForWork() {
-      let result = await callRedis('BLPOP', wakeupsKey(prefix), '0');
+    async nextAvailableAt() {
+      let result = await callRedis('ZRANGE', delayedKey(prefix), '0', '0', 'WITHSCORES');
 
-      return result?.[1] ?? undefined;
+      if (!result?.[1])
+        return undefined;
+
+      return new Date(Number(result[1])).toISOString();
+    },
+
+    async waitForWork({
+      signal,
+      until,
+      now = new Date()
+    } = {}) {
+      if (signal?.aborted)
+        return frozenPlain({
+          reason: 'aborted'
+        });
+
+      let timeout = '0';
+
+      if (until) {
+        let remainingMs = new Date(until).getTime() - new Date(now).getTime();
+
+        if (remainingMs <= 0)
+          return frozenPlain({
+            reason: 'deadline'
+          });
+
+        timeout = String(remainingMs / 1_000);
+      }
+
+      let work = callWaitRedis('BLPOP', wakeupsKey(prefix), timeout);
+      let result;
+
+      if (!signal) {
+        result = await work;
+      } else {
+        result = await new Promise((resolve, reject) => {
+          let onAbort = () => resolve(undefined);
+
+          signal.addEventListener('abort', onAbort, {
+            once: true
+          });
+          work.then(value => {
+            signal.removeEventListener('abort', onAbort);
+            resolve(value);
+          }, error => {
+            signal.removeEventListener('abort', onAbort);
+            reject(error);
+          });
+        });
+      }
+
+      if (signal?.aborted)
+        return frozenPlain({
+          reason: 'aborted'
+        });
+
+      if (!result)
+        return frozenPlain({
+          reason: 'deadline'
+        });
+
+      return frozenPlain({
+        reason: 'work',
+        queueName: result[1]
+      });
     },
 
     async registerSchedule(job, {
@@ -661,8 +780,13 @@ export async function createRedisQueueDriver({
     },
 
     async cleanup() {
-      if (ownsClient)
-        await redis.quit?.();
+      try {
+        if (ownsWaitClient)
+          await waitRedis.quit?.();
+      } finally {
+        if (ownsClient)
+          await redis.quit?.();
+      }
     }
   };
 }

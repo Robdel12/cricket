@@ -66,7 +66,7 @@ as an implicit HTTP response.
 ## Jobs
 
 Use `defineJob` for asynchronous work that needs validated input, retry policy,
-recovery policy, Redis coordination, and the same
+recovery policy, queue coordination, and the same
 services/logger/trace/lifecycle/jobs/progress capabilities as HTTP.
 Keep job contracts in domain-local `*.jobs.js` files when the work belongs to
 one domain.
@@ -92,6 +92,10 @@ the signals recovery reads.
 
 Use `createCricketJobs` in producers that only enqueue work. Use
 `startCricketWorker` in `api/workers/` entrypoints that execute work, then
-`worker.run()` for the job loop. Deploy checks and product health remain app
+`worker.run({ signal })` for the job loop. Configure `queues.redis` or an
+app-provided `queues.driver` explicitly; only tests should opt into
+`queues.test: true`. Workers wait for queue wakeups and delayed or cron
+boundaries instead of polling. Exponential retries remain unclaimable until
+their calculated backoff expires. Deploy checks and product health remain app
 responsibility.
 <!-- /cricket-agent-guidance -->
