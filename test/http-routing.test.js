@@ -9,6 +9,7 @@ import {
   defineEndpoint,
   defineRule,
   ok,
+  respond,
   z
 } from '../src/index.js';
 import {
@@ -95,11 +96,8 @@ describe('Cricket HTTP routing', () => {
     let app = await createHttpApp({
       endpoints: [endpoint],
       middleware: [
-        async requestContext => ({
-          status: 401,
-          body: {
+        async requestContext => respond(401, {
             error: 'Sign in first'
-          }
         })
       ]
     });
@@ -111,6 +109,53 @@ describe('Cricket HTTP routing', () => {
     assert.equal(response.status, 401);
     assert.deepEqual(response.body, {
       error: 'Sign in first'
+    });
+  });
+
+  it('treats transport-shaped middleware and fallback values as bodies', async () => {
+    let middlewareApp = await createHttpApp({
+      endpoints: [healthEndpoint()],
+      middleware: [
+        async () => ({
+          status: 401,
+          body: {
+            source: 'middleware'
+          }
+        })
+      ]
+    });
+    let fallbackApp = await createHttpApp({
+      endpoints: [],
+      fallback() {
+        return {
+          status: 404,
+          redirect: '/not-a-redirect',
+          body: {
+            source: 'fallback'
+          }
+        };
+      }
+    });
+    let middlewareResponse = await request(middlewareApp)
+      .get('/health');
+    let fallbackResponse = await request(fallbackApp)
+      .get('/missing');
+
+    assert.equal(middlewareResponse.status, 200);
+    assert.deepEqual(middlewareResponse.body, {
+      status: 401,
+      body: {
+        source: 'middleware'
+      }
+    });
+    assert.equal(fallbackResponse.status, 200);
+    assert.equal(fallbackResponse.headers.location, undefined);
+    assert.deepEqual(fallbackResponse.body, {
+      status: 404,
+      redirect: '/not-a-redirect',
+      body: {
+        source: 'fallback'
+      }
     });
   });
 
@@ -263,12 +308,9 @@ describe('Cricket HTTP routing', () => {
         };
       },
       fallback({ appName, request: cricketRequest }) {
-        return {
-          status: 404,
-          body: {
+        return respond(404, {
             path: cricketRequest.path
-          }
-        };
+        });
       }
     });
     let response = await request(app)

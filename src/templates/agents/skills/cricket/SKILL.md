@@ -43,6 +43,18 @@ Start with `pnpm cricket inspect api/index.js`, then read `api/index.js` and the
 
 The folder is the domain. Optional files stay optional; Cricket auto-loads direct domain-local `*.<type>.js` files.
 
+## HTTP Contracts
+
+Routes explicitly compose request schemas, rules, handlers, serializers, and
+response schemas. Bare handler, middleware, and fallback returns are response
+bodies. Use `ok`, `created`, `respond`, or `redirect` for transport intent, then
+compose headers, cookies, or cleanup with Cricket's response helpers. Do not
+return implicit `{ status, body }` transport objects.
+
+Request validation errors may be descriptive to clients. Response, serializer,
+and normalizer contract details belong in logs, `onError`, and test state rather
+than public HTTP responses.
+
 ## Change Flow
 
 1. Update the schema at the boundary that changed.

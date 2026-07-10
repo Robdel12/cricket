@@ -50,8 +50,8 @@ In this repo, the canonical scaffolded guidance lives in
 - Keep contracts at real edges: requests, responses, source payloads, jobs, and
   database rows.
 - Keep definitions stable: app, endpoint, rule, model, serializer, normalizer,
-  and job contracts cannot drift after construction. Cricket copies structural
-  arrays and plain snapshots without freezing caller-owned runtime objects.
+  and job contracts cannot drift after construction. Cricket owns immutable
+  contract structure without freezing caller-owned runtime values.
 - Keep domain files predictable. Agents should be able to guess where behavior
   lives before they open the repo.
 - Keep framework behavior visible. Cricket provides runtime shape; your app
@@ -275,10 +275,62 @@ export let createProject = defineEndpoint({
 });
 ```
 
-Cricket rejects unknown app and endpoint options so misspelled wiring fails at
-definition time. Request validation failures may include useful issues for API
-clients. Response, serializer, and normalizer contract failures remain detailed
-in logs and `onError`, but their HTTP response is a redacted internal error.
+Definition builders reject unknown app and endpoint options so misspelled
+wiring fails immediately instead of becoming unused metadata.
+
+### Endpoint responses
+
+Bare values returned by handlers, middleware, and fallbacks are response bodies.
+Only Cricket's response functions control HTTP transport details, so a domain
+object containing fields such as `status`, `headers`, or `redirect` stays a
+normal JSON body.
+
+Request validation failures may include useful issues for API clients. Response,
+serializer, and normalizer contract failures remain detailed in logs and
+`onError`, but their HTTP response is a redacted internal error.
+
+```js
+import {
+  ok,
+  redirect,
+  respond,
+  withCookies,
+  withHeaders,
+  withResponseCleanup
+} from '@robdel12/cricket';
+
+return withHeaders(respond(202, {
+  queued: true
+}), {
+  'Retry-After': '5'
+});
+
+return withCookies(ok({
+  signedIn: true
+}), [{
+  name: 'session',
+  value: session.id,
+  options: {
+    httpOnly: true,
+    secure: true
+  }
+}]);
+
+return redirect('/projects', 303);
+
+return withResponseCleanup(
+  withHeaders(ok(stream), {
+    'Content-Type': 'text/event-stream'
+  }),
+  () => stream.destroy()
+);
+```
+
+Use `ok(body)` for 200, `created(body)` for 201, and `respond(status, body)` for
+other statuses. Compose `withHeaders`, `withCookies`, and
+`withResponseCleanup` around an explicit response. Streams and buffers remain
+ordinary body values; the helpers add transport intent without wrapping them in
+a mutable response builder.
 
 ## Database
 
@@ -566,6 +618,13 @@ import {
   createCricketRuntime,
   defineEndpoint,
   deprecateEndpoint,
+  respond,
+  ok,
+  created,
+  redirect,
+  withHeaders,
+  withCookies,
+  withResponseCleanup,
   defineModel,
   defineRule,
   defineSerializer,

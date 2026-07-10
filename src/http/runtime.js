@@ -23,6 +23,11 @@ import {
 } from '../trace.js';
 import { routeIdentityFor } from '../route-identity.js';
 import {
+  resolveHttpResponse,
+  respond,
+  withHeaders
+} from '../response.js';
+import {
   assertAllowedHost,
   completeRequestBody,
   createBaseRequest,
@@ -133,39 +138,32 @@ async function resolveMiddleware(middleware, runtime) {
 }
 
 function defaultNotFound(request) {
-  return {
-    status: 404,
-    body: {
+  return respond(404, {
       error: {
         code: 'NOT_FOUND',
         message: `No route for ${request.method} ${request.path}`
       }
-    }
-  };
+  });
 }
 
 function methodNotAllowed(request, allowedMethods) {
-  return {
-    status: 405,
-    headers: {
-      Allow: allowedMethods.join(', ')
-    },
-    body: {
+  return withHeaders(
+    respond(405, {
       error: {
         code: 'METHOD_NOT_ALLOWED',
         message: `Method ${request.method} is not allowed for ${request.path}`
       }
+    }),
+    {
+      Allow: allowedMethods.join(', ')
     }
-  };
+  );
 }
 
 function optionsResponse(allowedMethods) {
-  return {
-    status: 204,
-    headers: {
+  return withHeaders(respond(204), {
       Allow: allowedMethods.join(', ')
-    }
-  };
+  });
 }
 
 /**
@@ -272,10 +270,7 @@ function applyDeprecationHeaders(response, deprecation) {
   headers = withDefaultHeader(headers, 'Sunset', sunsetHeaderValue(deprecation.sunset));
   headers = withDefaultHeader(headers, 'Link', deprecationLinkHeader(deprecation));
 
-  return {
-    ...response,
-    headers
-  };
+  return withHeaders(response, headers);
 }
 
 /**
@@ -883,7 +878,8 @@ function createRuntimeHandler({
 
         return defaultNotFound(requestContextForRequest.request);
       };
-      let response = await composeMiddleware(middleware, finalHandler, timing)(requestContext);
+      let result = await composeMiddleware(middleware, finalHandler, timing)(requestContext);
+      let response = resolveHttpResponse(result);
 
       writeObservedResponse(req, res, response, {
         logger: requestLogger,

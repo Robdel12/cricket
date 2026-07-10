@@ -36,10 +36,6 @@ they still own database, worker, and deploy readiness.
 - `*.jobs.js` owns background job contracts for validated asynchronous work.
 - `*.test.js` tests endpoint behavior through HTTP and job behavior through the worker boundary.
 
-Request validation errors may be descriptive to clients. Response, serializer,
-and normalizer contract details are internal: inspect them through logs,
-`onError`, or test state rather than exposing their schema issues over HTTP.
-
 The folder is the domain. Keep services boring, rules named, and routes thin.
 Keep HTTP request behavior in `middleware/`, not in rules. Keep app-wide clients
 and shared capabilities in `services/`, not in one random domain.
@@ -52,6 +48,20 @@ If code affects product behavior, start in the domain that owns it. Reach for an
 app service, worker, middleware, or migration only when the responsibility is
 actually shared, asynchronous, HTTP-edge, or schema-changing. Keep `dev/`
 local-only.
+
+## HTTP Contracts
+
+Routes explicitly compose request schemas, rules, handlers, serializers, and
+response schemas. Request validation errors may be descriptive to clients.
+Response, serializer, and normalizer contract details are internal: inspect
+them through logs, `onError`, or test state rather than exposing their schema
+issues over HTTP.
+
+Bare handler, middleware, and fallback return values are response bodies. Use
+Cricket's `ok`, `created`, `respond`, and `redirect` functions when transport
+status matters, then compose `withHeaders`, `withCookies`, or
+`withResponseCleanup` when needed. Never use a `{ status, body }`-shaped object
+as an implicit HTTP response.
 
 ## Jobs
 

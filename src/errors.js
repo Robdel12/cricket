@@ -1,3 +1,5 @@
+import { respond } from './response.js';
+
 let statusByCode = {
   BAD_REQUEST: 400,
   UNAUTHENTICATED: 401,
@@ -168,14 +170,11 @@ export function toHttpError(error) {
   let status = statusByCode[code] ?? 500;
   let expose = error?.expose === true || status < 500;
 
-  return {
-    status,
-    body: {
+  return respond(status, {
       error: {
         code,
         message: expose ? (error?.message ?? 'Internal server error') : 'Internal server error',
         ...(expose && error?.details?.issues ? { issues: error.details.issues } : {})
       }
-    }
-  };
+  });
 }

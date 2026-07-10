@@ -23,10 +23,18 @@ export {
 
 export {
   defineEndpoint,
-  deprecateEndpoint,
-  created,
-  ok
+  deprecateEndpoint
 } from './endpoint.js';
+
+export {
+  created,
+  ok,
+  redirect,
+  respond,
+  withCookies,
+  withHeaders,
+  withResponseCleanup
+} from './response.js';
 
 export {
   defineModel

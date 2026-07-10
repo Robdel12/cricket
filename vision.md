@@ -34,6 +34,11 @@ tables, migrations, imports, queues, workers, health, and deployment.
 explicit dependencies, inspect output, OpenAPI output, and boundary tests make
 apps easier for humans and agents to change safely.
 
+**Guidance is a contract, not a changelog.** README, examples, and generated
+agent skills should describe the current framework as one cohesive system.
+Rewrite surrounding guidance and remove obsolete instructions when contracts
+change instead of preserving the order implementation work happened.
+
 ## App Shape
 
 Cricket apps should be readable from the filesystem:
@@ -95,6 +100,12 @@ Cricket's standard suffixes.
 
 Cricket provides its HTTP runtime. It should not wrap another web framework or pass
 foreign request/response objects through app code as an escape hatch.
+
+Handler, middleware, and fallback return values are domain bodies by default.
+Only explicit, function-shaped Cricket response helpers control status,
+headers, cookies, redirects, streaming, and cleanup. This keeps domain objects
+from accidentally becoming transport instructions because they happen to have
+a field named `status` or `redirect`.
 
 The runtime should pass one consistent capability shape through setup,
 middleware, rules, handlers, services, jobs, workers, shutdown hooks, logs, and
@@ -199,8 +210,8 @@ The CLI should create structure and orientation, not product behavior.
 scaffolds the small app shell. `cricket init agents` ships project guidance and
 local Cricket skills so agents learn the same architecture humans use.
 
-The generated guidance is documentation. Keep it current when Cricket's public
-contract changes.
+The generated guidance is documentation. When Cricket's public contract changes,
+revise the relevant guidance as a whole and remove superseded instructions.
 
 ## What Cricket Is Not
 

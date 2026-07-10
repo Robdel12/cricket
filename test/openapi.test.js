@@ -7,6 +7,7 @@ import {
   defineModel,
   field,
   generateOpenApi,
+  respond,
   z
 } from '../src/index.js';
 
@@ -24,6 +25,29 @@ describe('Cricket OpenAPI', () => {
 
     assert.equal(response.status, 201);
     assert.deepEqual(Object.keys(docs.paths['/events'].post.responses), ['201']);
+  });
+
+  it('keeps explicit response status aligned with declared OpenAPI responses', async () => {
+    let endpoint = defineEndpoint({
+      method: 'post',
+      path: '/imports',
+      responses: {
+        202: z.object({
+          queued: z.literal(true)
+        })
+      },
+      handler() {
+        return respond(202, {
+          queued: true
+        });
+      }
+    });
+    let response = await endpoint.handle({});
+    let docs = generateOpenApi({ endpoints: [endpoint] });
+
+    assert.equal(response.status, 202);
+    assert.deepEqual(response.body, { queued: true });
+    assert.deepEqual(Object.keys(docs.paths['/imports'].post.responses), ['202']);
   });
 
   it('generates OpenAPI docs from endpoint and model contracts', () => {
