@@ -250,11 +250,11 @@ describe('Cricket jobs: real Redis', () => {
 
     try {
       await workerA.jobs.enqueue(job, { reportId: 'first' });
-      await workerA.jobs.enqueue(job, { reportId: 'second' });
 
       let first = workerA.drain({ signal: controller.signal });
       await started.promise;
 
+      await workerA.jobs.enqueue(job, { reportId: 'second' });
       assert.deepEqual(await workerB.drain(), []);
 
       controller.abort();
