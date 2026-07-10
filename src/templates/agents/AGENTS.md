@@ -76,13 +76,20 @@ availability, schedule materialization, and progress. App tables keep product
 truth. Add Cricket's `cricket_jobs` ledger in a normal app migration when you
 want execution history, but do not use it as the domain state model.
 
-Queue policy is execution behavior. Higher numeric priority claims first with
-stable ties. Drivers evaluate resolved global and partition limits while
-choosing work, and blocked partitions do not block unrelated keys. Idempotency
+Queue policy is execution behavior. Claims prefer higher numeric priority in
+the ready work they observe, with stable ties. Drivers evaluate resolved global
+and partition limits while choosing work, and blocked partitions do not block
+unrelated keys. Idempotency
 prevents a second non-terminal run and releases after completion or final
-failure. Terminal coordination records remain until explicit app or driver
-cleanup. Redis policy selection is not atomic, so do not rely on strict
-capacity enforcement between simultaneous Redis claimers.
+failure. Coordination history remains until the app deletes its prefixed Redis
+keys out of band. Redis reserves capacity and changes queue state atomically. Each
+claimed attempt owns its lease, evidence, retry, and settlement; stale attempts
+must not overwrite the current run.
+
+The built-in Redis client supports `redis://` and `rediss://` URLs, ACL
+credentials, numeric database paths, and explicit Node TLS options. An
+app-provided client also needs `duplicate()` so blocking wakeups use a dedicated
+connection. The built-in driver targets standalone Redis, not Redis Cluster.
 
 Use `cronSchedule` for recurring work. Schedules live on job contracts, not in
 separate app cron sidecars. Test schedules through the worker boundary with a fixed
@@ -96,7 +103,8 @@ Use `recover({ run, ledger, logs, spans, progress, now })` when active jobs need
 app-owned recovery. Cricket provides normal job facts; the job decides whether
 to `{ action: 'continue' }`, `{ action: 'retry' }`, or `{ action: 'fail' }`.
 Use normal `logger.info(...)`, `trace.span(...)`, and `progress.update(...)` as
-the signals recovery reads.
+the signals recovery reads. Recovery may be evaluated concurrently, so keep it
+pure and idempotent; Cricket fences the resulting attempt transition.
 
 Use `createCricketJobs` in producers that only enqueue work. Use
 `startCricketWorker` in `api/workers/` entrypoints that execute work, then

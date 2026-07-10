@@ -25,6 +25,10 @@ function itemFor(items, envelope) {
   return items.find(candidate => candidate.envelope.id === envelope.id);
 }
 
+function ownsAttempt(item, attempt) {
+  return item?.status === 'active' && item.attempts === attempt;
+}
+
 function availableNow(envelope, now) {
   return new Date(envelope.availableAt ?? envelope.createdAt) <= new Date(now ?? envelope.createdAt);
 }
@@ -129,33 +133,42 @@ export function createTestQueueDriver() {
       });
     },
 
-    async progress(envelope, progress) {
+    async progress(envelope, progress, {
+      attempt
+    } = {}) {
       let item = itemFor(items, envelope);
 
-      if (item)
-        item.progress.push({
-          progress,
-          timestamp: timestamp()
+      if (!ownsAttempt(item, attempt))
+        return frozenPlain({
+          recorded: false
         });
+
+      item.progress.push({
+        progress,
+        timestamp: timestamp()
+      });
 
       record('progressed', envelope, {
         progress
       });
+      return frozenPlain({
+        recorded: true
+      });
     },
 
-    async complete(envelope, result) {
+    async complete(envelope, result, {
+      attempt
+    } = {}) {
       let item = itemFor(items, envelope);
 
-      if (item?.status !== 'active')
+      if (!ownsAttempt(item, attempt))
         return frozenPlain({
           settled: false
         });
 
-      if (item) {
-        item.status = 'completed';
-        item.result = result;
-        item.finishedAt = timestamp();
-      }
+      item.status = 'completed';
+      item.result = result;
+      item.finishedAt = timestamp();
 
       record('completed', envelope);
       return frozenPlain({
@@ -163,23 +176,23 @@ export function createTestQueueDriver() {
       });
     },
 
-    async fail(envelope, error) {
+    async fail(envelope, error, {
+      attempt
+    } = {}) {
       let item = itemFor(items, envelope);
       let failure = {
         name: error?.name,
         message: error?.message
       };
 
-      if (item?.status !== 'active')
+      if (!ownsAttempt(item, attempt))
         return frozenPlain({
           settled: false
         });
 
-      if (item) {
-        item.status = 'failed';
-        item.error = failure;
-        item.finishedAt = timestamp();
-      }
+      item.status = 'failed';
+      item.error = failure;
+      item.finishedAt = timestamp();
 
       record('failed', envelope, {
         error: failure
@@ -190,24 +203,23 @@ export function createTestQueueDriver() {
     },
 
     async retry(envelope, {
+      attempt,
       availableAt,
       now = new Date()
     } = {}) {
       let item = itemFor(items, envelope);
 
-      if (item?.status !== 'active')
+      if (!ownsAttempt(item, attempt))
         return frozenPlain({
           settled: false
         });
 
-      if (item) {
-        item.availableAt = availableAt ?? timestamp(now);
-        item.status = itemAvailableNow(item, now) ? 'queued' : 'delayed';
-        item.startedAt = undefined;
-      }
+      item.availableAt = availableAt ?? timestamp(now);
+      item.status = itemAvailableNow(item, now) ? 'queued' : 'delayed';
+      item.startedAt = undefined;
 
       record('retry_scheduled', envelope, {
-        availableAt: item?.availableAt
+        availableAt: item.availableAt
       });
 
       notifyWork(envelope.queueName);
@@ -218,32 +230,58 @@ export function createTestQueueDriver() {
     },
 
     async heartbeat(envelope, {
+      attempt,
       now = new Date()
     } = {}) {
       let item = itemFor(items, envelope);
 
-      if (item)
-        item.lastHeartbeatAt = timestamp(now);
+      if (!ownsAttempt(item, attempt))
+        return frozenPlain({
+          renewed: false
+        });
+
+      item.lastHeartbeatAt = timestamp(now);
+      return frozenPlain({
+        renewed: true
+      });
     },
 
-    async recordLog(envelope, log) {
+    async recordLog(envelope, log, {
+      attempt
+    } = {}) {
       let item = itemFor(items, envelope);
 
-      if (item)
-        item.logs.push({
-          ...log,
-          timestamp: log.timestamp ?? timestamp()
+      if (!ownsAttempt(item, attempt))
+        return frozenPlain({
+          recorded: false
         });
+
+      item.logs.push({
+        ...log,
+        timestamp: log.timestamp ?? timestamp()
+      });
+      return frozenPlain({
+        recorded: true
+      });
     },
 
-    async recordSpan(envelope, span) {
+    async recordSpan(envelope, span, {
+      attempt
+    } = {}) {
       let item = itemFor(items, envelope);
 
-      if (item)
-        item.spans.push({
-          ...span,
-          timestamp: span.timestamp ?? timestamp()
+      if (!ownsAttempt(item, attempt))
+        return frozenPlain({
+          recorded: false
         });
+
+      item.spans.push({
+        ...span,
+        timestamp: span.timestamp ?? timestamp()
+      });
+      return frozenPlain({
+        recorded: true
+      });
     },
 
     async recoveryCandidates() {

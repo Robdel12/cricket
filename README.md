@@ -508,6 +508,14 @@ Choose the queue deliberately. Production producers and workers use
 driver with `queues.test: true`. Cricket never silently turns a missing queue
 configuration into an in-memory worker.
 
+The built-in Redis client accepts `redis://` and `rediss://` URLs, including ACL
+credentials and a numeric database path. `rediss://` verifies certificates by
+default; pass Node TLS options as `queues.redis.tls` when the deployment uses a
+private CA. An app-provided client must implement `duplicate()` so blocking
+wakeups never stall normal Redis commands. The built-in driver targets a
+standalone Redis primary; Redis Cluster is not supported by the built-in
+driver.
+
 `worker.run({ signal })` blocks on queue wakeups and the next delayed or cron
 boundary. Enqueuing ready work wakes it immediately. Aborting the signal or
 calling `worker.cleanup()` stops the wait without a polling interval.
@@ -517,19 +525,30 @@ waits `delayMs`, each later retry doubles that delay, and `maxDelayMs` caps it.
 The retry stays unclaimable until that calculated availability time, while the
 original immutable envelope stays unchanged.
 
-Queue policy travels with that immutable envelope. Higher numeric priority runs
-first; equal priorities use creation time and then envelope ID for stable order.
+Queue policy travels with that immutable envelope. Claims prefer higher numeric
+priority among the ready work observed for that claim; equal priorities use
+creation time and then envelope ID for stable order. Work enqueued during a
+claim becomes eligible on the next claim.
+
 Global concurrency limits shared work, while partition limits keep one account
 or tenant from consuming all capacity. A blocked partition does not prevent
 another partition from running. Drivers evaluate the resolved envelope policy
-when choosing work. Redis policy selection is not yet atomic, so simultaneous
-Redis claimers cannot rely on strict capacity enforcement.
+when choosing work. Redis atomically verifies and reserves capacity for the
+selected envelope, so simultaneous workers cannot over-claim a shared limit.
 
 An idempotency key owns one non-terminal run. Duplicate enqueue attempts return
 the existing envelope while it is queued, delayed, active, or retrying. Cricket
 releases the key after completion or final failure so a later run can start.
-Terminal coordination records remain until explicit driver or app cleanup;
-Cricket performs no automatic terminal cleanup.
+Each claimed attempt owns its lease, evidence, retry, and terminal settlement;
+late work from an older attempt cannot overwrite the current run. Delayed
+promotion and schedule-slot materialization use the same atomic coordination
+boundary.
+
+Coordination history, including terminal run data and schedule-slot ownership,
+persists until the app deletes its prefixed Redis keys out of band.
+`worker.cleanup()` closes runtime resources and driver-owned Redis connections;
+the app still owns any client it supplied. Cleanup does not delete coordination
+history.
 
 If the app has a Cricket database, add the job ledger deliberately:
 

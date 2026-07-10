@@ -19,10 +19,16 @@ Use this when work leaves the request path but should keep Cricket's contract sh
   tenant/account capacity. Cricket resolves both into the immutable envelope so
   queue drivers evaluate the same keys and limits while choosing work.
 - Idempotency blocks duplicate non-terminal runs and releases on completion or
-  final failure. Terminal coordination records remain until explicit app or
-  driver cleanup.
-- Redis policy selection is not atomic. Do not rely on strict capacity
-  enforcement between simultaneous Redis claimers.
+  final failure. Coordination history remains until the app deletes its
+  prefixed Redis keys out of band.
+- Redis reserves capacity and changes queue state atomically. Each claimed
+  attempt owns its lease, evidence, retry, and terminal settlement; stale
+  attempts cannot overwrite the current run.
+- The built-in client accepts `redis://` and `rediss://` URLs, ACL credentials,
+  numeric database paths, and Node TLS options. App-provided clients also need
+  `duplicate()` for blocking wakeups.
+- The built-in queue driver targets standalone Redis. Redis Cluster is not
+  supported by the built-in driver.
 
 ## Producers And Workers
 
@@ -58,4 +64,6 @@ Use this when work leaves the request path but should keep Cricket's contract sh
 - Return plain decisions: `{ action: 'continue' }`, `{ action: 'retry', reason: { code, message } }`, or `{ action: 'fail', reason: { code, message } }`.
 - Define stuck/dead/out-of-bounds in the job. Cricket provides the facts; the app decides what they mean.
 - Use normal `logger.info(...)`, `trace.span(...)`, and `progress.update(...)` in `run`. Do not create separate recovery-only signaling.
-- Keep recovery pure. It should inspect facts and return a decision, not write product state directly.
+- Keep recovery pure and idempotent because multiple recovery workers may
+  evaluate the same attempt. It should inspect facts and return a decision,
+  not write product state directly; Cricket fences the resulting transition.
