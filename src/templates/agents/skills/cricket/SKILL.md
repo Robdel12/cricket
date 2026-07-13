@@ -9,7 +9,8 @@ Use this when changing a Cricket API app.
 
 ## Orientation
 
-Start with `pnpm cricket inspect api/index.js`, then read `api/index.js` and the domain files for the feature you are changing.
+Start with `pnpm cricket check api/index.js`, then inspect the app, read
+`api/index.js`, and open the domain files for the feature you are changing.
 
 ## Principles
 
@@ -24,6 +25,8 @@ Start with `pnpm cricket inspect api/index.js`, then read `api/index.js` and the
 ## App Shape
 
 - Cricket provides the architecture, HTTP runtime, job runtime, logger, trace, and read-only runtime lifecycle. The app defines product behavior, auth policy, data work, worker entrypoints, product health, and deployment.
+- Domains are required by default. Do not register product endpoints, jobs, or models directly on `defineCricketApp`.
+- `architecture: 'manual'` is a migration escape hatch and visible tech debt. Never introduce it in a fresh app; move existing manual contracts into domains and remove the mode at a deliberate cutover.
 - `api/middleware/` is for request middleware, not domain authorization.
 - `api/services/` is for narrow app-wide capabilities not owned by one domain.
 - `api/workers/` is for background worker entrypoints that start Cricket workers.
@@ -77,8 +80,8 @@ than public HTTP responses.
 ## Commands
 
 ```sh
-pnpm cricket init app .
-pnpm cricket init agents .
+pnpm cricket init .
+pnpm cricket check api/index.js
 pnpm cricket inspect api/index.js
 pnpm cricket docs api/index.js --out openapi.json
 pnpm cricket migrate status api/index.js

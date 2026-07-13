@@ -65,7 +65,7 @@ describe('Cricket jobs: recovery', () => {
         };
       }
     });
-    let worker = await startCricketWorker(createTestApp(testState), {
+    let worker = await startCricketWorker(createTestApp(testState, [job]), {
       jobs: [job],
       queues: {
         test: true
@@ -182,7 +182,7 @@ describe('Cricket jobs: recovery', () => {
         };
       }
     });
-    let worker = await startCricketWorker(createTestApp(testState), {
+    let worker = await startCricketWorker(createTestApp(testState, [job]), {
       jobs: [job],
       queues: {
         test: true
@@ -256,7 +256,7 @@ describe('Cricket jobs: recovery', () => {
         };
       }
     });
-    let worker = await startCricketWorker(createTestApp(createTestState()), {
+    let worker = await startCricketWorker(createTestApp(createTestState(), [job]), {
       jobs: [job],
       queues: {
         test: true
@@ -334,7 +334,7 @@ describe('Cricket jobs: recovery', () => {
         };
       }
     });
-    let worker = await startCricketWorker(createTestApp(testState), {
+    let worker = await startCricketWorker(createTestApp(testState, [job]), {
       jobs: [job],
       queues: {
         test: true
@@ -408,7 +408,7 @@ describe('Cricket jobs: recovery', () => {
         };
       }
     });
-    let worker = await startCricketWorker(createTestApp(createTestState()), {
+    let worker = await startCricketWorker(createTestApp(createTestState(), [job]), {
       jobs: [job],
       queues: {
         test: true

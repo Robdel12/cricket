@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 
 import {
   concurrency,
-  defineCricketApp,
   defineJob,
   redisQueue,
   startCricketWorker,
   z
 } from '../src/index.js';
+import { defineManualTestApp } from '../test-support/app.js';
 import { createTestQueueDriver } from '../src/jobs/test-driver.js';
 import { createTestState } from '../src/test/index.js';
 import {
@@ -38,7 +38,7 @@ describe('Cricket jobs: policy', () => {
         return { status: 'completed' };
       }
     });
-    let worker = await startCricketWorker(defineCricketApp({ logger() {} }), {
+    let worker = await startCricketWorker(defineManualTestApp({ logger() {} }), {
       jobs: [job],
       queues: { test: true }
     });
@@ -77,7 +77,7 @@ describe('Cricket jobs: policy', () => {
         return { status: 'completed' };
       }
     });
-    let worker = await startCricketWorker(defineCricketApp({ logger() {} }), {
+    let worker = await startCricketWorker(defineManualTestApp({ logger() {} }), {
       clock: time.clock,
       jobs: [job],
       queues: { test: true }
@@ -126,7 +126,7 @@ describe('Cricket jobs: policy', () => {
         };
       }
     });
-    let worker = await startCricketWorker(defineCricketApp({
+    let worker = await startCricketWorker(defineManualTestApp({
       logger() {}
     }), {
       jobs: [job],
@@ -208,11 +208,11 @@ describe('Cricket jobs: policy', () => {
         };
       }
     });
-    let workerA = await startCricketWorker(defineCricketApp({ logger() {} }), {
+    let workerA = await startCricketWorker(defineManualTestApp({ logger() {} }), {
       jobs: [job],
       queues: { driver }
     });
-    let workerB = await startCricketWorker(defineCricketApp({ logger() {} }), {
+    let workerB = await startCricketWorker(defineManualTestApp({ logger() {} }), {
       jobs: [job],
       queues: { driver }
     });
@@ -271,11 +271,11 @@ describe('Cricket jobs: policy', () => {
         };
       }
     });
-    let workerA = await startCricketWorker(defineCricketApp({ logger() {} }), {
+    let workerA = await startCricketWorker(defineManualTestApp({ logger() {} }), {
       jobs: [job],
       queues: { driver }
     });
-    let workerB = await startCricketWorker(defineCricketApp({ logger() {} }), {
+    let workerB = await startCricketWorker(defineManualTestApp({ logger() {} }), {
       jobs: [job],
       queues: { driver }
     });
@@ -318,7 +318,7 @@ describe('Cricket jobs: policy', () => {
   it('keeps delayed jobs out of the ready queue until they are available', async () => {
     let now = new Date('2026-06-19T12:00:00.000Z');
     let job = reportJob();
-    let worker = await startCricketWorker(createTestApp(createTestState()), {
+    let worker = await startCricketWorker(createTestApp(createTestState(), [job]), {
       clock: {
         now: () => now
       },

@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 
 import {
   cronSchedule,
-  defineCricketApp,
   defineJob,
   planCronSchedule,
   redisQueue,
   startCricketWorker,
   z
 } from '../src/index.js';
+import { defineManualTestApp } from '../test-support/app.js';
 import { previousCronRun } from '../src/jobs/schedule.js';
 import { createTestState } from '../src/test/index.js';
 import { createTestApp } from '../test-support/jobs.js';
@@ -91,7 +91,7 @@ describe('Cricket jobs: schedules', () => {
         };
       }
     });
-    let worker = await startCricketWorker(createTestApp(testState), {
+    let worker = await startCricketWorker(createTestApp(testState, [job]), {
       clock: {
         now: () => now
       },
@@ -157,7 +157,7 @@ describe('Cricket jobs: schedules', () => {
         };
       }
     });
-    let worker = await startCricketWorker(defineCricketApp({
+    let worker = await startCricketWorker(defineManualTestApp({
       logger() {}
     }), {
       jobs: [job],

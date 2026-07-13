@@ -17,17 +17,17 @@ pnpm add @robdel12/cricket
 
 ## Adopt Cricket
 
-Start by scaffolding the app shape and the agent guidance:
+Start with the complete structured app and agent contract:
 
 ```sh
-pnpm cricket init app .
-pnpm cricket init agents .
+pnpm cricket init .
+pnpm cricket check api/index.js
 pnpm cricket inspect api/index.js
 pnpm cricket docs api/index.js --out openapi.json
 ```
 
-`init app` creates the folders Cricket expects. `init agents` adds an
-`AGENTS.md` section and a small local skill suite under `.agents/skills/`:
+`init` creates the folders Cricket expects, adds the Cricket section to
+`AGENTS.md`, and installs a small local skill suite under `.agents/skills/`:
 
 - `cricket` teaches the framework shape, domain pattern, and change flow.
 - `cricket-jobs` teaches jobs, schedules, retries, workers, and the ledger.
@@ -38,6 +38,9 @@ pnpm cricket docs api/index.js --out openapi.json
 That skill suite is part of Cricket's docs surface. It exists because Cricket is
 meant to be easy for agents to use correctly while humans drive the product
 decisions.
+
+`init app` and `init agents` remain available as focused commands for existing
+projects, but `init .` is the normal adoption path.
 
 In this repo, the canonical scaffolded guidance lives in
 `src/templates/agents/`, including each skill's real `SKILL.md` file.
@@ -79,6 +82,27 @@ Cricket workers. Use `dev/` only for local support.
 
 If code affects product behavior, put it in a domain, app service, worker,
 middleware, or migration. Avoid generic junk drawers.
+
+### Manual architecture is migration debt
+
+Cricket requires a `domains` contract by default. Structured apps cannot
+register `endpoints`, `jobs`, or `models` directly on `defineCricketApp`; those
+contracts must come from domains.
+
+Existing or embedded applications can temporarily opt out:
+
+```js
+export let app = defineCricketApp({
+  architecture: 'manual',
+  endpoints: legacyEndpoints
+});
+```
+
+Manual architecture is an escape hatch, not a second recommended application
+shape. Treat it as visible tech debt while migrating an existing app. Cricket
+labels it in `inspect` and `check`; remove it once product contracts live in
+domains. Manual mode cannot be mixed with `domains`, so the final cutover is
+deliberate and direct rather than a permanent hybrid architecture.
 
 ## Domain Shape
 
@@ -514,6 +538,10 @@ try {
 }
 ```
 
+In domain architecture, a worker may execute all app jobs or select a subset,
+but every selected job must already belong to one of the app's domains. Manual
+apps may register jobs at the worker boundary while they migrate that ownership.
+
 Choose the queue deliberately. Production producers and workers use
 `queues.redis` or an app-provided `queues.driver`; tests opt into the in-memory
 driver with `queues.test: true`. Cricket never silently turns a missing queue
@@ -606,6 +634,7 @@ spans, and lifecycle state.
 
 ```js
 export let app = defineCricketApp({
+  domains: './domains',
   logger: {
     service: 'project-api',
     level: process.env.LOG_LEVEL ?? 'info',
@@ -688,10 +717,10 @@ runtime reports. It does not reset app state for you.
 ## CLI
 
 ```sh
-pnpm cricket init app .
-pnpm cricket init agents .
+pnpm cricket init .
 pnpm cricket new domain project api/domains --with model,validations,service,routes,test
 pnpm cricket inspect api/index.js
+pnpm cricket check api/index.js
 pnpm cricket docs api/index.js --out openapi.json
 pnpm cricket migrate latest api/index.js
 pnpm cricket test
@@ -702,7 +731,8 @@ needs them; use `--with all` when every supported file is intentional. A
 selected test starts as a todo until it proves behavior through the HTTP or
 worker boundary. The serializer scaffold requires a model in the same selection
 or an existing `schema.model.js` in the domain.
-`inspect` prints loaded domains, model visibility, rules, services, jobs, route
+`check` validates the app architecture and calls out manual migration debt.
+`inspect` prints architecture, loaded domains, model visibility, rules, services, jobs, route
 operation IDs, and observability posture. `docs` writes OpenAPI from the same
 app module your server runs. `test` wraps Node's built-in test runner with
 Cricket defaults and optional JSON output.

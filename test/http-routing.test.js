@@ -5,13 +5,13 @@ import request from 'supertest';
 import {
   createCricketRuntime,
   deprecateEndpoint,
-  defineCricketApp,
   defineEndpoint,
   defineRule,
   ok,
   respond,
   z
 } from '../src/index.js';
+import { defineManualTestApp } from '../test-support/app.js';
 import {
   createHttpApp,
   rawHttpResponse
@@ -558,7 +558,7 @@ describe('Cricket HTTP routing', () => {
     let endpoint = healthEndpoint('/health');
 
     await assert.rejects(
-      createCricketRuntime(defineCricketApp({
+      createCricketRuntime(defineManualTestApp({
         endpoints: [endpoint, endpoint]
       })),
       /Duplicate route GET \/health/
@@ -602,7 +602,7 @@ describe('Cricket HTTP routing', () => {
   });
 
   it('rejects unsupported app options at definition time', () => {
-    assert.throws(() => defineCricketApp({
+    assert.throws(() => defineManualTestApp({
       midleware: []
     }), /defineCricketApp received unknown option midleware/);
   });

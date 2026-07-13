@@ -15,6 +15,13 @@ Cricket provides the architecture. Your app defines the behavior.
 
 First-class means scaffolded, documented, inspectable, and agent-readable. It does not mean Cricket takes over auth policy, table design, product data policy, local tooling, or deployment.
 
+Domains are Cricket's required default architecture, not optional organization.
+Do not register product `endpoints`, `jobs`, or `models` directly on
+`defineCricketApp`. `architecture: 'manual'` is only a migration escape hatch
+for existing or embedded applications. Treat manual mode as visible tech debt,
+do not introduce it in a fresh app, and remove it when the migration reaches a
+deliberate domain cutover.
+
 Cricket definition builders return stable contracts and reject unknown app or
 endpoint options. Compose new definitions instead of mutating existing apps,
 endpoints, rules, models, serializers, normalizers, or jobs after construction.
@@ -53,6 +60,10 @@ If code affects product behavior, start in the domain that owns it. Reach for an
 app service, worker, middleware, or migration only when the responsibility is
 actually shared, asynchronous, HTTP-edge, or schema-changing. Keep `dev/`
 local-only.
+
+Before changing a Cricket app, run `pnpm cricket check api/index.js` and
+`pnpm cricket inspect api/index.js`. A fresh project starts with
+`pnpm cricket init .`.
 
 ## HTTP Contracts
 

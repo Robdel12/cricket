@@ -165,6 +165,7 @@ function withPathPrefix(pathValue, prefix) {
 
 function appContractFromResolvedApp(resolvedApp) {
   return {
+    architecture: resolvedApp.architecture,
     name: resolvedApp.name,
     version: resolvedApp.version,
     description: resolvedApp.description,
@@ -231,6 +232,7 @@ export function createAppMap(contract) {
   let routes = toArray(contract.endpoints);
 
   return {
+    architecture: contract.architecture,
     name: contract.name,
     database: databaseSummaryFor(contract),
     observability: observabilitySummaryFor(contract),
@@ -269,7 +271,10 @@ export function createAppMap(contract) {
  */
 export function formatAppMap(appMap) {
   let lines = [
-    appMap.name ? `Cricket app: ${appMap.name}` : 'Cricket app'
+    appMap.name ? `Cricket app: ${appMap.name}` : 'Cricket app',
+    appMap.architecture === 'manual'
+      ? 'Architecture: manual (migration escape hatch; remove this tech debt by moving product contracts into domains)'
+      : 'Architecture: domains (recommended)'
   ];
 
   lines.push(`Observability: request IDs ${appMap.observability.requestIds}, events ${appMap.observability.events}, replay ${appMap.observability.replay}`);

@@ -430,7 +430,7 @@ export async function createCricketJobs({
  * @param {object} [options]
  * @param {string|URL} [options.baseUrl] - Module URL used to resolve domain paths.
  * @param {object} [options.clock] - Clock with `now` and optional `waitUntil` functions.
- * @param {object[]} [options.jobs] - Additional job contracts to register.
+ * @param {object[]} [options.jobs] - Domain-owned jobs this worker should execute. Manual apps may register jobs directly.
  * @param {object} [options.ledger] - Job ledger options.
  * @param {string} [options.ledger.tableName='cricket_jobs'] - Ledger table name.
  * @param {object} [options.queues] - Queue driver configuration.
@@ -447,13 +447,23 @@ export async function startCricketWorker(cricketApp, {
   let runtime = await createCricketRuntime(cricketApp, {
     baseUrl
   });
-  let jobList = [
-    ...toArray(runtime.contract.jobs),
-    ...toArray(jobs)
-  ];
+  let appJobs = toArray(runtime.contract.jobs);
+  let selectedJobs = toArray(jobs);
   let driver;
+  let jobList;
 
   try {
+    if (runtime.contract.architecture === 'domains') {
+      let outsideDomains = selectedJobs.filter(job => !appJobs.includes(job));
+
+      if (outsideDomains.length > 0)
+        throw new Error(`Cricket domain architecture cannot run unregistered jobs: ${outsideDomains.map(job => job.name ?? 'unnamed').join(', ')}`);
+    }
+
+    jobList = runtime.contract.architecture === 'domains'
+      ? (selectedJobs.length > 0 ? selectedJobs : appJobs)
+      : [...appJobs, ...selectedJobs];
+
     driver = await createDriver(queues, jobList);
   } catch (error) {
     await runtime.cleanup();

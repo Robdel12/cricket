@@ -13,6 +13,7 @@ import { normalizeDatabaseConfig } from './persistence/database.js';
 
 let appOptionKeys = new Set([
   'allowedHosts',
+  'architecture',
   'baseUrl',
   'context',
   'database',
@@ -35,6 +36,48 @@ let appOptionKeys = new Set([
   'version'
 ]);
 
+let appArchitectures = new Set([
+  'domains',
+  'manual'
+]);
+let definedAppContract = Symbol('Cricket defined app contract');
+
+function validateDomainSource(domains) {
+  if (Array.isArray(domains) || domains instanceof URL)
+    return;
+
+  if (typeof domains === 'string' && domains.trim())
+    return;
+
+  throw new Error('defineCricketApp domains must be a path, URL, or array of inline domains.');
+}
+
+function architectureFor(options) {
+  let architecture = options.architecture ?? 'domains';
+
+  if (!appArchitectures.has(architecture))
+    throw new Error(`defineCricketApp architecture must be one of: ${[...appArchitectures].join(', ')}`);
+
+  if (architecture === 'manual') {
+    if (Object.hasOwn(options, 'domains'))
+      throw new Error('defineCricketApp manual architecture cannot configure domains. Remove architecture: \'manual\' after the app has migrated to domains.');
+
+    return architecture;
+  }
+
+  if (!Object.hasOwn(options, 'domains'))
+    throw new Error('defineCricketApp requires domains. Configure domains: \'./domains\', or use architecture: \'manual\' only as a temporary migration escape hatch.');
+
+  validateDomainSource(options.domains);
+
+  let directContracts = ['endpoints', 'jobs', 'models'].filter(key => Object.hasOwn(options, key));
+
+  if (directContracts.length > 0)
+    throw new Error(`defineCricketApp domain architecture cannot register ${directContracts.join(', ')} directly. Export those contracts from domain files, or use architecture: 'manual' only as a temporary migration escape hatch.`);
+
+  return architecture;
+}
+
 function stableList(value) {
   return Array.isArray(value) ? Object.freeze([...value]) : value;
 }
@@ -56,7 +99,35 @@ function freezeAppContract(contract) {
       stable[key] = stableList(stable[key]);
   }
 
+  stable[definedAppContract] = Object.freeze({
+    architecture: stable.architecture,
+    domains: stable.domains,
+    endpoints: stable.endpoints,
+    jobs: stable.jobs,
+    models: stable.models
+  });
+
   return Object.freeze(stable);
+}
+
+function definedAppFor(app) {
+  let definition = app?.[definedAppContract];
+
+  if (!definition)
+    return defineCricketApp(app);
+
+  let replacedContracts = [
+    'architecture',
+    'domains',
+    'endpoints',
+    'jobs',
+    'models'
+  ].filter(key => app[key] !== definition[key]);
+
+  if (replacedContracts.length > 0)
+    throw new Error(`Composed Cricket apps cannot replace ${replacedContracts.join(', ')}. Define a new app contract instead.`);
+
+  return app;
 }
 
 function hasLoadedDomains(domains) {
@@ -70,11 +141,14 @@ function hasLoadedDomains(domains) {
  * consume. This is intentionally plain data plus setup/context functions.
  *
  * @param {object} options - App contract options.
+ * @param {'domains'|'manual'} [options.architecture='domains'] - Manual is a migration escape hatch.
+ * @param {string|URL|object[]} [options.domains] - Domain root or inline domains. Required unless architecture is manual.
  * @returns {object} Normalized Cricket app contract.
  */
 export function defineCricketApp(options = {}) {
   assertKnownOptions(options, appOptionKeys, 'defineCricketApp');
 
+  let architecture = architectureFor(options);
   let domains = options.domains ?? [];
   let loadedDomains = hasLoadedDomains(domains);
   let hasExplicitEndpoints = Object.hasOwn(options, 'endpoints');
@@ -94,8 +168,9 @@ export function defineCricketApp(options = {}) {
   let middleware = options.middleware ?? [];
   let database = normalizeDatabaseConfig(options.database);
 
-  return freezeAppContract({
+  let contract = freezeAppContract({
     ...options,
+    architecture,
     domains,
     allowedHosts,
     ...(database === undefined ? {} : { database }),
@@ -106,6 +181,8 @@ export function defineCricketApp(options = {}) {
     ...(jobs === undefined ? {} : { jobs }),
     ...(models === undefined ? {} : { models })
   });
+
+  return contract;
 }
 
 /**
@@ -119,19 +196,20 @@ export function defineCricketApp(options = {}) {
 export async function resolveCricketApp(app, {
   baseUrl
 } = {}) {
-  let domains = await loadDomains(app.domains, {
-    baseUrl: app.baseUrl ?? baseUrl
+  let definedApp = definedAppFor(app);
+  let domains = await loadDomains(definedApp.domains, {
+    baseUrl: definedApp.baseUrl ?? baseUrl
   });
-  let hasExplicitEndpoints = Object.hasOwn(app, 'endpoints');
-  let hasExplicitJobs = Object.hasOwn(app, 'jobs');
-  let hasExplicitModels = Object.hasOwn(app, 'models');
+  let hasExplicitEndpoints = Object.hasOwn(definedApp, 'endpoints');
+  let hasExplicitJobs = Object.hasOwn(definedApp, 'jobs');
+  let hasExplicitModels = Object.hasOwn(definedApp, 'models');
 
   return freezeAppContract({
-    ...app,
+    ...definedApp,
     domains,
-    endpoints: flattenRoutes(hasExplicitEndpoints ? app.endpoints : collectEndpoints(domains)),
-    jobs: hasExplicitJobs ? app.jobs : collectJobs(domains),
-    models: hasExplicitModels ? app.models : collectModels(domains)
+    endpoints: flattenRoutes(hasExplicitEndpoints ? definedApp.endpoints : collectEndpoints(domains)),
+    jobs: hasExplicitJobs ? definedApp.jobs : collectJobs(domains),
+    models: hasExplicitModels ? definedApp.models : collectModels(domains)
   });
 }
 

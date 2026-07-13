@@ -47,6 +47,67 @@ async function tempRoot() {
 }
 
 describe('Cricket core', () => {
+  it('requires domains unless an app explicitly accepts manual migration debt', () => {
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/race/current',
+      handler() {
+        return ok({ status: 'green' });
+      }
+    });
+
+    assert.throws(() => defineCricketApp({
+      name: 'Flat NASCAR API',
+      endpoints: [endpoint]
+    }), /requires domains.*temporary migration escape hatch/);
+
+    assert.throws(() => defineCricketApp({
+      domains: [],
+      endpoints: [endpoint]
+    }), /cannot register endpoints directly/);
+
+    assert.throws(() => defineCricketApp({
+      architecture: 'manual',
+      domains: []
+    }), /manual architecture cannot configure domains/);
+
+    assert.throws(() => defineCricketApp({
+      architecture: 'optional'
+    }), /architecture must be one of: domains, manual/);
+
+    for (let domains of [undefined, null, '', 42, {}]) {
+      assert.throws(() => defineCricketApp({ domains }), /domains must be a path, URL, or array/);
+    }
+
+    let structured = defineCricketApp({
+      domains: []
+    });
+    let manual = defineCricketApp({
+      architecture: 'manual',
+      endpoints: [endpoint]
+    });
+
+    assert.equal(structured.architecture, 'domains');
+    assert.equal(manual.architecture, 'manual');
+    assert.ok(Object.isFrozen(structured));
+    assert.ok(Object.isFrozen(manual));
+  });
+
+  it('rejects raw flat objects at the runtime boundary', async () => {
+    await assert.rejects(createCricketRuntime({
+      endpoints: []
+    }), /requires domains/);
+
+    let structured = defineCricketApp({
+      domains: []
+    });
+
+    await assert.rejects(createCricketRuntime({
+      ...structured,
+      endpoints: []
+    }), /Composed Cricket apps cannot replace endpoints/);
+  });
+
   it('keeps app, endpoint, and rule definitions stable after construction', () => {
     let rules = [defineRule('requireUser', () => {})];
     let tags = ['projects'];
@@ -60,6 +121,7 @@ describe('Cricket core', () => {
       }
     })];
     let app = defineCricketApp({
+      architecture: 'manual',
       name: 'Stable API',
       endpoints
     });
@@ -767,6 +829,7 @@ describe('Cricket core', () => {
   it('rejects endpoint paths that do not start with a slash', async () => {
     await assert.rejects(
       createCricketRuntime(defineCricketApp({
+        architecture: 'manual',
         endpoints: [
           {
             method: 'GET',
@@ -953,7 +1016,7 @@ describe('Cricket core', () => {
   });
 
 
-  it('preserves explicit empty endpoints and models when resolving loaded domains', async () => {
+  it('rejects direct contracts that would override loaded domains', async () => {
     let root = await tempRoot();
     let domainRoot = path.join(root, 'projects');
 
@@ -975,14 +1038,11 @@ describe('Cricket core', () => {
       };
     `);
 
-    let runtime = await createCricketRuntime(defineCricketApp({
+    assert.throws(() => defineCricketApp({
       domains: root,
       endpoints: [],
       models: []
-    }));
-
-    assert.deepEqual(runtime.contract.endpoints, []);
-    assert.deepEqual(runtime.contract.models, []);
+    }), /cannot register endpoints, models directly/);
   });
 
 

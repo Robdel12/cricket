@@ -7,7 +7,6 @@ import { Writable } from 'node:stream';
 
 import {
   created,
-  defineCricketApp,
   defineEndpoint,
   ok,
   redirect,
@@ -16,6 +15,7 @@ import {
   withHeaders,
   z
 } from '../src/index.js';
+import { defineManualTestApp } from '../test-support/app.js';
 import {
   discoverTestFiles,
   runTestCommand
@@ -94,7 +94,7 @@ describe('Cricket test harness', () => {
         }));
       }
     });
-    let app = defineCricketApp({
+    let app = defineManualTestApp({
       endpoints: [endpoint]
     });
     let { api, cleanup, testState } = await createTestRuntime(app);
@@ -164,7 +164,7 @@ describe('Cricket test harness', () => {
         });
       }
     });
-    let app = defineCricketApp({
+    let app = defineManualTestApp({
       endpoints: [endpoint],
       observability(event) {
         observed.push(event);
@@ -203,7 +203,7 @@ describe('Cricket test harness', () => {
         });
       }
     });
-    let app = defineCricketApp({
+    let app = defineManualTestApp({
       endpoints: [endpoint],
       logger(event, metadata) {
         appLogs.push({
@@ -235,7 +235,7 @@ describe('Cricket test harness', () => {
         });
       }
     });
-    let app = defineCricketApp({
+    let app = defineManualTestApp({
       endpoints: [endpoint]
     });
     let { api, cleanup } = await createPackagedTestRuntime(app);
@@ -265,7 +265,7 @@ describe('Cricket test harness', () => {
         );
       }
     });
-    let app = defineCricketApp({
+    let app = defineManualTestApp({
       endpoints: [endpoint]
     });
     let { api, cleanup } = await createTestRuntime(app);
@@ -296,7 +296,7 @@ describe('Cricket test harness', () => {
         );
       }
     });
-    let app = defineCricketApp({
+    let app = defineManualTestApp({
       endpoints: [endpoint]
     });
     let { api, cleanup } = await createTestRuntime(app);
@@ -320,7 +320,7 @@ describe('Cricket test harness', () => {
         return redirect('/current', 302);
       }
     });
-    let app = defineCricketApp({
+    let app = defineManualTestApp({
       endpoints: [endpoint]
     });
     let { api, cleanup } = await createTestRuntime(app);
@@ -345,7 +345,7 @@ describe('Cricket test harness', () => {
         });
       }
     });
-    let app = defineCricketApp({
+    let app = defineManualTestApp({
       endpoints: [endpoint]
     });
     let { api, cleanup } = await createTestRuntime(app);
@@ -396,7 +396,7 @@ describe('Cricket test harness', () => {
         );
       }
     });
-    let app = defineCricketApp({
+    let app = defineManualTestApp({
       endpoints: [endpoint]
     });
     let { api, cleanup } = await createTestRuntime(app);
@@ -423,7 +423,7 @@ describe('Cricket test harness', () => {
         });
       }
     });
-    let app = defineCricketApp({
+    let app = defineManualTestApp({
       endpoints: [endpoint]
     });
     let { api, cleanup } = await createTestRuntime(app);
@@ -461,7 +461,7 @@ describe('Cricket test harness', () => {
         });
       }
     });
-    let app = defineCricketApp({
+    let app = defineManualTestApp({
       endpoints: [endpoint]
     });
     let { api, cleanup } = await createTestRuntime(app);

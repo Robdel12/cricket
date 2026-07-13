@@ -28,10 +28,12 @@ import {
   domainScaffoldFileTypes,
   formatAppScaffoldResult,
   formatAgentScaffoldResult,
+  formatProjectScaffoldResult,
   formatScaffoldResult,
   scaffoldApp,
   scaffoldAgentFiles,
-  scaffoldDomain
+  scaffoldDomain,
+  scaffoldProject
 } from '../src/structure.js';
 
 function hasFlag(args, flag) {
@@ -79,9 +81,11 @@ function optionValue(args, name) {
 function usage() {
   return `Usage:
   cricket new domain <name> [root] --with <types|all> [--force]
+  cricket init [root] [--force]
   cricket init app [root] [--force]
   cricket init agents [root] [--force]
   cricket inspect <appModule>
+  cricket check <appModule>
   cricket docs <appModule> [--out openapi.json]
   cricket migrate latest <appModule> [--env name]
   cricket migrate rollback <appModule> [--all] [--env name]
@@ -97,9 +101,9 @@ Domain types:
   serializers requires model in the selection or existing domain
 
 Examples:
-  cricket init app .
+  cricket init .
   cricket new domain project api/domains --with model,validations,serializers,service,rules,routes,test
-  cricket init agents .
+  cricket check api/index.js
   cricket inspect api/index.js
   cricket docs api/index.js --out openapi.json
   cricket migrate latest api/index.js
@@ -167,6 +171,22 @@ async function runInitAgents(args) {
 }
 
 /**
+ * Run the canonical Cricket project initialization command.
+ *
+ * @param {string[]} args - Raw CLI arguments after `cricket`.
+ * @returns {Promise<void>} Resolves after app and agent scaffolds are written.
+ */
+async function runInit(args) {
+  let [, root = '.'] = withoutFlags(args);
+  let result = await scaffoldProject({
+    root,
+    force: hasFlag(args, '--force')
+  });
+
+  console.log(formatProjectScaffoldResult(result));
+}
+
+/**
  * Run the `cricket inspect` command and print a compact app map.
  *
  * @param {string[]} args - Raw CLI arguments after `cricket`.
@@ -181,6 +201,28 @@ async function runInspect(args) {
   let contract = await loadAppContract(modulePath);
 
   console.log(formatAppMap(createAppMap(contract)));
+}
+
+/**
+ * Validate and print the architecture posture of a Cricket app.
+ *
+ * @param {string[]} args - Raw CLI arguments after `cricket`.
+ * @returns {Promise<void>} Resolves when the app contract is valid.
+ */
+async function runCheck(args) {
+  let [, modulePath] = args;
+
+  if (!modulePath)
+    throw new Error('App module is required');
+
+  let contract = await loadAppContract(modulePath);
+
+  if (contract.architecture === 'manual') {
+    console.warn('Cricket architecture is valid with a warning: manual mode is migration tech debt. Move product contracts into domains and remove the escape hatch.');
+    return;
+  }
+
+  console.log(`Cricket architecture check passed: ${contract.domains.length} domain${contract.domains.length === 1 ? '' : 's'} loaded.`);
 }
 
 /**
@@ -276,8 +318,14 @@ export async function runCli(argv = process.argv.slice(2)) {
   if (command === 'init' && subcommand === 'agents')
     return await runInitAgents(argv);
 
+  if (command === 'init')
+    return await runInit(argv);
+
   if (command === 'inspect')
     return await runInspect(argv);
+
+  if (command === 'check')
+    return await runCheck(argv);
 
   if (command === 'docs')
     return await runDocs(argv);

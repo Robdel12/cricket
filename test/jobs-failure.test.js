@@ -2,7 +2,6 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  defineCricketApp,
   defineJob,
   jobFailure,
   redisQueue,
@@ -10,6 +9,7 @@ import {
   startCricketWorker,
   z
 } from '../src/index.js';
+import { defineManualTestApp } from '../test-support/app.js';
 import { createTestState } from '../src/test/index.js';
 import {
   createManualClock,
@@ -32,7 +32,7 @@ describe('Cricket jobs: failure', () => {
         throw new Error('renderer unavailable');
       }
     });
-    let worker = await startCricketWorker(createTestApp(testState), {
+    let worker = await startCricketWorker(createTestApp(testState, [job]), {
       jobs: [job],
       queues: {
         test: true
@@ -103,7 +103,7 @@ describe('Cricket jobs: failure', () => {
         };
       }
     });
-    let worker = await startCricketWorker(defineCricketApp({
+    let worker = await startCricketWorker(defineManualTestApp({
       logger() {},
       services() {
         return {
@@ -198,7 +198,7 @@ describe('Cricket jobs: failure', () => {
         };
       }
     });
-    let worker = await startCricketWorker(defineCricketApp({
+    let worker = await startCricketWorker(defineManualTestApp({
       logger() {}
     }), {
       clock: time.clock,
@@ -262,7 +262,7 @@ describe('Cricket jobs: failure', () => {
         throw new Error('renderer offline');
       }
     });
-    let worker = await startCricketWorker(defineCricketApp({
+    let worker = await startCricketWorker(defineManualTestApp({
       logger() {},
       services() {
         return {
@@ -331,7 +331,7 @@ describe('Cricket jobs: failure', () => {
         throw new Error('renderer offline');
       }
     });
-    let worker = await startCricketWorker(defineCricketApp({
+    let worker = await startCricketWorker(defineManualTestApp({
       observability: {
         observe(event) {
           testState.recordEvent(event);
