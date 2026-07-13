@@ -5,12 +5,12 @@ import assert from 'node:assert/strict';
 import {
   concurrency,
   createCricketJobs,
-  defineCricketApp,
   defineJob,
   redisQueue,
   startCricketWorker,
   z
 } from '../src/index.js';
+import { defineManualTestApp } from '../test-support/app.js';
 import { createRedisSocketClient } from '../src/jobs/drivers/redis-client.js';
 import { createRedisQueueDriver } from '../src/jobs/drivers/redis.js';
 import { createManualClock, deferred } from '../test-support/jobs.js';
@@ -239,11 +239,11 @@ describe('Cricket jobs: real Redis', () => {
         return { status: 'completed' };
       }
     });
-    let workerA = await startCricketWorker(defineCricketApp({ logger() {} }), {
+    let workerA = await startCricketWorker(defineManualTestApp({ logger() {} }), {
       jobs: [job],
       queues: { driver: drivers.driverA }
     });
-    let workerB = await startCricketWorker(defineCricketApp({ logger() {} }), {
+    let workerB = await startCricketWorker(defineManualTestApp({ logger() {} }), {
       jobs: [job],
       queues: { driver: drivers.driverB }
     });
@@ -460,7 +460,7 @@ describe('Cricket jobs: real Redis', () => {
         return { status: 'completed' };
       }
     });
-    let worker = await startCricketWorker(defineCricketApp({
+    let worker = await startCricketWorker(defineManualTestApp({
       logger() {},
       observability: {
         observe(event) {
@@ -639,7 +639,7 @@ describe('Cricket jobs: real Redis', () => {
         return { status: 'completed' };
       }
     });
-    let worker = await startCricketWorker(defineCricketApp({ logger() {} }), {
+    let worker = await startCricketWorker(defineManualTestApp({ logger() {} }), {
       clock: time.clock,
       jobs: [job],
       queues: {

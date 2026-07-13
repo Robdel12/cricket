@@ -5,7 +5,6 @@ import {
   concurrency,
   cronSchedule,
   createCricketJobs,
-  defineCricketApp,
   defineJob,
   jobFailure,
   redisQueue,
@@ -13,6 +12,7 @@ import {
   startCricketWorker,
   z
 } from '../src/index.js';
+import { defineManualTestApp } from '../test-support/app.js';
 import { createAppMap, formatAppMap } from '../src/app-contract.js';
 import { reportJob } from '../test-support/jobs.js';
 import {
@@ -39,7 +39,7 @@ describe('Cricket jobs: definition', () => {
 
   it('plans immutable envelopes from job input and context', async () => {
     let job = reportJob();
-    let app = defineCricketApp({});
+    let app = defineManualTestApp({});
     let worker = await startCricketWorker(app, {
       jobs: [job],
       queues: {
@@ -204,7 +204,7 @@ describe('Cricket jobs: definition', () => {
         async exhausted() {}
       })
     });
-    let appMap = createAppMap(defineCricketApp({
+    let appMap = createAppMap(defineManualTestApp({
       jobs: [job]
     }));
     let output = formatAppMap(appMap);
@@ -236,7 +236,7 @@ describe('Cricket jobs: definition', () => {
       }),
       async run() {}
     });
-    let appMap = createAppMap(defineCricketApp({
+    let appMap = createAppMap(defineManualTestApp({
       jobs: [job]
     }));
     let output = formatAppMap(appMap);

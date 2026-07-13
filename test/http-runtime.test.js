@@ -11,7 +11,6 @@ import {
   created,
   createCricketRuntime,
   deprecateEndpoint,
-  defineCricketApp,
   defineEndpoint,
   generateOpenApi,
   ok,
@@ -21,6 +20,7 @@ import {
   withResponseCleanup,
   z
 } from '../src/index.js';
+import { defineManualTestApp } from '../test-support/app.js';
 import {
   createHttpApp,
   rawHttpResponse
@@ -29,7 +29,7 @@ import {
 describe('Cricket HTTP runtime', () => {
   it('emits immutable events without freezing caller-owned values', async () => {
     let observed;
-    let app = defineCricketApp({
+    let app = defineManualTestApp({
       observability: {
         observe(event) {
           observed = event;
@@ -96,7 +96,7 @@ describe('Cricket HTTP runtime', () => {
         );
       }
     });
-    let cricketApp = defineCricketApp({
+    let cricketApp = defineManualTestApp({
       endpoints: [endpoint],
       observability: {
         requestId() {
@@ -201,7 +201,7 @@ describe('Cricket HTTP runtime', () => {
       },
       reason: 'Use the batch screenshot upload flow instead.'
     });
-    let runtime = await createCricketRuntime(defineCricketApp({
+    let runtime = await createCricketRuntime(defineManualTestApp({
       endpoints: [endpoint],
       observability: {
         observe(event) {
@@ -254,7 +254,7 @@ describe('Cricket HTTP runtime', () => {
       },
       headers: true
     });
-    let runtime = await createCricketRuntime(defineCricketApp({
+    let runtime = await createCricketRuntime(defineManualTestApp({
       endpoints: [endpoint]
     }), {
       logger() {}
@@ -292,7 +292,7 @@ describe('Cricket HTTP runtime', () => {
       sunset: '2026-09-01',
       replacement: 'GET /health'
     });
-    let runtime = await createCricketRuntime(defineCricketApp({
+    let runtime = await createCricketRuntime(defineManualTestApp({
       endpoints: [endpoint]
     }), {
       logger() {}
@@ -322,7 +322,7 @@ describe('Cricket HTTP runtime', () => {
         });
       }
     });
-    let runtime = await createCricketRuntime(defineCricketApp({
+    let runtime = await createCricketRuntime(defineManualTestApp({
       endpoints: [endpoint],
       observability(event) {
         events.push(event);
@@ -364,7 +364,7 @@ describe('Cricket HTTP runtime', () => {
         });
       }
     });
-    let cricketApp = defineCricketApp({
+    let cricketApp = defineManualTestApp({
       prefix: '/api',
       endpoints: [endpoint],
       observability(event) {
@@ -419,7 +419,7 @@ describe('Cricket HTTP runtime', () => {
         });
       }
     });
-    let cricketApp = defineCricketApp({
+    let cricketApp = defineManualTestApp({
       database: {
         client: 'sqlite3',
         connection: {
@@ -465,7 +465,7 @@ describe('Cricket HTTP runtime', () => {
   });
 
   it('rejects setup-provided db dependencies when Cricket provides the database', async () => {
-    let cricketApp = defineCricketApp({
+    let cricketApp = defineManualTestApp({
       database: {
         client: 'sqlite3',
         connection: {
@@ -492,7 +492,7 @@ describe('Cricket HTTP runtime', () => {
   });
 
   it('rejects legacy bare dependency objects from setup', async () => {
-    let cricketApp = defineCricketApp({
+    let cricketApp = defineManualTestApp({
       endpoints: [],
       setup() {
         return {
@@ -521,7 +521,7 @@ describe('Cricket HTTP runtime', () => {
 
     for (let [setup, expectedError] of invalidSetups) {
       await assert.rejects(
-        createCricketRuntime(defineCricketApp({
+        createCricketRuntime(defineManualTestApp({
           endpoints: [],
           setup
         }), {
@@ -556,7 +556,7 @@ describe('Cricket HTTP runtime', () => {
         });
       }
     });
-    let cricketApp = defineCricketApp({
+    let cricketApp = defineManualTestApp({
       endpoints: [endpoint],
       setup({ lifecycle }) {
         events.push(`setup:${lifecycle.phase()}`);
@@ -610,7 +610,7 @@ describe('Cricket HTTP runtime', () => {
 
   it('cleans up the configured database when runtime assembly fails', async () => {
     let cleanupCalled = false;
-    let cricketApp = defineCricketApp({
+    let cricketApp = defineManualTestApp({
       database: {
         client: 'sqlite3',
         connection: {
@@ -658,7 +658,7 @@ describe('Cricket HTTP runtime', () => {
         });
       }
     });
-    let cricketApp = defineCricketApp({
+    let cricketApp = defineManualTestApp({
       name: 'Project API',
       logger: {
         format: 'json',
@@ -736,7 +736,7 @@ describe('Cricket HTTP runtime', () => {
         });
       }
     });
-    let cricketApp = defineCricketApp({
+    let cricketApp = defineManualTestApp({
       name: 'Project API',
       logger: {
         format: 'json',
@@ -815,7 +815,7 @@ describe('Cricket HTTP runtime', () => {
         });
       }
     });
-    let runtime = await createCricketRuntime(defineCricketApp({
+    let runtime = await createCricketRuntime(defineManualTestApp({
       logger: {
         format: 'json',
         write(line) {
@@ -858,7 +858,7 @@ describe('Cricket HTTP runtime', () => {
         throw new Error('database password hunter2');
       }
     });
-    let runtime = await createCricketRuntime(defineCricketApp({
+    let runtime = await createCricketRuntime(defineManualTestApp({
       logger: {
         format: 'json',
         write(line) {
@@ -901,7 +901,7 @@ describe('Cricket HTTP runtime', () => {
         });
       }
     });
-    let runtime = await createCricketRuntime(defineCricketApp({
+    let runtime = await createCricketRuntime(defineManualTestApp({
       logger: {
         format: 'json',
         write(line) {
@@ -957,7 +957,7 @@ describe('Cricket HTTP runtime', () => {
         );
       }
     });
-    let runtime = await createCricketRuntime(defineCricketApp({
+    let runtime = await createCricketRuntime(defineManualTestApp({
       endpoints: [endpoint],
       observability: {
         requestId() {
@@ -1007,7 +1007,7 @@ describe('Cricket HTTP runtime', () => {
         );
       }
     });
-    let runtime = await startCricketApp(defineCricketApp({
+    let runtime = await startCricketApp(defineManualTestApp({
       endpoints: [endpoint],
       observability(event) {
         events.push(event);
@@ -1069,7 +1069,7 @@ describe('Cricket HTTP runtime', () => {
         throw new Error('database password hunter2');
       }
     });
-    let cricketApp = defineCricketApp({
+    let cricketApp = defineManualTestApp({
       endpoints: [endpoint],
       observability: {
         requestId() {
@@ -1217,9 +1217,8 @@ describe('Cricket HTTP runtime', () => {
         });
       }
     });
-    let cricketApp = defineCricketApp({
+    let cricketApp = defineManualTestApp({
       name: 'Lifecycle API',
-      domains: [],
       endpoints: [endpoint],
       setup() {
         return {
@@ -1258,7 +1257,7 @@ describe('Cricket HTTP runtime', () => {
         });
       }
     });
-    let cricketApp = defineCricketApp({
+    let cricketApp = defineManualTestApp({
       endpoints: [endpoint],
       setup({ lifecycle }) {
         return {
@@ -1301,7 +1300,7 @@ describe('Cricket HTTP runtime', () => {
       path: '/health',
       handler: () => ok({ success: true })
     });
-    let cricketApp = defineCricketApp({
+    let cricketApp = defineManualTestApp({
       endpoints: [endpoint],
       setup() {
         return {
@@ -1353,7 +1352,7 @@ describe('Cricket HTTP runtime', () => {
         );
       }
     });
-    let cricketApp = defineCricketApp({
+    let cricketApp = defineManualTestApp({
       endpoints: [endpoint],
       setup() {
         return {

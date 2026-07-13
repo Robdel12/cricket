@@ -9,13 +9,13 @@ import knex from 'knex';
 import {
   createCricketJobs,
   createJobLedgerTable,
-  defineCricketApp,
   defineJob,
   redisQueue,
   retry,
   startCricketWorker,
   z
 } from '../src/index.js';
+import { defineManualTestApp } from '../test-support/app.js';
 import {
   createManualClock,
   reportJob
@@ -78,7 +78,7 @@ describe('Cricket jobs: ledger', () => {
         };
       }
     });
-    let worker = await startCricketWorker(defineCricketApp({
+    let worker = await startCricketWorker(defineManualTestApp({
       database,
       logger() {}
     }), {
@@ -167,7 +167,7 @@ describe('Cricket jobs: ledger', () => {
   it('records job execution in the Cricket job ledger when the app has a database', async () => {
     let database = await createLedgerDatabase();
     let job = reportJob();
-    let worker = await startCricketWorker(defineCricketApp({
+    let worker = await startCricketWorker(defineManualTestApp({
       database,
       logger() {},
       services() {
@@ -244,7 +244,7 @@ describe('Cricket jobs: ledger', () => {
       withLedger: false
     });
     let job = reportJob();
-    let worker = await startCricketWorker(defineCricketApp({
+    let worker = await startCricketWorker(defineManualTestApp({
       database,
       logger: {
         info() {},

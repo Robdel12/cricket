@@ -10,6 +10,7 @@ import {
   startCricketWorker,
   z
 } from '../src/index.js';
+import { defineManualTestApp } from '../test-support/app.js';
 import { createTestQueueDriver } from '../src/jobs/test-driver.js';
 import { createTestState } from '../src/test/index.js';
 import {
@@ -30,7 +31,7 @@ describe('Cricket jobs: worker', () => {
       /queues\.driver, queues\.redis, or explicit queues\.test/
     );
     await assert.rejects(
-      startCricketWorker(defineCricketApp({}), {
+      startCricketWorker(defineManualTestApp({}), {
         jobs: [job]
       }),
       /queues\.driver, queues\.redis, or explicit queues\.test/
@@ -39,7 +40,7 @@ describe('Cricket jobs: worker', () => {
 
 
   it('requires custom worker clocks to own deadline waits', async () => {
-    let worker = await startCricketWorker(defineCricketApp({
+    let worker = await startCricketWorker(defineManualTestApp({
       logger() {}
     }), {
       clock: {
@@ -65,9 +66,8 @@ describe('Cricket jobs: worker', () => {
     let processed = [];
     let testState = createTestState();
     let job = reportJob(processed);
-    let app = createTestApp(testState);
+    let app = createTestApp(testState, [job]);
     let worker = await startCricketWorker(app, {
-      jobs: [job],
       queues: {
         test: true
       }
@@ -124,6 +124,20 @@ describe('Cricket jobs: worker', () => {
     }
   });
 
+  it('rejects jobs that are not owned by a structured app domain', async () => {
+    let job = reportJob();
+    let app = defineCricketApp({
+      domains: []
+    });
+
+    await assert.rejects(startCricketWorker(app, {
+      jobs: [job],
+      queues: {
+        test: true
+      }
+    }), /cannot run unregistered jobs: reports\.generate/);
+  });
+
 
   it('wakes the worker loop for enqueued work and stops on abort', async () => {
     let waiting = deferred();
@@ -152,7 +166,7 @@ describe('Cricket jobs: worker', () => {
         };
       }
     });
-    let worker = await startCricketWorker(defineCricketApp({
+    let worker = await startCricketWorker(defineManualTestApp({
       logger() {}
     }), {
       jobs: [job],
@@ -193,7 +207,7 @@ describe('Cricket jobs: worker', () => {
         return await waitForWork(options);
       }
     };
-    let worker = await startCricketWorker(defineCricketApp({
+    let worker = await startCricketWorker(defineManualTestApp({
       logger() {}
     }), {
       queues: {
@@ -243,7 +257,7 @@ describe('Cricket jobs: worker', () => {
         };
       }
     });
-    let worker = await startCricketWorker(defineCricketApp({
+    let worker = await startCricketWorker(defineManualTestApp({
       logger() {}
     }), {
       clock: time.clock,
@@ -299,7 +313,7 @@ describe('Cricket jobs: worker', () => {
         };
       }
     });
-    let worker = await startCricketWorker(defineCricketApp({
+    let worker = await startCricketWorker(defineManualTestApp({
       logger() {}
     }), {
       clock: time.clock,
@@ -361,7 +375,7 @@ describe('Cricket jobs: worker', () => {
         };
       }
     });
-    let worker = await startCricketWorker(defineCricketApp({
+    let worker = await startCricketWorker(defineManualTestApp({
       logger() {}
     }), {
       clock: time.clock,
@@ -426,7 +440,7 @@ describe('Cricket jobs: worker', () => {
         };
       }
     });
-    let worker = await startCricketWorker(defineCricketApp({
+    let worker = await startCricketWorker(defineManualTestApp({
       logger() {}
     }), {
       clock: time.clock,
@@ -499,7 +513,7 @@ describe('Cricket jobs: worker', () => {
         };
       }
     });
-    let worker = await startCricketWorker(defineCricketApp({
+    let worker = await startCricketWorker(defineManualTestApp({
       logger() {}
     }), {
       jobs: [job],

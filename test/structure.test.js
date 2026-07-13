@@ -44,9 +44,8 @@ async function writeSqliteAppFixture({
     import { defineCricketApp } from '${cricketUrl}';
 
     export let app = defineCricketApp({
+      domains: [],
       database: ${database},
-      endpoints: [],
-      models: []
     });
   `);
 
@@ -317,6 +316,9 @@ describe('Cricket CLI', () => {
 
     assert.match(agents, /cricket-agent-guidance/);
     assert.match(agents, /Cricket App Guidance/);
+    assert.match(agents, /Domains are Cricket's required default architecture/);
+    assert.match(agents, /manual mode as visible tech debt/);
+    assert.match(agents, /pnpm cricket check api\/index\.js/);
     assert.match(agents, /App Shape/);
     assert.match(agents, /Domain Shape/);
     assert.match(agents, /Jobs/);
@@ -346,7 +348,8 @@ describe('Cricket CLI', () => {
     assert.match(cricketSkill, /cricket-jobs/);
     assert.match(cricketSkill, /cricket-observability/);
     assert.match(cricketSkill, /cricket-testing/);
-    assert.match(cricketSkill, /pnpm cricket init agents/);
+    assert.match(cricketSkill, /pnpm cricket init \./);
+    assert.match(cricketSkill, /migration escape hatch and visible tech debt/);
     assert.match(cricketSkill, /--with model,validations,service,routes,test/);
     assert.match(jobsSkill, /name: cricket-jobs/);
     assert.match(jobsSkill, /defineJob/);
@@ -427,6 +430,56 @@ describe('Cricket CLI', () => {
     await assertDirectoryExists(path.join(root, 'api', 'dev'));
   });
 
+  it('initializes the structured app and agent contract together', async () => {
+    let root = await tempRoot();
+
+    await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({
+      type: 'module'
+    }));
+
+    let result = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'init',
+      root
+    ]);
+
+    assert.match(result.stdout, /Created structured Cricket project/);
+    assert.match(result.stdout, /Created Cricket app structure/);
+    assert.match(result.stdout, /Created Cricket agent guidance/);
+    assert.match(await fs.readFile(path.join(root, 'api', 'index.js'), 'utf8'), /domains: '\.\/domains'/);
+    assert.match(await fs.readFile(path.join(root, 'AGENTS.md'), 'utf8'), /Cricket App Guidance/);
+    await assertDirectoryExists(path.join(root, '.agents', 'skills', 'cricket'));
+
+    let packageScope = path.join(root, 'node_modules', '@robdel12');
+    await fs.mkdir(packageScope, { recursive: true });
+    await fs.symlink(path.resolve('.'), path.join(packageScope, 'cricket'));
+
+    let checked = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'check',
+      path.join(root, 'api', 'index.js')
+    ]);
+    let inspected = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'inspect',
+      path.join(root, 'api', 'index.js')
+    ]);
+
+    assert.match(checked.stdout, /check passed: 0 domains loaded/);
+    assert.match(inspected.stdout, /Architecture: domains \(recommended\)/);
+
+    await fs.appendFile(path.join(root, 'AGENTS.md'), '\nKeep this project note.\n');
+    await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'init',
+      root
+    ]);
+
+    let agents = await fs.readFile(path.join(root, 'AGENTS.md'), 'utf8');
+    assert.match(agents, /Keep this project note/);
+    assert.equal(agents.split('Cricket App Guidance').length - 1, 1);
+  });
+
   it('does not overwrite the app entry unless forced', async () => {
     let root = await tempRoot();
     let appPath = path.join(root, 'api', 'index.js');
@@ -477,12 +530,57 @@ describe('Cricket CLI', () => {
     assert.match(result.stdout, /validations: BuildCreateInput/);
     assert.match(result.stdout, /normalizers: normalizeBuildImport/);
     assert.match(result.stdout, /rules: isNamedBuild, requireUser/);
+    assert.match(result.stdout, /Architecture: domains \(recommended\)/);
     assert.match(result.stdout, /serializers: serializeBuildPublic/);
     assert.match(result.stdout, /Build fields: id public\/safe, user_id private\/sensitive/);
     assert.match(result.stdout, /POST\s+\/api\/builds \(postBuilds\)/);
     assert.match(result.stdout, /rules: requireUser, isNamedBuild/);
     assert.match(result.stdout, /GET\s+\/api\/builds\/:buildId \(getBuildsBuildId\)/);
     assert.match(result.stdout, /Build -> build/);
+  });
+
+  it('checks structured and explicit manual architecture through the CLI', async () => {
+    let root = await tempRoot();
+    let manualPath = path.join(root, 'manual.js');
+    let flatPath = path.join(root, 'flat.js');
+    let cricketUrl = pathToFileURL(path.resolve('src/index.js')).href;
+
+    await fs.writeFile(manualPath, `
+      import { defineCricketApp } from '${cricketUrl}';
+      export let app = defineCricketApp({ architecture: 'manual' });
+    `);
+    await fs.writeFile(flatPath, `
+      export let app = { endpoints: [] };
+    `);
+
+    let structured = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'check',
+      'fixtures/folder-app/src/app.js'
+    ]);
+    let manual = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'inspect',
+      manualPath
+    ]);
+    let manualCheck = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'check',
+      manualPath
+    ]);
+
+    assert.match(structured.stdout, /check passed: 1 domain loaded/);
+    assert.match(manual.stdout, /Architecture: manual \(migration escape hatch/);
+    assert.match(manualCheck.stderr, /valid with a warning: manual mode is migration tech debt/);
+
+    await assert.rejects(execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'check',
+      flatPath
+    ]), error => {
+      assert.match(error.stderr, /requires domains/);
+      return true;
+    });
   });
 
   it('marks deprecated routes in inspect output', async () => {
@@ -511,6 +609,7 @@ describe('Cricket CLI', () => {
       });
 
       export let app = defineCricketApp({
+        architecture: 'manual',
         endpoints: [checkShas],
         models: []
       });
@@ -553,25 +652,23 @@ describe('Cricket CLI', () => {
       import { defineCricketApp } from '${cricketUrl}';
 
       export let app = defineCricketApp({
+        domains: [],
         observability: {
           requestId() {
             return 'req_test';
           },
           observe() {}
         },
-        endpoints: [],
-        models: []
       });
     `);
     await fs.writeFile(disabledAppPath, `
       import { defineCricketApp } from '${cricketUrl}';
 
       export let app = defineCricketApp({
+        domains: [],
         observability: {
           observe: []
         },
-        endpoints: [],
-        models: []
       });
     `);
 
@@ -834,6 +931,7 @@ describe('Cricket CLI', () => {
       import { defineCricketApp } from '${cricketUrl}';
 
       export let app = defineCricketApp({
+        domains: [],
         database: {
           defaultEnvironment: 'development',
           environments: {
@@ -852,9 +950,7 @@ describe('Cricket CLI', () => {
               useNullAsDefault: true
             }
           }
-        },
-        endpoints: [],
-        models: []
+        }
       });
     `);
     await fs.writeFile(path.join(migrationsDir, '20260616000000_create_projects.js'), `

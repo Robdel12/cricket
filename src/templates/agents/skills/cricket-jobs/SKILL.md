@@ -10,6 +10,7 @@ Use this when work leaves the request path but should keep Cricket's contract sh
 ## Shape
 
 - Put jobs in domain-local `*.jobs.js` files, such as `api/domains/radar-jobs/radar.jobs.js` or `api/domains/radar-jobs/repair.jobs.js`.
+- Structured workers may select domain-owned jobs, but cannot register jobs that are absent from the app's domains.
 - Use `defineJob` with validated `input`, optional `context`, queue metadata, retry policy, recovery policy, failure handlers, state metadata, and a plain `run`.
 - Keep product truth in app tables and services. Redis coordinates hot execution: queues, wakeups, leases, attempts, delayed availability, schedules, and progress.
 - Add `cricket_jobs` with `createJobLedgerTable` in an app migration when the app uses a Cricket database. Treat it as execution history, not product state.

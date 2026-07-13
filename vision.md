@@ -59,9 +59,11 @@ api/
 capabilities. `api/workers/` starts background workers. `api/migrations/` holds
 database history. `api/dev/` is local support, not production runtime.
 
-This is guidance, not a cage. If an app earns another folder, it can have one.
-Cricket should provide rails around the common mess without pretending every
-app is the same.
+This shape is an enforced default, not a suggestion. If an app earns another
+folder, it can have one, but product endpoints, jobs, and models still enter the
+runtime through domains. Existing applications may use an explicit manual
+architecture while migrating. That escape hatch is visible tech debt, not a
+parallel best practice.
 
 ## Domains
 
@@ -224,9 +226,13 @@ budgets, or bypass endpoint handling. Apps own setup and data policy.
 
 OpenAPI is the public HTTP spec.
 
-`cricket inspect` is the framework topology map: domains, models, sensitive
-fields, rules, services, jobs, routes, operation IDs, database posture, and
-observability posture.
+`cricket inspect` is the framework topology map: architecture, domains, models,
+sensitive fields, rules, services, jobs, routes, operation IDs, database
+posture, and observability posture.
+
+`cricket check` fails invalid architecture contracts and reports manual mode as
+migration debt. Validation begins in `defineCricketApp` so runtime, workers,
+docs, inspect, and tests share one contract rather than reconstructing intent.
 
 Keep those separate. Clients get a clean API spec. Humans and agents get the
 framework shape.
@@ -238,9 +244,10 @@ The CLI should create structure and orientation, not product behavior.
 `cricket new domain` requires apps to select the files a domain actually needs.
 Its test scaffold is a visible todo until the app proves behavior through the
 HTTP or worker boundary.
-`cricket init app` scaffolds the small app shell. `cricket init agents` ships
-project guidance and local Cricket skills so agents learn the same architecture
-humans use.
+`cricket init` scaffolds the small app shell, project guidance, and local
+Cricket skills together so agents learn the same architecture humans use.
+Focused `init app` and `init agents` commands remain useful when adopting
+Cricket inside an existing repository, but they are not the default path.
 
 The generated guidance is documentation. When Cricket's public contract changes,
 revise the relevant guidance as a whole and remove superseded instructions.

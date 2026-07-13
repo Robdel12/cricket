@@ -99,8 +99,12 @@ export function deferred() {
   };
 }
 
-export function createTestApp(testState) {
+export function createTestApp(testState, jobs = []) {
   return defineCricketApp({
+    domains: [{
+      name: 'testJobs',
+      jobs
+    }],
     observability: {
       observe(event) {
         testState.recordEvent(event);

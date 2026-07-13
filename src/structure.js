@@ -309,7 +309,7 @@ export function formatScaffoldResult(result) {
     'Next',
     `  - If this domain persists data, add the ${result.domain.tableName} table migration in api/migrations/.`,
     `  - Point \`defineCricketApp({ domains })\` at the domain root (${result.root}).`,
-    '  - Run `pnpm cricket inspect <app-module>` and `pnpm cricket docs <app-module> --out openapi.json`.'
+    '  - Run `pnpm cricket check <app-module>`, `pnpm cricket inspect <app-module>`, and `pnpm cricket docs <app-module> --out openapi.json`.'
   );
 
   return lines.join('\n');
@@ -425,8 +425,8 @@ export function formatAppScaffoldResult(result) {
     '',
     'Next',
     '  - Add domains with `pnpm cricket new domain project api/domains --with model,validations,service,routes,test`.',
-    '  - Configure `defineCricketApp({ database })` and put migrations in `api/migrations` if the app persists data.',
-    '  - Run `pnpm cricket inspect api/index.js` and `pnpm cricket docs api/index.js --out openapi.json`.'
+    '  - Add `database` alongside the generated `domains` contract and put migrations in `api/migrations` if the app persists data.',
+    '  - Run `pnpm cricket check api/index.js`, `pnpm cricket inspect api/index.js`, and `pnpm cricket docs api/index.js --out openapi.json`.'
   );
 
   return lines.join('\n');
@@ -580,8 +580,46 @@ export function formatAgentScaffoldResult(result) {
     '  - AGENTS.md explains the Cricket domain split.',
     '  - .agents/skills/cricket/SKILL.md gives agents the framework workflow.',
     '  - Focused skills cover jobs, observability, and testing.',
-    '  - Run `pnpm cricket inspect api/index.js` and `pnpm cricket docs api/index.js --out openapi.json`.'
+    '  - Run `pnpm cricket check api/index.js`, `pnpm cricket inspect api/index.js`, and `pnpm cricket docs api/index.js --out openapi.json`.'
   );
 
   return lines.join('\n');
+}
+
+/**
+ * Scaffold the complete recommended Cricket project contract.
+ *
+ * @param {object} [options]
+ * @param {string} [options.root='.'] - Project root.
+ * @param {boolean} [options.force=false] - Refresh generated files when true.
+ * @returns {Promise<{root: string, app: object, agents: object}>}
+ */
+export async function scaffoldProject({
+  root = '.',
+  force = false
+} = {}) {
+  let app = await scaffoldApp({ root, force });
+  let agents = await scaffoldAgentFiles({ root, force });
+
+  return {
+    root,
+    app,
+    agents
+  };
+}
+
+/**
+ * Format the canonical project scaffold result.
+ *
+ * @param {{root: string, app: object, agents: object}} result
+ * @returns {string}
+ */
+export function formatProjectScaffoldResult(result) {
+  return [
+    `Created structured Cricket project at ${result.root}`,
+    '',
+    formatAppScaffoldResult(result.app),
+    '',
+    formatAgentScaffoldResult(result.agents)
+  ].join('\n');
 }

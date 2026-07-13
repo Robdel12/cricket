@@ -4,12 +4,12 @@ import request from 'supertest';
 
 import {
   createCricketRuntime,
-  defineCricketApp,
   defineEndpoint
 } from '../../src/index.js';
+import { defineManualTestApp } from '../../test-support/app.js';
 
 export async function createHttpApp(options) {
-  let runtime = await createCricketRuntime(defineCricketApp(options), {
+  let runtime = await createCricketRuntime(defineManualTestApp(options), {
     logger() {}
   });
   return runtime.app;
