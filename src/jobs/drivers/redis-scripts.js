@@ -311,6 +311,54 @@ redis.call('RPUSH', KEYS[3], ARGV[3])
 return 1
 `;
 
+export let removeFinishedScript = `
+${keyFunction}
+local id = ARGV[1]
+local prefix = ARGV[2]
+local envelope_json = redis.call('GET', KEYS[1])
+local status = redis.call('HGET', KEYS[2], 'status')
+
+if not envelope_json and not status then
+  redis.call('DEL', KEYS[3], KEYS[4], KEYS[5], KEYS[6], KEYS[7])
+  redis.call('SREM', KEYS[8], id)
+  redis.call('ZREM', KEYS[9], id)
+  return cjson.encode({ status = 'missing' })
+end
+
+if not envelope_json or not status then
+  return cjson.encode({ status = 'inconsistent' })
+end
+
+if status ~= 'completed' and status ~= 'failed' then
+  return cjson.encode({ status = 'not_finished' })
+end
+
+local envelope = cjson.decode(envelope_json)
+local ready_key = cricket_key(prefix, 'ready', envelope.queueName)
+local ready_member = cjson.encode({ envelope.createdAt, envelope.id })
+
+redis.call('SREM', KEYS[8], id)
+redis.call('ZREM', KEYS[9], id)
+redis.call('ZREM', ready_key, ready_member)
+
+if envelope.idempotencyKey then
+  local idempotency_key = cricket_key(prefix, 'idempotency', envelope.name, envelope.idempotencyKey)
+  if redis.call('GET', idempotency_key) == id then
+    redis.call('DEL', idempotency_key)
+  end
+end
+
+if envelope.scheduleKey and envelope.scheduledFor then
+  local slot_key = cricket_key(prefix, 'schedule', 'slot', envelope.scheduleKey .. ':' .. envelope.scheduledFor)
+  if redis.call('GET', slot_key) == id then
+    redis.call('DEL', slot_key)
+  end
+end
+
+redis.call('DEL', KEYS[1], KEYS[2], KEYS[3], KEYS[4], KEYS[5], KEYS[6], KEYS[7])
+return cjson.encode({ status = 'removed' })
+`;
+
 export let recoveryHeaderScript = `
 local id = ARGV[1]
 

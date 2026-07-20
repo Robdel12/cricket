@@ -165,14 +165,16 @@ Queue policy should be executable, not descriptive metadata. Claims prefer
 higher numeric priority in the ready work they observe, with stable ties.
 Global and partition limits travel as resolved immutable envelope data so
 drivers evaluate the same keys and limits when choosing work. Idempotency owns
-one non-terminal run and releases after its terminal settlement. Enqueue,
-claim, retry, settlement, delayed promotion, and schedule materialization are
-atomic. Each attempt owns Cricket's lease, evidence, retry, and settlement
-writes. Cricket rejects stale coordination updates to those fields. Apps still
-own idempotency or attempt-awareness for
-product-side effects. Terminal envelopes, run state, events, current-attempt
-evidence, and schedule-slot ownership remain until the app deletes those
-prefixed Redis keys out of band.
+one unfinished run and releases after completion or final failure. Enqueue,
+claim, retry, completion/failure, delayed promotion, and schedule
+materialization are atomic. Each attempt owns Cricket's lease, evidence, retry,
+and settlement writes. Cricket rejects stale coordination updates to those
+fields. Apps still own idempotency or attempt-awareness for product-side
+effects. Envelopes, run state, events, current-attempt evidence, and
+schedule-slot ownership remain after completion or failure. Apps own retention
+windows and schedule cleanup. Cricket owns a safe removal capability that
+accepts finished job IDs, verifies their status, and removes its internal Redis
+records without exposing key shapes.
 
 Scheduled work should stay inside the job contract. Apps define the cron,
 timezone, enablement rule, and input for each due slot. Cricket uses a thin cron

@@ -359,6 +359,9 @@ describe('Cricket CLI', () => {
     assert.match(jobsSkill, /jobFailure/);
     assert.match(jobsSkill, /cricket_jobs/);
     assert.match(jobsSkill, /Redis coordinates hot execution/);
+    assert.match(jobsSkill, /jobs\.removeFinished\(ids\)/);
+    assert.match(jobsSkill, /Never hard-code\s+Cricket Redis keys/);
+    assert.match(agents, /jobs\.removeFinished\(ids\)/);
     assert.match(observabilitySkill, /name: cricket-observability/);
     assert.match(observabilitySkill, /cricket trace/);
     assert.match(observabilitySkill, /lifecycle/);

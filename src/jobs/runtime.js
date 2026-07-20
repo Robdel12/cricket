@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { createCricketRuntime } from '../http/runtime.js';
+import { frozenPlain } from '../immutable.js';
 import { createTrace } from '../trace.js';
 import { parseZod } from '../schema.js';
 import { normalizeJobClock } from './clock.js';
@@ -27,6 +28,34 @@ function toArray(value) {
     return [];
 
   return Array.isArray(value) ? value : [value];
+}
+
+function normalizeFinishedJobIds(ids) {
+  if (!Array.isArray(ids))
+    throw new Error('jobs.removeFinished needs an array of job IDs');
+
+  let uniqueIds = [];
+  let seen = new Set();
+
+  for (let id of ids) {
+    if (typeof id !== 'string' || !id)
+      throw new Error('jobs.removeFinished job IDs must be non-empty strings');
+
+    if (!seen.has(id)) {
+      seen.add(id);
+      uniqueIds.push(id);
+    }
+  }
+
+  return uniqueIds;
+}
+
+function finishedJobRemovalResult(result = {}) {
+  return frozenPlain({
+    removed: result.removed ?? [],
+    missing: result.missing ?? [],
+    skipped: result.skipped ?? []
+  });
 }
 
 function jobsByName(jobs) {
@@ -365,6 +394,18 @@ function createJobsCapability({
         results.push(await jobsCapability.enqueue(job, input, options));
 
       return results;
+    },
+
+    async removeFinished(ids) {
+      let uniqueIds = normalizeFinishedJobIds(ids);
+
+      if (!uniqueIds.length)
+        return finishedJobRemovalResult();
+
+      if (typeof driver.removeFinished !== 'function')
+        throw new Error('The configured Cricket jobs driver does not support removing finished jobs');
+
+      return finishedJobRemovalResult(await driver.removeFinished(uniqueIds));
     }
   };
 

@@ -17,7 +17,7 @@ let redisQueueKeys = new Set([
  *
  * @param {object} options - Redis queue options.
  * @param {string} options.name - Queue name.
- * @param {Function} [options.idempotencyKey] - Prevents another non-terminal run with the same key.
+ * @param {Function} [options.idempotencyKey] - Prevents another unfinished run with the same key.
  * @param {Function} [options.priority] - Computes numeric claim priority; higher values run first.
  * @returns {object} Frozen Redis queue contract.
  */

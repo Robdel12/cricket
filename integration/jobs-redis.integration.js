@@ -24,6 +24,18 @@ function testPrefix(name) {
   return `cricket:integration:${name}:${randomUUID()}`;
 }
 
+function jobRecordKeys(prefix, id) {
+  return [
+    'envelope',
+    'run',
+    'lease',
+    'events',
+    'logs',
+    'spans',
+    'progress'
+  ].map(type => `${prefix}:${type}:${id}`);
+}
+
 function reportJob({
   concurrency: concurrencyPolicy,
   idempotent = false
@@ -333,16 +345,16 @@ describe('Cricket jobs: real Redis', () => {
     }
   });
 
-  it('releases idempotency only for the terminal attempt owner', async () => {
-    let drivers = await createDrivers('terminal-idempotency');
+  it('releases idempotency only for the finished attempt owner', async () => {
+    let drivers = await createDrivers('finished-idempotency');
     let job = reportJob({ idempotent: true });
     let producer = await createCricketJobs({
       jobs: [job],
       queues: { driver: drivers.driverA }
     });
     let input = {
-      reportId: 'report_terminal',
-      accountId: 'account_terminal'
+      reportId: 'report_finished',
+      accountId: 'account_finished'
     };
 
     try {
@@ -355,7 +367,7 @@ describe('Cricket jobs: real Redis', () => {
       assert.equal((await producer.jobs.enqueue(job, input)).enqueued, true);
 
       let failed = await drivers.driverA.claim();
-      assert.equal((await drivers.driverA.fail(failed.envelope, new Error('terminal'), {
+      assert.equal((await drivers.driverA.fail(failed.envelope, new Error('finished'), {
         attempt: failed.attempt
       })).settled, true);
       assert.equal((await producer.jobs.enqueue(job, input)).enqueued, true);
@@ -669,6 +681,178 @@ describe('Cricket jobs: real Redis', () => {
       assert.equal(processed.length, 101);
     } finally {
       await worker.cleanup();
+    }
+  });
+
+  it('removes finished job records and releases their schedule slots', async () => {
+    let drivers = await createDrivers('remove-finished');
+    let admin = await createRedisSocketClient(redisUrl);
+    let job = reportJob({ idempotent: true });
+    let producer = await createCricketJobs({
+      jobs: [job],
+      queues: { driver: drivers.driverA }
+    });
+    let scheduledFor = '2026-07-10T05:00:00.000Z';
+    let slotId = `daily_report:${scheduledFor}`;
+    let scheduled = producer.jobs.plan(job, {
+      reportId: 'report_finished_schedule',
+      accountId: 'account_finished_schedule'
+    }, {
+      createId: () => 'jobenv_finished_schedule',
+      scheduleKey: 'daily_report',
+      scheduledFor
+    });
+
+    try {
+      await drivers.driverA.materializeSchedule(scheduled, { slotId });
+      let completedClaim = await drivers.driverA.claim();
+
+      await drivers.driverA.recordLog(completedClaim.envelope, {
+        event: 'report.started'
+      }, {
+        attempt: completedClaim.attempt
+      });
+      await drivers.driverA.recordSpan(completedClaim.envelope, {
+        name: 'report.rendered'
+      }, {
+        attempt: completedClaim.attempt
+      });
+      await drivers.driverA.progress(completedClaim.envelope, {
+        current: 1,
+        total: 2
+      }, {
+        attempt: completedClaim.attempt
+      });
+      await drivers.driverA.complete(completedClaim.envelope, {
+        status: 'completed'
+      }, {
+        attempt: completedClaim.attempt
+      });
+
+      let failed = await producer.jobs.enqueue(job, {
+        reportId: 'report_finished_failure',
+        accountId: 'account_finished_failure'
+      });
+      let failedClaim = await drivers.driverA.claim();
+
+      await drivers.driverA.recordLog(failedClaim.envelope, {
+        event: 'report.failed'
+      }, {
+        attempt: failedClaim.attempt
+      });
+      await drivers.driverA.fail(failedClaim.envelope, new Error('render failed'), {
+        attempt: failedClaim.attempt
+      });
+
+      assert.deepEqual(await producer.jobs.removeFinished([
+        scheduled.id,
+        failed.envelope.id
+      ]), {
+        removed: [
+          scheduled.id,
+          failed.envelope.id
+        ],
+        missing: [],
+        skipped: []
+      });
+
+      for (let id of [scheduled.id, failed.envelope.id]) {
+        assert.equal(await admin.command(
+          'EXISTS',
+          ...jobRecordKeys(drivers.prefix, id)
+        ), 0);
+      }
+
+      assert.equal(await admin.command(
+        'EXISTS',
+        `${drivers.prefix}:schedule:slot:${slotId}`
+      ), 0);
+      assert.deepEqual(await producer.jobs.removeFinished([scheduled.id]), {
+        removed: [],
+        missing: [scheduled.id],
+        skipped: []
+      });
+
+      let replacement = producer.jobs.plan(job, {
+        reportId: 'report_finished_schedule_replacement',
+        accountId: 'account_finished_schedule'
+      }, {
+        createId: () => 'jobenv_finished_schedule_replacement',
+        scheduleKey: 'daily_report',
+        scheduledFor
+      });
+      let rematerialized = await drivers.driverA.materializeSchedule(replacement, { slotId });
+
+      assert.equal(rematerialized.enqueued, true);
+      assert.equal(rematerialized.envelope.id, replacement.id);
+    } finally {
+      await producer.cleanup();
+      await drivers.driverB.cleanup();
+      await admin.quit();
+    }
+  });
+
+  it('keeps unfinished Redis jobs when finished-job cleanup runs', async () => {
+    let drivers = await createDrivers('keep-unfinished');
+    let admin = await createRedisSocketClient(redisUrl);
+    let job = reportJob();
+    let producer = await createCricketJobs({
+      jobs: [job],
+      queues: { driver: drivers.driverA }
+    });
+
+    try {
+      let active = await producer.jobs.enqueue(job, {
+        reportId: 'report_active',
+        accountId: 'account_active'
+      });
+      await drivers.driverA.claim();
+      let retrying = await producer.jobs.enqueue(job, {
+        reportId: 'report_retrying',
+        accountId: 'account_retrying'
+      });
+      let retryingClaim = await drivers.driverA.claim();
+      await drivers.driverA.retry(retryingClaim.envelope, {
+        attempt: retryingClaim.attempt,
+        availableAt: '2099-01-01T00:00:00.000Z'
+      });
+      let queued = await producer.jobs.enqueue(job, {
+        reportId: 'report_queued',
+        accountId: 'account_queued'
+      });
+      let delayed = await producer.jobs.enqueue(job, {
+        reportId: 'report_delayed',
+        accountId: 'account_delayed'
+      }, {
+        runAt: '2099-01-01T00:00:00.000Z'
+      });
+      let ids = [
+        active.envelope.id,
+        retrying.envelope.id,
+        queued.envelope.id,
+        delayed.envelope.id
+      ];
+
+      assert.deepEqual(await producer.jobs.removeFinished(ids), {
+        removed: [],
+        missing: [],
+        skipped: ids.map(id => ({
+          id,
+          reason: 'not_finished'
+        }))
+      });
+
+      for (let id of ids) {
+        assert.equal(await admin.command(
+          'EXISTS',
+          `${drivers.prefix}:envelope:${id}`,
+          `${drivers.prefix}:run:${id}`
+        ), 2);
+      }
+    } finally {
+      await producer.cleanup();
+      await drivers.driverB.cleanup();
+      await admin.quit();
     }
   });
 

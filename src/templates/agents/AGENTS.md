@@ -95,13 +95,16 @@ want execution history, but do not use it as the domain state model.
 Queue policy is execution behavior. Claims prefer higher numeric priority in
 the ready work they observe, with stable ties. Drivers evaluate resolved global
 and partition limits while choosing work, and blocked partitions do not block
-unrelated keys. Idempotency prevents a second non-terminal run and releases
-after completion or final
-failure. Terminal envelopes, run state, events, current-attempt evidence, and
-schedule-slot ownership remain until the app deletes those prefixed Redis keys
-out of band. Redis reserves capacity and changes queue state atomically. Each
-claimed attempt owns Cricket's lease, evidence, retry, and settlement writes;
-apps still make product-side effects idempotent or attempt-aware.
+unrelated keys. Idempotency prevents a second unfinished run and releases
+after completion or final failure. Envelopes, run state, events,
+current-attempt evidence, and schedule-slot ownership remain after completion
+or failure. The app owns retention windows and cleanup scheduling. Pass expired
+ledger IDs to `jobs.removeFinished(ids)` so Cricket can remove its Redis records
+without exposing key shapes. Delete only `removed` and `missing` ledger rows
+after rechecking their status and retention cutoff. Redis reserves capacity and
+changes queue state atomically. Each claimed attempt owns Cricket's lease,
+evidence, retry, and settlement writes; apps still make product-side effects
+idempotent or attempt-aware.
 
 The built-in Redis client supports `redis://` and `rediss://` URLs, ACL
 credentials, numeric database paths, and explicit Node TLS options. An
