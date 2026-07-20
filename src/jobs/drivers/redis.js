@@ -10,6 +10,7 @@ import {
   promoteDelayedScript,
   recoveryHeaderScript,
   registerScheduleScript,
+  removeFinishedScript,
   retryScript,
   settleScript,
   updateScheduleScript
@@ -706,6 +707,45 @@ export async function createRedisQueueDriver({
       slotId
     }) {
       return await enqueueEnvelope(envelope, { slotId });
+    },
+
+    async removeFinished(ids) {
+      let removed = [];
+      let missing = [];
+      let skipped = [];
+
+      for (let id of ids) {
+        let result = await runJsonScript(removeFinishedScript, [
+          envelopeKey(prefix, id),
+          runKey(prefix, id),
+          leaseKey(prefix, id),
+          eventsKey(prefix, id),
+          logsKey(prefix, id),
+          spansKey(prefix, id),
+          progressKey(prefix, id),
+          runningKey(prefix),
+          delayedKey(prefix)
+        ], [
+          id,
+          prefix
+        ]);
+
+        if (result.status === 'removed')
+          removed.push(id);
+        else if (result.status === 'missing')
+          missing.push(id);
+        else
+          skipped.push({
+            id,
+            reason: result.status
+          });
+      }
+
+      return frozenPlain({
+        removed,
+        missing,
+        skipped
+      });
     },
 
     async cleanup() {

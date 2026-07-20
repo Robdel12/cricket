@@ -20,12 +20,13 @@ Use this when work leaves the request path but should keep Cricket's contract sh
 - Use global concurrency for shared capacity and partition concurrency for
   tenant/account capacity. Cricket resolves both into the immutable envelope so
   queue drivers evaluate the same keys and limits while choosing work.
-- Idempotency blocks duplicate non-terminal runs and releases on completion or
-  final failure. Terminal envelopes, run state, events, current-attempt
-  evidence, and schedule-slot ownership remain until the app deletes those
-  prefixed Redis keys out of band.
+- Idempotency blocks duplicate unfinished runs and releases on completion or
+  final failure. Envelopes, run state, events, current-attempt evidence, and
+  schedule-slot ownership remain after completion or failure. The app owns
+  retention windows and cleanup scheduling; pass expired ledger IDs to
+  `jobs.removeFinished(ids)` so Cricket can safely remove its Redis records.
 - Redis reserves capacity and changes queue state atomically. Each claimed
-  attempt owns Cricket's lease, evidence, retry, and terminal settlement
+  attempt owns Cricket's lease, evidence, retry, and completion/failure
   writes. Apps still make product-side effects idempotent or attempt-aware.
 - The built-in client accepts `redis://` and `rediss://` URLs, ACL credentials,
   numeric database paths, and Node TLS options. App-provided clients also need
@@ -44,6 +45,10 @@ Use this when work leaves the request path but should keep Cricket's contract sh
   Abort the signal or call `worker.cleanup()` to stop that wait.
 - Job `run` functions receive `input`, `context`, `services`, `logger`, `trace`, `lifecycle`, `jobs`, and `progress`. They should not receive Redis clients.
 - Enqueue with `runAt` or `delayMs` for one-off delayed work.
+- Run app-owned cleanup in bounded batches. Call `jobs.removeFinished(ids)`
+  before deleting `cricket_jobs` rows, then delete only `removed` and `missing`
+  IDs after rechecking their status and retention cutoff. Never hard-code
+  Cricket Redis keys in app code.
 
 ## Scheduling
 

@@ -575,18 +575,47 @@ another partition from running. Drivers evaluate the resolved envelope policy
 when choosing work. Redis atomically verifies and reserves capacity for the
 selected envelope, so simultaneous workers cannot over-claim a shared limit.
 
-An idempotency key owns one non-terminal run. Duplicate enqueue attempts return
+An idempotency key owns one unfinished run. Duplicate enqueue attempts return
 the existing envelope while it is queued, delayed, active, or retrying. Cricket
 releases the key after completion or final failure so a later run can start.
-Each claimed attempt owns Cricket's lease, evidence, retry, and terminal
-settlement writes; the driver rejects those writes from older attempts. Apps
-must still make product-side effects idempotent or attempt-aware. Delayed
+Each claimed attempt owns Cricket's lease, evidence, retry, and
+completion/failure writes; the driver rejects those writes from older attempts.
+Apps must still make product-side effects idempotent or attempt-aware. Delayed
 promotion and schedule-slot materialization use the same atomic coordination
 boundary.
 
-Terminal envelopes, run state, events, current-attempt evidence, and
-schedule-slot ownership persist until the app deletes those prefixed Redis keys
-out of band.
+Envelopes, run state, events, current-attempt evidence, and schedule-slot
+ownership remain after a job completes or fails. The app chooses how long to
+keep that execution history and when cleanup runs. Pass the expired ledger IDs
+to `jobs.removeFinished(ids)`; Cricket verifies each job is completed or failed
+and removes its Redis records without exposing their key layout. The result
+separates `removed`, already-`missing`, and `skipped` IDs. Treat both `removed`
+and `missing` as safe to delete from `cricket_jobs`; leave `skipped` rows for a
+later run or operator review.
+
+Run Redis cleanup before deleting ledger rows. If cleanup stops between those
+steps, the next run reports the already-clean Redis IDs as `missing` and can
+finish deleting the rows. Keep completed and failed retention windows, batch
+size, and cleanup scheduling in app code.
+
+```js
+async function removeExpiredJobHistory({ jobs, jobHistory, policy }) {
+  let expired = await jobHistory.expired(policy);
+  let result = await jobs.removeFinished(expired.map(row => row.id));
+
+  await jobHistory.removeExpired([
+    ...result.removed,
+    ...result.missing
+  ], policy);
+
+  return result;
+}
+```
+
+The app service should recheck the job status and applicable cutoff when it
+deletes each row. Cricket does not choose retention windows or schedule this
+work.
+
 `worker.cleanup()` closes runtime resources and driver-owned Redis connections;
 the app still owns any client it supplied. Cleanup does not delete coordination
 records.

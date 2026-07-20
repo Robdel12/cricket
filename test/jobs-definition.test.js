@@ -104,6 +104,112 @@ describe('Cricket jobs: definition', () => {
     }
   });
 
+  it('removes only completed and failed job records through the jobs capability', async () => {
+    let job = defineJob({
+      name: 'reports.cleanup',
+      input: z.object({
+        reportId: z.string(),
+        outcome: z.enum(['completed', 'failed'])
+      }),
+      queue: redisQueue({
+        name: 'reports'
+      }),
+      run({ input }) {
+        if (input.outcome === 'failed')
+          throw new Error('report failed');
+
+        return { status: 'completed' };
+      }
+    });
+    let worker = await startCricketWorker(defineManualTestApp({
+      logger() {}
+    }), {
+      jobs: [job],
+      queues: { test: true }
+    });
+
+    try {
+      let completed = await worker.jobs.enqueue(job, {
+        reportId: 'report_completed',
+        outcome: 'completed'
+      });
+      assert.deepEqual(await worker.drain(), [{ status: 'completed' }]);
+
+      let failed = await worker.jobs.enqueue(job, {
+        reportId: 'report_failed',
+        outcome: 'failed'
+      });
+      await assert.rejects(worker.drain(), /report failed/);
+
+      let queued = await worker.jobs.enqueue(job, {
+        reportId: 'report_queued',
+        outcome: 'completed'
+      });
+      let result = await worker.jobs.removeFinished([
+        completed.envelope.id,
+        failed.envelope.id,
+        queued.envelope.id,
+        'jobenv_missing',
+        completed.envelope.id
+      ]);
+
+      assert.deepEqual(result, {
+        removed: [
+          completed.envelope.id,
+          failed.envelope.id
+        ],
+        missing: ['jobenv_missing'],
+        skipped: [{
+          id: queued.envelope.id,
+          reason: 'not_finished'
+        }]
+      });
+      assert.ok(Object.isFrozen(result));
+      assert.ok(Object.isFrozen(result.removed));
+      assert.ok(Object.isFrozen(result.skipped));
+      assert.ok(Object.isFrozen(result.skipped[0]));
+      assert.deepEqual(await worker.jobs.removeFinished([completed.envelope.id]), {
+        removed: [],
+        missing: [completed.envelope.id],
+        skipped: []
+      });
+      await assert.rejects(
+        worker.jobs.removeFinished('jobenv_invalid'),
+        /needs an array of job IDs/
+      );
+      await assert.rejects(
+        worker.jobs.removeFinished(['']),
+        /job IDs must be non-empty strings/
+      );
+    } finally {
+      await worker.cleanup();
+    }
+  });
+
+  it('fails clearly when a custom queue driver cannot remove finished jobs', async () => {
+    let producer = await createCricketJobs({
+      queues: {
+        driver: {
+          async cleanup() {}
+        }
+      }
+    });
+
+    try {
+      assert.deepEqual(await producer.jobs.removeFinished([]), {
+        removed: [],
+        missing: [],
+        skipped: []
+      });
+      await assert.rejects(
+        producer.jobs.removeFinished(['jobenv_finished']),
+        /does not support removing finished jobs/
+      );
+    } finally {
+      await producer.cleanup();
+    }
+  });
+
   it('rejects queue metadata and concurrency that cannot be enforced', async () => {
     assert.throws(() => redisQueue({
       name: 'reports',

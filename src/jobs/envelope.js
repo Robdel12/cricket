@@ -90,7 +90,7 @@ export function parseJobContext(job, context) {
  *
  * Planning validates input/context, computes queue metadata, captures retry
  * policy, and freezes the resulting plain object. Attempts, leases, progress,
- * and terminal status intentionally live outside the envelope.
+ * and completion/failure status intentionally live outside the envelope.
  *
  * @param {object} job - Job returned by `defineJob`.
  * @param {object} input - Raw input to validate with the job input schema.

@@ -452,6 +452,41 @@ export function createTestQueueDriver() {
       return result;
     },
 
+    async removeFinished(ids) {
+      let removed = [];
+      let missing = [];
+      let skipped = [];
+
+      for (let id of ids) {
+        let index = items.findIndex(item => item.envelope.id === id);
+
+        if (index === -1) {
+          missing.push(id);
+          continue;
+        }
+
+        let item = items[index];
+
+        if (item.status !== 'completed' && item.status !== 'failed') {
+          skipped.push({
+            id,
+            reason: 'not_finished'
+          });
+          continue;
+        }
+
+        items.splice(index, 1);
+        events = events.filter(event => event.envelopeId !== id);
+        removed.push(id);
+      }
+
+      return frozenPlain({
+        removed,
+        missing,
+        skipped
+      });
+    },
+
     snapshot() {
       return frozenPlain({
         items,
