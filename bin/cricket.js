@@ -42,6 +42,7 @@ function hasFlag(args, flag) {
 
 let valueFlags = new Set([
   '--env',
+  '--api-version',
   '--out',
   '--with'
 ]);
@@ -78,6 +79,36 @@ function optionValue(args, name) {
   return value;
 }
 
+function optionValues(args, name) {
+  let values = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] !== name)
+      continue;
+
+    let value = args[index + 1];
+
+    if (!value || value.startsWith('--'))
+      throw new Error(`${name} requires a value`);
+
+    values.push(value);
+    index += 1;
+  }
+
+  return values;
+}
+
+function apiVersionSelections(args) {
+  return Object.fromEntries(optionValues(args, '--api-version').map(value => {
+    let separator = value.indexOf('=');
+
+    if (separator <= 0 || separator === value.length - 1)
+      throw new Error('--api-version must use family=version');
+
+    return [value.slice(0, separator), value.slice(separator + 1)];
+  }));
+}
+
 function usage() {
   return `Usage:
   cricket new domain <name> [root] --with <types|all> [--force]
@@ -86,7 +117,7 @@ function usage() {
   cricket init agents [root] [--force]
   cricket inspect <appModule>
   cricket check <appModule>
-  cricket docs <appModule> [--out openapi.json]
+  cricket docs <appModule> [--api-version family=version] [--out openapi.json]
   cricket migrate latest <appModule> [--env name]
   cricket migrate rollback <appModule> [--all] [--env name]
   cricket migrate status <appModule> [--env name]
@@ -105,7 +136,7 @@ Examples:
   cricket new domain project api/domains --with model,validations,serializers,service,rules,routes,test
   cricket check api/index.js
   cricket inspect api/index.js
-  cricket docs api/index.js --out openapi.json
+  cricket docs api/index.js --api-version tornadic.ios=2026-09-01 --out openapi.json
   cricket migrate latest api/index.js
   cricket test
   cricket test test/http-runtime.test.js --grep "deprecated"`;
@@ -238,7 +269,9 @@ async function runDocs(args) {
     throw new Error('App module is required');
 
   let contract = await loadAppContract(modulePath);
-  let document = createOpenApiFromContract(contract);
+  let document = createOpenApiFromContract(contract, {
+    apiVersions: apiVersionSelections(args)
+  });
   let output = await outputOpenApi(document, {
     out: optionValue(args, '--out')
   });
