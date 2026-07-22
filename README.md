@@ -313,6 +313,80 @@ export let createProject = defineEndpoint({
 Definition builders reject unknown app and endpoint options so misspelled
 wiring fails immediately instead of becoming unused metadata.
 
+### Endpoint API versions
+
+API versioning is endpoint-owned and optional. A shared immutable version
+family names the request header, current contract, pinned default, and supported
+versions. It is not registered on `defineCricketApp`.
+
+```js
+import { defineApiVersions } from '@robdel12/cricket';
+
+export let sdkVersions = defineApiVersions({
+  name: 'project.sdk',
+  header: 'Project-Version',
+  clientHeader: 'Project-SDK-Version',
+  current: '2026-09-01',
+  default: '2025-11-15',
+  versions: {
+    '2025-11-15': {
+      deprecatedAt: '2026-09-01',
+      sunsetAt: '2027-09-01'
+    },
+    '2026-09-01': {}
+  }
+});
+```
+
+The endpoint's normal `body`, `response`, and `responses` remain the current
+contract. Historical entries contain only the compatibility work that endpoint
+earned. Body compatibility uses a Cricket normalizer, so rules and handlers
+still receive canonical input. Response compatibility uses Cricket serializers
+and may select by status.
+
+```js
+export let createProject = defineEndpoint({
+  method: 'post',
+  path: '/projects',
+  apiVersions: sdkVersions({
+    '2025-11-15': {
+      body: normalizeLegacyProjectCreate,
+      responses: {
+        201: serializeLegacyProject,
+        202: serializeLegacyQueuedProject
+      }
+    }
+  }),
+  body: ProjectCreateInput,
+  responses: {
+    201: ProjectResponse,
+    202: QueuedProjectResponse
+  },
+  rules: [requireUser],
+  handler: createProject
+});
+```
+
+Use `apiVersions: sdkVersions()` on an unchanged endpoint when it should still
+negotiate the family and report usage. Omit `apiVersions` entirely when an
+endpoint should ignore version headers. Unsupported or ambiguous values fail
+with a bounded bad request; unknown raw values are not logged or echoed.
+
+Cricket adds the effective version and `Vary` response headers, and attaches
+the selected family/version to route logs and traces. The optional client header
+is bounded telemetry only and never selects the API contract. Generate an exact
+OpenAPI contract with:
+
+```sh
+pnpm cricket docs api/index.js \
+  --api-version project.sdk=2026-09-01 \
+  --out openapi.json
+```
+
+When compatibility is no longer needed, remove the endpoint's `apiVersions`
+option and eventually delete the unused family definition. Old clients may
+continue sending the now-unused header; ordinary endpoints ignore it.
+
 ### Endpoint responses
 
 Bare values returned by handlers, middleware, and fallbacks are response bodies.
@@ -773,6 +847,7 @@ import {
   defineCricketApp,
   startCricketApp,
   createCricketRuntime,
+  defineApiVersions,
   defineEndpoint,
   deprecateEndpoint,
   respond,

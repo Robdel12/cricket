@@ -340,9 +340,13 @@ describe('Cricket CLI', () => {
     assert.match(agents, /cricket_jobs/);
     assert.match(agents, /\*\.test\.js/);
     assert.match(agents, /worker boundary/);
+    assert.match(agents, /API versioning is optional and endpoint-owned/);
+    assert.match(agents, /defineApiVersions/);
     assert.match(cricketSkill, /name: cricket/);
     assert.match(cricketSkill, /Domain Files/);
     assert.match(cricketSkill, /normalizers/);
+    assert.match(cricketSkill, /API versioning is endpoint-owned and opt-in/);
+    assert.match(cricketSkill, /defineApiVersions/);
     assert.match(cricketSkill, /\*\.jobs\.js/);
     assert.match(cricketSkill, /OpenAPI/);
     assert.match(cricketSkill, /cricket-jobs/);
@@ -367,6 +371,7 @@ describe('Cricket CLI', () => {
     assert.match(observabilitySkill, /lifecycle/);
     assert.match(observabilitySkill, /trace\.span/);
     assert.match(observabilitySkill, /no-op startup trace/);
+    assert.match(observabilitySkill, /Endpoint API version families/);
     assert.match(testingSkill, /name: cricket-testing/);
     assert.match(testingSkill, /createTestRuntime/);
     assert.match(testingSkill, /worker boundary/);
@@ -713,6 +718,81 @@ describe('Cricket CLI', () => {
     assert.equal(document.components.schemas.BuildPublic.properties.user_id, undefined);
     assert.equal(document.components.schemas.BuildPublic.properties.id.cricket, undefined);
     assert.equal(document.components.schemas.BuildPublic.properties.id.sensitive, undefined);
+  });
+
+  it('writes OpenAPI docs for an explicit endpoint API version', async () => {
+    let root = await tempRoot();
+    let appPath = path.join(root, 'app.js');
+    let out = path.join(root, 'openapi.json');
+    let cricketUrl = pathToFileURL(path.resolve('src/index.js')).href;
+
+    await fs.writeFile(appPath, `
+      import {
+        defineApiVersions,
+        defineCricketApp,
+        defineEndpoint,
+        defineSerializer,
+        z
+      } from '${cricketUrl}';
+
+      let CurrentResponse = z.object({ id: z.string() });
+      let LegacyResponse = z.object({ session_id: z.string() });
+      let serializeLegacy = defineSerializer({
+        name: 'session.output.legacy',
+        output: LegacyResponse,
+        serialize(value) {
+          return { session_id: value.id };
+        }
+      });
+      let versions = defineApiVersions({
+        name: 'tornadic.ios',
+        header: 'Tornadic-Version',
+        current: '2026-09-01',
+        default: '2025-11-15',
+        versions: {
+          '2025-11-15': {},
+          '2026-09-01': {}
+        }
+      });
+      let endpoint = defineEndpoint({
+        method: 'post',
+        path: '/sessions',
+        apiVersions: versions({
+          '2025-11-15': {
+            response: serializeLegacy
+          }
+        }),
+        response: CurrentResponse,
+        handler() {
+          return { id: 'session_123' };
+        }
+      });
+
+      export let app = defineCricketApp({
+        architecture: 'manual',
+        endpoints: [endpoint]
+      });
+    `);
+
+    await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'docs',
+      appPath,
+      '--api-version',
+      'tornadic.ios=2026-09-01',
+      '--out',
+      out
+    ]);
+
+    let document = JSON.parse(await fs.readFile(out, 'utf8'));
+    let operation = document.paths['/sessions'].post;
+    let header = operation.parameters.find(parameter =>
+      parameter.name === 'Tornadic-Version'
+    );
+
+    assert.ok(operation.responses[201].content['application/json'].schema.properties.id);
+    assert.equal(header.required, true);
+    assert.deepEqual(header.schema.enum, ['2026-09-01']);
   });
 
   it('traces one request from Cricket JSON logs on stdin', async () => {

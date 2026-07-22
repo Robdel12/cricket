@@ -1,4 +1,11 @@
 import { defaultStatusForMethod } from './endpoint.js';
+import {
+  collectApiVersionFamilies,
+  endpointApiVersionFamily,
+  endpointVersionContract,
+  selectedEndpointApiVersion
+} from './api-version.js';
+import { isPlainObject } from './immutable.js';
 import { operationIdFor } from './route-identity.js';
 import {
   isZodSchema,
@@ -116,6 +123,81 @@ function responsesForEndpoint(endpoint) {
   };
 }
 
+function responseWithSchema(response, schema) {
+  if (!isPlainObject(response) || response.type || response.properties)
+    return schema;
+
+  if (Object.hasOwn(response, 'body')) {
+    return {
+      ...response,
+      body: schema
+    };
+  }
+
+  return {
+    ...response,
+    schema
+  };
+}
+
+function selectedApiVersion(endpoint, selections) {
+  let family = endpointApiVersionFamily(endpoint);
+
+  if (!family)
+    return undefined;
+
+  let version = selectedEndpointApiVersion(endpoint, selections);
+
+  return {
+    family,
+    version,
+    contract: endpointVersionContract(endpoint, version)
+  };
+}
+
+function endpointForApiVersion(endpoint, selection) {
+  let contract = selection?.contract;
+
+  if (!contract)
+    return endpoint;
+
+  let responses = contract.responses ? {
+    ...endpoint.responses,
+    ...Object.fromEntries(Object.entries(contract.responses).map(([status, serializer]) => [
+      status,
+      responseWithSchema(endpoint.responses?.[status], serializer.output)
+    ]))
+  } : endpoint.responses;
+
+  return {
+    ...endpoint,
+    body: contract.body?.source ?? endpoint.body,
+    response: contract.response
+      ? responseWithSchema(endpoint.response, contract.response.output)
+      : endpoint.response,
+    responses
+  };
+}
+
+function apiVersionParameter(selection) {
+  if (!selection)
+    return undefined;
+
+  let { family, version } = selection;
+
+  return {
+    name: family.header,
+    in: 'header',
+    required: version !== family.default,
+    schema: {
+      type: 'string',
+      enum: [version],
+      ...(version === family.default ? { default: family.default } : {})
+    },
+    'x-cricket-api-version-family': family.name
+  };
+}
+
 function schemaEntriesForModel(model) {
   let entries = [
     [`${model.name}Public`, model.public]
@@ -140,12 +222,15 @@ function componentSchemas(models) {
   return schemas;
 }
 
-function endpointOperation(endpoint) {
+function endpointOperation(endpoint, apiVersions) {
+  let selection = selectedApiVersion(endpoint, apiVersions);
+  let projectedEndpoint = endpointForApiVersion(endpoint, selection);
   let parameters = [
-    ...parametersFromSchema('path', endpoint.params),
-    ...parametersFromSchema('query', endpoint.query)
-  ];
-  let requestBody = requestBodyFromSchema(endpoint.body);
+    ...parametersFromSchema('path', projectedEndpoint.params),
+    ...parametersFromSchema('query', projectedEndpoint.query),
+    apiVersionParameter(selection)
+  ].filter(Boolean);
+  let requestBody = requestBodyFromSchema(projectedEndpoint.body);
   let deprecation = endpoint.deprecation;
 
   return {
@@ -159,7 +244,7 @@ function endpointOperation(endpoint) {
     operationId: operationIdFor(endpoint),
     ...(parameters.length ? { parameters } : {}),
     ...(requestBody ? { requestBody } : {}),
-    responses: responsesForEndpoint(endpoint)
+    responses: responsesForEndpoint(projectedEndpoint)
   };
 }
 
@@ -178,6 +263,7 @@ function endpointOperation(endpoint) {
  * @param {string} [options.pathPrefix] - Optional prefix applied before endpoint paths are emitted.
  * @param {Array<object>} [options.endpoints=[]] - Endpoint contracts to translate into path operations.
  * @param {Array<object>} [options.models=[]] - Model contracts used to generate component schemas.
+ * @param {Record<string, string>} [options.apiVersions={}] - Exact API version selected for each endpoint family.
  * @returns {object} A plain OpenAPI 3.1 document object with `info`, `paths`, and `components`.
  */
 export function generateOpenApi({
@@ -187,8 +273,17 @@ export function generateOpenApi({
   servers = [],
   pathPrefix,
   endpoints = [],
-  models = []
+  models = [],
+  apiVersions = {}
 } = {}) {
+  let families = collectApiVersionFamilies(endpoints);
+  let familyNames = new Set(families.map(family => family.name));
+
+  for (let familyName of Object.keys(apiVersions)) {
+    if (!familyNames.has(familyName))
+      throw new Error(`Unknown API version family ${familyName}`);
+  }
+
   let paths = {};
   let schemas = componentSchemas(models);
   let components = {
@@ -198,7 +293,7 @@ export function generateOpenApi({
   for (let endpoint of endpoints) {
     let openApiPath = toOpenApiPath(withPathPrefix(endpoint.path, pathPrefix));
     paths[openApiPath] ??= {};
-    paths[openApiPath][endpoint.method.toLowerCase()] = endpointOperation(endpoint);
+    paths[openApiPath][endpoint.method.toLowerCase()] = endpointOperation(endpoint, apiVersions);
   }
 
   return {
