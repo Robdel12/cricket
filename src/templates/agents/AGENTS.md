@@ -79,6 +79,13 @@ status matters, then compose `withHeaders`, `withCookies`, or
 `withResponseCleanup` when needed. Never use a `{ status, body }`-shaped object
 as an implicit HTTP response.
 
+API versioning is optional and endpoint-owned. Share one immutable
+`defineApiVersions` family across participating routes and declare historical
+body normalizers and response serializers through `apiVersions`. Keep the
+current endpoint schemas as the base contract. Do not register versions on
+`defineCricketApp`, put versions on models, or branch services and handlers by
+client version. Endpoints without `apiVersions` ignore version headers.
+
 ## Jobs
 
 Use `defineJob` for asynchronous work that needs validated input, retry policy,

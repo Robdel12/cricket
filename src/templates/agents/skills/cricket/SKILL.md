@@ -59,6 +59,12 @@ Request validation errors may be descriptive to clients. Response, serializer,
 and normalizer contract details belong in logs, `onError`, and test state rather
 than public HTTP responses.
 
+API versioning is endpoint-owned and opt-in. Reuse one `defineApiVersions`
+family across participating routes, keep current schemas as the base endpoint
+contract, and place only historical body normalizers and response serializers
+inside `apiVersions`. Do not put API versions on models or branch services and
+handlers by SDK version. Routes without `apiVersions` ignore version headers.
+
 ## Change Flow
 
 1. Update the schema at the boundary that changed.
