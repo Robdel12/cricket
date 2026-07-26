@@ -75,11 +75,13 @@ describe('Cricket jobs: ledger', () => {
     };
 
     try {
-      await ledger.started(envelope, {
-        attempt: 1,
-        jobRunId: 'jobrun_crossed_ledger_writes'
-      });
-      await ledger.queued(envelope);
+      await Promise.all([
+        ledger.started(envelope, {
+          attempt: 1,
+          jobRunId: 'jobrun_crossed_ledger_writes'
+        }),
+        ledger.queued(envelope)
+      ]);
 
       let row = await db('cricket_jobs').where({ id: envelope.id }).first();
       assert.equal(row.status, 'active');
@@ -165,19 +167,10 @@ describe('Cricket jobs: ledger', () => {
   it('keeps producer enqueue best-effort when the ledger write fails', async () => {
     let job = reportJob();
     let warnings = [];
-    let db = () => ({
-      insert() {
-        return {
-          onConflict() {
-            return {
-              async ignore() {
-                throw new Error('missing cricket_jobs table');
-              }
-            };
-          }
-        };
-      }
+    let database = await createLedgerDatabase({
+      withLedger: false
     });
+    let db = knex(database);
     let producer = await createCricketJobs({
       jobs: [job],
       ledger: {
@@ -209,6 +202,7 @@ describe('Cricket jobs: ledger', () => {
       assert.ok(warnings.some(warning => warning.event === 'job.ledger_failed'));
     } finally {
       await producer.cleanup();
+      await db.destroy();
     }
   });
 
