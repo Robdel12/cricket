@@ -635,7 +635,8 @@ export async function down(db) {
 ```
 
 The ledger is execution history for debugging and operators. It is not product
-state.
+state. Producer enqueue and worker lifecycle writes are monotonic and race-safe,
+so a fast claim cannot regress an active ledger row back to queued.
 
 Recovery is app-owned. Cricket renews an active claim's heartbeat while its
 `run` function is working and records normal logs, spans, progress, and driver
