@@ -15,13 +15,21 @@ let defaultMaxFields = 1000;
 
 function appendValue(object, name, value) {
   if (!Object.hasOwn(object, name)) {
-    object[name] = value;
+    Object.defineProperty(object, name, {
+      value,
+      enumerable: true,
+      configurable: true,
+      writable: true
+    });
     return;
   }
 
-  object[name] = Array.isArray(object[name])
-    ? [...object[name], value]
-    : [object[name], value];
+  Object.defineProperty(object, name, {
+    value: Array.isArray(object[name]) ? [...object[name], value] : [object[name], value],
+    enumerable: true,
+    configurable: true,
+    writable: true
+  });
 }
 
 function normalizeMultipartError(error) {
@@ -67,6 +75,11 @@ export async function parseMultipartBody(request, {
   }
 
   let directory = await mkdtemp(path.join(tempDir, 'cricket-upload-'));
+  if (request.aborted || request.destroyed) {
+    await rm(directory, { recursive: true, force: true });
+    throw badRequest('Request aborted');
+  }
+
   let body = {};
   let files = [];
   let fileWrites = [];
@@ -105,7 +118,7 @@ export async function parseMultipartBody(request, {
       if (failure || settled) return;
       failure = normalizeMultipartError(error);
       void rejectAfterCleanup();
-    }
+    };
 
     request.on('data', chunk => {
       if (settled) return;

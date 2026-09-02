@@ -632,6 +632,14 @@ function writeObservedResponse(req, res, response, {
   route,
   timing
 }) {
+  if (!req.complete && !req.destroyed) {
+    res.shouldKeepAlive = false;
+    res.setHeader('connection', 'close');
+    res.once('finish', () => {
+      if (!req.destroyed) req.destroy();
+    });
+  }
+
   let observer = observeResponse({
     logger,
     replay,

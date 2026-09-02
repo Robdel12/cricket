@@ -14,7 +14,7 @@ import {
   unauthenticated
 } from '../src/index.js';
 import { parseMultipartBody } from '../src/http/multipart.js';
-import { createHttpApp } from './fixtures/http.js';
+import { createHttpApp, rawHttpResponse } from './fixtures/http.js';
 
 describe('Cricket multipart requests', () => {
   it('parses repeated fields and files, then removes temporary files', async () => {
@@ -54,11 +54,13 @@ describe('Cricket multipart requests', () => {
       .post('/uploads')
       .field('tag', 'first')
       .field('tag', 'second')
+      .field('__proto__', 'plain field')
       .attach('screenshots', Buffer.from('image-bytes'), 'screen.png');
 
     assert.equal(response.status, 200);
     assert.deepEqual(response.body, {
       body: {
+        ['__proto__']: 'plain field',
         tag: ['first', 'second']
       },
       files: [{
@@ -164,6 +166,32 @@ describe('Cricket multipart requests', () => {
     assert.deepEqual(await readdir(tempDir), []);
   });
 
+  it('closes a request rejected before its body is read', async () => {
+    let requireToken = defineRule('requireToken', () => {
+      throw unauthenticated();
+    });
+    let endpoint = defineEndpoint({
+      method: 'post',
+      path: '/uploads',
+      beforeBodyRules: [requireToken],
+      multipart: {},
+      handler: () => ok({ uploaded: true })
+    });
+    let app = await createHttpApp({ endpoints: [endpoint] });
+
+    let response = await rawHttpResponse(app, [
+      'POST /uploads HTTP/1.1',
+      'Host: localhost',
+      'Content-Type: multipart/form-data; boundary=unused',
+      'Content-Length: 1000000',
+      '',
+      ''
+    ].join('\r\n'));
+
+    assert.match(response, /^HTTP\/1\.1 401/);
+    assert.match(response, /Connection: close/i);
+  });
+
   it('stops active file writes and cleans up when a request aborts', async () => {
     let tempDir = await mkdtemp(path.join(os.tmpdir(), 'cricket-test-'));
     let boundary = 'cricket-aborted-upload';
@@ -188,6 +216,26 @@ describe('Cricket multipart requests', () => {
     incoming.emit('aborted');
 
     await assert.rejects(parsed, { code: 'BAD_REQUEST' });
+    assert.deepEqual(await readdir(tempDir), []);
+  });
+
+  it('rejects aggregate overflow without waiting for the sender to finish', async () => {
+    let tempDir = await mkdtemp(path.join(os.tmpdir(), 'cricket-test-'));
+    let boundary = 'cricket-oversized-upload';
+    let incoming = new PassThrough();
+    incoming.headers = {
+      'content-type': `multipart/form-data; boundary=${boundary}`
+    };
+    incoming.complete = false;
+    let parsed = parseMultipartBody(incoming, {
+      maxBytes: 32,
+      tempDir
+    });
+
+    await once(incoming, 'resume');
+    incoming.write(Buffer.alloc(64, 'a'));
+
+    await assert.rejects(parsed, { code: 'PAYLOAD_TOO_LARGE' });
     assert.deepEqual(await readdir(tempDir), []);
   });
 });
