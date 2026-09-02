@@ -19,6 +19,7 @@ import { resolveLogger } from '../logger.js';
 import { normalizeObservability } from '../observability.js';
 import { assertKnownOptions } from '../options.js';
 import { createDatabaseConnection } from '../persistence/database.js';
+import { applyRules } from '../rule.js';
 import {
   createNoopTrace,
   createTrace
@@ -852,6 +853,13 @@ function createRuntimeHandler({
             })
           );
 
+          let contextAfterBeforeBodyRules = await timing.time('beforeBodyRulesMs', () =>
+            applyRules(match.endpoint.beforeBodyRules, {
+              ...requestContextForMatchedRequest.context,
+              request: requestContextForMatchedRequest.request
+            })
+          );
+
           writeContinue();
 
           let parsedRequest;
@@ -866,7 +874,7 @@ function createRuntimeHandler({
             );
             observedRequest = parsedRequest;
 
-            let response = await match.endpoint.handle(parsedRequest, requestContextForMatchedRequest.context, {
+            let response = await match.endpoint.handle(parsedRequest, contextAfterBeforeBodyRules, {
               timing
             });
 

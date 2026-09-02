@@ -48,10 +48,29 @@ export async function parseMultipartBody(request, {
   maxFileBytes = maxBytes,
   tempDir = os.tmpdir()
 } = {}) {
+  let parser;
+
+  try {
+    parser = Busboy({
+      headers: request.headers,
+      limits: {
+        fieldSize: maxFieldBytes,
+        fields: maxFields,
+        files: maxFiles,
+        parts: maxParts,
+        fileSize: maxFileBytes
+      }
+    });
+  } catch (error) {
+    drainRequest(request);
+    throw normalizeMultipartError(error);
+  }
+
   let directory = await mkdtemp(path.join(tempDir, 'cricket-upload-'));
   let body = {};
   let files = [];
   let fileWrites = [];
+  let fileStreams = new Set();
   let totalBytes = 0;
   let settled = false;
   let failure = null;
@@ -62,20 +81,18 @@ export async function parseMultipartBody(request, {
   };
 
   let result = await new Promise((resolve, reject) => {
-    let parser;
-
-    let rejectOnce = error => {
-      if (failure || settled) return;
-      failure = normalizeMultipartError(error);
-      drainRequest(request);
-    };
-
     let rejectAfterCleanup = async () => {
       if (!failure || settled) return;
       if (failureCleanupPromise) return await failureCleanupPromise;
 
+      settled = true;
+      request.unpipe(parser);
+      for (let stream of fileStreams)
+        stream.destroy(failure);
+      parser.destroy();
+      drainRequest(request);
+
       failureCleanupPromise = (async () => {
-        settled = true;
         await Promise.allSettled(fileWrites);
         await cleanup().catch(() => {});
         reject(failure);
@@ -84,20 +101,10 @@ export async function parseMultipartBody(request, {
       await failureCleanupPromise;
     };
 
-    try {
-      parser = Busboy({
-        headers: request.headers,
-        limits: {
-          fieldSize: maxFieldBytes,
-          fields: maxFields,
-          files: maxFiles,
-          parts: maxParts,
-          fileSize: maxFileBytes
-        }
-      });
-    } catch (error) {
-      rejectOnce(error);
-      return;
+    let rejectOnce = error => {
+      if (failure || settled) return;
+      failure = normalizeMultipartError(error);
+      void rejectAfterCleanup();
     }
 
     request.on('data', chunk => {
@@ -109,17 +116,14 @@ export async function parseMultipartBody(request, {
     });
     request.on('aborted', () => {
       rejectOnce(badRequest('Request aborted'));
-      rejectAfterCleanup();
     });
     request.on('close', () => {
       if (!request.complete) {
         rejectOnce(badRequest('Request closed before the body was complete'));
-        rejectAfterCleanup();
       }
     });
     request.on('error', error => {
       rejectOnce(error);
-      rejectAfterCleanup();
     });
 
     parser.on('field', (name, value, info) => {
@@ -134,9 +138,15 @@ export async function parseMultipartBody(request, {
     });
 
     parser.on('file', (fieldName, stream, info) => {
+      if (settled) {
+        stream.resume();
+        return;
+      }
+
       let filePath = path.join(directory, randomUUID());
       let size = 0;
       let limited = false;
+      fileStreams.add(stream);
 
       stream.on('data', chunk => {
         size += chunk.length;
@@ -166,6 +176,8 @@ export async function parseMultipartBody(request, {
           });
         } catch (error) {
           rejectOnce(error);
+        } finally {
+          fileStreams.delete(stream);
         }
       })();
 
@@ -183,7 +195,6 @@ export async function parseMultipartBody(request, {
     });
     parser.on('error', error => {
       rejectOnce(error);
-      rejectAfterCleanup();
     });
     parser.on('finish', async () => {
       try {

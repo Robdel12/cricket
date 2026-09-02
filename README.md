@@ -369,8 +369,9 @@ Endpoints that accept uploads can opt into bounded multipart parsing:
 let upload = defineEndpoint({
   method: 'POST',
   path: '/uploads',
-  maxBodyBytes: 50 * 1024 * 1024,
+  beforeBodyRules: [requireProjectToken],
   multipart: {
+    maxBytes: 50 * 1024 * 1024,
     maxFiles: 10,
     maxFileBytes: 50 * 1024 * 1024,
     maxFields: 50
@@ -394,6 +395,10 @@ Multipart fields are plain values; repeated fields become arrays. Files are stre
 files and exposed through `request.files` during the handler. Cricket removes those files after the
 endpoint returns, including when parsing or validation fails. Set `maxBodyBytes`, `maxFileBytes`,
 `maxFieldBytes`, `maxFiles`, and `maxFields` for the upload's actual limits.
+
+Use `beforeBodyRules` for authentication and other inexpensive checks that must pass before Cricket
+accepts an upload. These rules receive request headers, route parameters, and app context, but no
+parsed body. Their returned facts are available to the endpoint's remaining rules and handler.
 
 Use `ok(body)` for 200, `created(body)` for 201, and `respond(status, body)` for
 other statuses. Compose `withHeaders`, `withCookies`, and

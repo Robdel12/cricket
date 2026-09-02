@@ -378,6 +378,7 @@ export function assertAllowedHost(request, allowedHosts) {
 function maxBodyBytesFor(endpoint) {
   return endpoint?.maxBodyBytes
     ?? endpoint?.rawBody?.maxBytes
+    ?? endpoint?.multipart?.maxBytes
     ?? defaultMaxBodyBytes;
 }
 
@@ -586,8 +587,8 @@ export async function completeRequestBody(req, request, endpoint) {
 
     let multipartOptions = endpoint.multipart === true ? {} : endpoint.multipart;
     let parsed = await parseMultipartBody(req, {
-      maxBytes,
-      ...multipartOptions
+      ...multipartOptions,
+      maxBytes
     });
 
     return {

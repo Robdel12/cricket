@@ -41,6 +41,7 @@ let endpointOptionKeys = new Set([
   'query',
   'response',
   'responses',
+  'beforeBodyRules',
   'rules',
   'handler'
 ]);
@@ -256,6 +257,7 @@ export function defaultStatusForMethod(method) {
  * @param {import('zod').ZodTypeAny} [config.query]
  * @param {any} [config.response]
  * @param {Record<string | number, any>} [config.responses]
+ * @param {Array<Function>} [config.beforeBodyRules=[]] - Rules that run before request body parsing.
  * @param {Array<Function>} [config.rules=[]]
  * @param {(context: any) => any|Promise<any>} config.handler
  * @returns {{
@@ -274,6 +276,7 @@ export function defaultStatusForMethod(method) {
  *   query?: any,
  *   response?: any,
  *   responses?: Record<string | number, any>,
+ *   beforeBodyRules: Array<Function>,
  *   rules: Array<Function>,
  *   handle(request: any, context?: any): Promise<{
  *     status: number,
@@ -304,6 +307,7 @@ export function defineEndpoint(config) {
     query,
     response,
     responses,
+    beforeBodyRules = [],
     rules = [],
     handler
   } = config;
@@ -333,6 +337,7 @@ export function defineEndpoint(config) {
     query,
     response: frozenPlain(response),
     responses: frozenPlain(responses),
+    beforeBodyRules: Object.freeze([...beforeBodyRules]),
     rules: Object.freeze([...rules]),
 
     async handle(request, context = {}, {
