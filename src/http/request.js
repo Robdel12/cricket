@@ -2,6 +2,7 @@ import {
   badRequest,
   payloadTooLarge
 } from '../errors.js';
+import { parseMultipartBody } from './multipart.js';
 
 let defaultMaxBodyBytes = 10 * 1024 * 1024;
 let securityHeaderNames = [
@@ -565,21 +566,42 @@ export async function completeRequestBody(req, request, endpoint) {
   let maxBytes = maxBodyBytesFor(endpoint);
   assertContentLength(request, maxBytes);
 
-  let raw = await readRequestBody(req, {
-    maxBytes
-  });
-  let rawBody = endpoint?.rawBody
-    ? (endpoint.rawBody?.encoding === false ? raw : raw.toString(endpoint.rawBody?.encoding ?? 'utf8'))
-    : undefined;
+  let contentType = contentTypeFor(request);
 
   if (endpoint?.rawBody) {
+    let raw = await readRequestBody(req, {
+      maxBytes
+    });
     return {
       ...request,
-      rawBody
+      rawBody: endpoint.rawBody?.encoding === false
+        ? raw
+        : raw.toString(endpoint.rawBody?.encoding ?? 'utf8')
     };
   }
 
-  let contentType = contentTypeFor(request);
+  if (contentType === 'multipart/form-data') {
+    if (!endpoint?.multipart)
+      throw badRequest('Multipart request body is not supported by this endpoint');
+
+    let multipartOptions = endpoint.multipart === true ? {} : endpoint.multipart;
+    let parsed = await parseMultipartBody(req, {
+      maxBytes,
+      ...multipartOptions
+    });
+
+    return {
+      ...request,
+      body: parsed.body,
+      file: parsed.files[0],
+      files: parsed.files,
+      cleanup: parsed.cleanup
+    };
+  }
+
+  let raw = await readRequestBody(req, {
+    maxBytes
+  });
 
   if (isJsonContentType(contentType)) {
     return {

@@ -361,6 +361,40 @@ return withResponseCleanup(
 );
 ```
 
+### Multipart requests
+
+Endpoints that accept uploads can opt into bounded multipart parsing:
+
+```js
+let upload = defineEndpoint({
+  method: 'POST',
+  path: '/uploads',
+  maxBodyBytes: 50 * 1024 * 1024,
+  multipart: {
+    maxFiles: 10,
+    maxFileBytes: 50 * 1024 * 1024,
+    maxFields: 50
+  },
+  handler({ request }) {
+    return created({
+      fields: request.body,
+      files: request.files.map(file => ({
+        fieldName: file.fieldName,
+        originalName: file.originalName,
+        mimeType: file.mimeType,
+        path: file.path,
+        size: file.size
+      }))
+    });
+  }
+});
+```
+
+Multipart fields are plain values; repeated fields become arrays. Files are streamed to temporary
+files and exposed through `request.files` during the handler. Cricket removes those files after the
+endpoint returns, including when parsing or validation fails. Set `maxBodyBytes`, `maxFileBytes`,
+`maxFieldBytes`, `maxFiles`, and `maxFields` for the upload's actual limits.
+
 Use `ok(body)` for 200, `created(body)` for 201, and `respond(status, body)` for
 other statuses. Compose `withHeaders`, `withCookies`, and
 `withResponseCleanup` around an explicit response. Streams and buffers remain

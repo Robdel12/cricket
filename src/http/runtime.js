@@ -854,21 +854,26 @@ function createRuntimeHandler({
 
           writeContinue();
 
-          let parsedRequest = await timing.time(
-            'bodyMs',
-            () => completeRequestBody(
-              req,
-              requestContextForMatchedRequest.request,
-              match.endpoint
-            )
-          );
-          observedRequest = parsedRequest;
+          let parsedRequest;
+          try {
+            parsedRequest = await timing.time(
+              'bodyMs',
+              () => completeRequestBody(
+                req,
+                requestContextForMatchedRequest.request,
+                match.endpoint
+              )
+            );
+            observedRequest = parsedRequest;
 
-          let response = await match.endpoint.handle(parsedRequest, requestContextForMatchedRequest.context, {
-            timing
-          });
+            let response = await match.endpoint.handle(parsedRequest, requestContextForMatchedRequest.context, {
+              timing
+            });
 
-          return applyDeprecationHeaders(response, match.endpoint.deprecation);
+            return applyDeprecationHeaders(response, match.endpoint.deprecation);
+          } finally {
+            await parsedRequest?.cleanup?.();
+          }
         }
 
         let allowedMethods = await timing.time('routeMatchMs', () =>

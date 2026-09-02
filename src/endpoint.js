@@ -34,6 +34,7 @@ let endpointOptionKeys = new Set([
   'operationId',
   'traceName',
   'maxBodyBytes',
+  'multipart',
   'rawBody',
   'body',
   'params',
@@ -248,6 +249,7 @@ export function defaultStatusForMethod(method) {
  * @param {string} [config.operationId]
  * @param {string} [config.traceName] - Optional request trace span name for the handler.
  * @param {number} [config.maxBodyBytes] - Maximum buffered request body size for this endpoint.
+ * @param {boolean|object} [config.multipart=false] - Parse multipart form data for this endpoint.
  * @param {boolean|object} [config.rawBody=false] - Endpoint option for requests that need the unparsed request body.
  * @param {import('zod').ZodTypeAny} [config.body]
  * @param {import('zod').ZodTypeAny} [config.params]
@@ -265,6 +267,7 @@ export function defaultStatusForMethod(method) {
  *   operationId?: string,
  *   traceName?: string,
  *   maxBodyBytes?: number,
+ *   multipart?: boolean|object,
  *   rawBody?: boolean|object,
  *   body?: any,
  *   params?: any,
@@ -294,6 +297,7 @@ export function defineEndpoint(config) {
     operationId,
     traceName,
     maxBodyBytes,
+    multipart = false,
     rawBody = false,
     body,
     params,
@@ -322,6 +326,7 @@ export function defineEndpoint(config) {
     operationId,
     traceName,
     maxBodyBytes,
+    multipart: frozenPlain(multipart),
     rawBody: frozenPlain(rawBody),
     body,
     params,
