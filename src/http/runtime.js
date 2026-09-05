@@ -19,6 +19,7 @@ import { resolveLogger } from '../logger.js';
 import { normalizeObservability } from '../observability.js';
 import { assertKnownOptions } from '../options.js';
 import { createDatabaseConnection } from '../persistence/database.js';
+import { applyRules } from '../rule.js';
 import {
   createNoopTrace,
   createTrace
@@ -631,6 +632,14 @@ function writeObservedResponse(req, res, response, {
   route,
   timing
 }) {
+  if (!req.complete && !req.destroyed) {
+    res.shouldKeepAlive = false;
+    res.setHeader('connection', 'close');
+    res.once('finish', () => {
+      if (!req.destroyed) req.destroy();
+    });
+  }
+
   let observer = observeResponse({
     logger,
     replay,
@@ -852,23 +861,35 @@ function createRuntimeHandler({
             })
           );
 
+          let contextAfterBeforeBodyRules = await timing.time('beforeBodyRulesMs', () =>
+            applyRules(match.endpoint.beforeBodyRules, {
+              ...requestContextForMatchedRequest.context,
+              request: requestContextForMatchedRequest.request
+            })
+          );
+
           writeContinue();
 
-          let parsedRequest = await timing.time(
-            'bodyMs',
-            () => completeRequestBody(
-              req,
-              requestContextForMatchedRequest.request,
-              match.endpoint
-            )
-          );
-          observedRequest = parsedRequest;
+          let parsedRequest;
+          try {
+            parsedRequest = await timing.time(
+              'bodyMs',
+              () => completeRequestBody(
+                req,
+                requestContextForMatchedRequest.request,
+                match.endpoint
+              )
+            );
+            observedRequest = parsedRequest;
 
-          let response = await match.endpoint.handle(parsedRequest, requestContextForMatchedRequest.context, {
-            timing
-          });
+            let response = await match.endpoint.handle(parsedRequest, contextAfterBeforeBodyRules, {
+              timing
+            });
 
-          return applyDeprecationHeaders(response, match.endpoint.deprecation);
+            return applyDeprecationHeaders(response, match.endpoint.deprecation);
+          } finally {
+            await parsedRequest?.cleanup?.();
+          }
         }
 
         let allowedMethods = await timing.time('routeMatchMs', () =>
