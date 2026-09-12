@@ -34,6 +34,14 @@ let unrepresentableTypes = new Set([
   'transform', 'map', 'set', 'date'
 ]);
 
+/**
+ * Configure Zod conversion for request input or response output.
+ * Mark unsupported types so metadata overrides can replace them before
+ * toJsonSchema checks the finished schema. The override edits Zod's output.
+ *
+ * @param {'input'|'output'} io
+ * @returns {object} Zod JSON Schema conversion options.
+ */
 function cricketJsonSchemaOptions(io) {
   return {
     io,
@@ -73,8 +81,15 @@ function cricketJsonSchemaOptions(io) {
   };
 }
 
-// Visit schema positions only: a property named `examples` is still a schema,
-// while example data is never interpreted as schema metadata.
+/**
+ * Visit schema objects through properties, definitions, and nested schema keywords.
+ * Skip example/default values and boolean schemas. A property named `examples`
+ * still gets visited because its value is a schema, not example data.
+ *
+ * @param {object|boolean|undefined} schema
+ * @param {(schema: object) => void} visit - Called before visiting child schemas.
+ * @returns {void}
+ */
 export function visitJsonSchema(schema, visit) {
   if (!schema || typeof schema !== 'object') return;
   visit(schema);
@@ -109,8 +124,6 @@ export function toJsonSchema(schema, { io = 'input' } = {}) {
   if (!isZodSchema(schema)) return schema;
 
   let { $schema, ...result } = z.toJSONSchema(schema, cricketJsonSchemaOptions(io));
-  // Zod visits inner types before their metadata overrides. Check the finished
-  // schema so an explicit override can replace an otherwise unsupported type.
   assertRepresentable(result, io);
   return result;
 }

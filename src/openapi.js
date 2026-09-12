@@ -69,6 +69,15 @@ function parametersFromSchema(source, schema) {
   }));
 }
 
+/**
+ * Merge form fields and file parts into one documentation schema.
+ * Reject overlapping names and unsupported file-schema keys. This builds a new
+ * schema; it doesn't change the inputs or validate uploaded files.
+ *
+ * @param {object|undefined} schema - Converted form-field schema.
+ * @param {object} fileSchema - Zod or JSON Schema describing the file parts.
+ * @returns {object} Combined multipart object schema.
+ */
 function multipartBodySchema(schema, fileSchema) {
   if (schema && schema.type !== 'object')
     throw new Error('Multipart body schema must describe an object');
@@ -347,6 +356,14 @@ function validateOAuthFlows(name, flows) {
   }
 }
 
+/**
+ * Check local schema references against the finished OpenAPI document.
+ * Local references must be document JSON pointers; missing targets throw.
+ * External references are left alone and never fetched.
+ *
+ * @param {object} document - Generated OpenAPI document.
+ * @returns {void}
+ */
 function validateSchemaReferences(document) {
   let check = schema => visitJsonSchema(schema, node => {
     if (typeof node.$ref !== 'string' || !node.$ref.startsWith('#')) return;
