@@ -16,7 +16,7 @@ import { defineManualTestApp } from '../test-support/app.js';
 let execFileAsync = promisify(execFile);
 
 describe('Public HTTP contracts and generated OpenAPI', () => {
-  it('describes credentials and validated headers while rules enforce access to real rows', async () => {
+  it('describes credentials and validated headers while rules enforce access to real rows', async t => {
     let schemes = { bearer: { type: 'http', scheme: 'bearer', description: 'Project credential' } };
     let auth = [{ bearer: [] }];
     let requireProject = defineRule('project.access', async ({ request: incoming, db }) => {
@@ -62,19 +62,19 @@ describe('Public HTTP contracts and generated OpenAPI', () => {
     assert.ok(Object.isFrozen(docs.components.securitySchemes.bearer));
     assert.equal(Object.isFrozen(schemes), false);
     let runtime = await createTestRuntime(app);
-    try {
-      let accepted = await runtime.api.get('/project', { headers: { Authorization: 'Bearer test-project', 'X-Client-Revision': '4' } });
-      assert.equal(accepted.status, 200);
-      assert.deepEqual(accepted.body, { name: 'Demo', revision: 4 });
-      assert.equal(accepted.headers['x-ratelimit-remaining'], operation.responses[200].headers['X-RateLimit-Remaining'].example);
-      let denied = await runtime.api.get('/project', { headers: { 'X-Client-Revision': '4' } });
-      assert.equal(denied.status, 401);
-      let malformed = await runtime.api.get('/project', { headers: { Authorization: 'Bearer test-project', 'X-Client-Revision': 'four' } });
-      assert.equal(malformed.status, 422);
-    } finally { await runtime.cleanup(); }
+    t.after(() => runtime.cleanup());
+    let accepted = await runtime.api.get('/project', { headers: { Authorization: 'Bearer test-project', 'X-Client-Revision': '4' } });
+    assert.equal(accepted.status, 200);
+    assert.deepEqual(accepted.body, { name: 'Demo', revision: 4 });
+    assert.equal(accepted.headers['x-ratelimit-remaining'], '9');
+    assert.equal(operation.responses[200].headers['X-RateLimit-Remaining'].example, '9');
+    let denied = await runtime.api.get('/project', { headers: { 'X-Client-Revision': '4' } });
+    assert.equal(denied.status, 401);
+    let malformed = await runtime.api.get('/project', { headers: { Authorization: 'Bearer test-project', 'X-Client-Revision': 'four' } });
+    assert.equal(malformed.status, 422);
   });
 
-  it('uses input schemas for JSON requests and serialized output schemas for responses', async () => {
+  it('uses input schemas for JSON requests and serialized output schemas for responses', async t => {
     let endpoint = defineEndpoint({
       method: 'post', path: '/measurements',
       body: z.object({ value: z.string().regex(/^\d+$/).transform(Number).pipe(z.number()) }),
@@ -90,14 +90,13 @@ describe('Public HTTP contracts and generated OpenAPI', () => {
     assert.equal(output.properties.at.format, 'date-time');
     assert.equal(output.additionalProperties, false);
     let runtime = await createTestRuntime(defineManualTestApp({ endpoints: [endpoint] }));
-    try {
-      let result = await runtime.api.post('/measurements', { body: docs.requestBody.content['application/json'].example });
-      assert.deepEqual(result.body, { value: 12, cricket: 'a real field', at: '2026-01-01T00:00:00.000Z' });
-      assert.equal((await runtime.api.post('/measurements', { body: { value: 'nope' } })).status, 422);
-    } finally { await runtime.cleanup(); }
+    t.after(() => runtime.cleanup());
+    let result = await runtime.api.post('/measurements', { body: docs.requestBody.content['application/json'].example });
+    assert.deepEqual(result.body, { value: 12, cricket: 'a real field', at: '2026-01-01T00:00:00.000Z' });
+    assert.equal((await runtime.api.post('/measurements', { body: { value: 'nope' } })).status, 422);
   });
 
-  it('describes multipart file parts, downloads and bodyless responses without claiming JSON', async () => {
+  it('describes multipart file parts, downloads and bodyless responses without claiming JSON', async t => {
     let bytes = Buffer.from('actual file bytes');
     let binary = z.instanceof(Buffer).meta({ jsonSchema: { type: 'string', format: 'binary' } });
     let upload = defineEndpoint({
@@ -122,16 +121,15 @@ describe('Public HTTP contracts and generated OpenAPI', () => {
     assert.equal(docs.paths['/files/latest'].get.responses[200].content['application/octet-stream'].schema.format, 'binary');
     assert.equal(docs.paths['/files/latest'].delete.responses[204].content, undefined);
     let runtime = await createTestRuntime(defineManualTestApp({ endpoints }));
-    try {
-      let uploaded = await request(runtime.runtime.app).post('/files').field('label', 'Example').attach('asset', bytes, 'sample.bin');
-      assert.equal(uploaded.status, 201);
-      assert.deepEqual(uploaded.body, { label: 'Example', content: bytes.toString() });
-      let downloaded = await request(runtime.runtime.app).get('/files/latest');
-      assert.deepEqual(downloaded.body, bytes);
-      assert.equal(downloaded.headers['content-type'], 'application/octet-stream');
-      assert.equal((await request(runtime.runtime.app).delete('/files/latest')).text, '');
-      assert.equal((await request(runtime.runtime.app).post('/files').field('label', 'Example').attach('asset', Buffer.alloc(129), 'large.bin')).status, 413);
-    } finally { await runtime.cleanup(); }
+    t.after(() => runtime.cleanup());
+    let uploaded = await request(runtime.runtime.app).post('/files').field('label', 'Example').attach('asset', bytes, 'sample.bin');
+    assert.equal(uploaded.status, 201);
+    assert.deepEqual(uploaded.body, { label: 'Example', content: bytes.toString() });
+    let downloaded = await request(runtime.runtime.app).get('/files/latest');
+    assert.deepEqual(downloaded.body, bytes);
+    assert.equal(downloaded.headers['content-type'], 'application/octet-stream');
+    assert.equal((await request(runtime.runtime.app).delete('/files/latest')).text, '');
+    assert.equal((await request(runtime.runtime.app).post('/files').field('label', 'Example').attach('asset', Buffer.alloc(129), 'large.bin')).status, 413);
   });
 
   it('fails ambiguous or undescribable contracts rather than silently weakening documentation', () => {
@@ -189,7 +187,7 @@ describe('Public HTTP contracts and generated OpenAPI', () => {
     assert.throws(() => generateOpenApi({ authMethods: { oauth: { type: 'oauth2', flows: { authorizationCode: { scopes: {} } } } } }), /authorizationUrl/);
   });
 
-  it('describes raw text requests and serves their declared response through HTTP', async () => {
+  it('describes raw text requests and serves their declared response through HTTP', async t => {
     let endpoint = defineEndpoint({
       method: 'post', path: '/text', rawBody: true,
       requestBody: { contentType: 'text/plain', schema: { type: 'string' }, example: 'a message' },
@@ -198,13 +196,12 @@ describe('Public HTTP contracts and generated OpenAPI', () => {
     });
     let docs = generateOpenApi({ endpoints: [endpoint] }).paths['/text'].post;
     let runtime = await createTestRuntime(defineManualTestApp({ endpoints: [endpoint] }));
-    try {
-      let result = await request(runtime.runtime.app).post('/text').type('text').send(docs.requestBody.content['text/plain'].example);
-      assert.equal(result.status, 201);
-      assert.equal(result.text, 'a message');
-      assert.match(result.headers['content-type'], /^text\/plain/);
-      assert.equal(docs.responses[201].content['text/plain'].schema.type, 'string');
-    } finally { await runtime.cleanup(); }
+    t.after(() => runtime.cleanup());
+    let result = await request(runtime.runtime.app).post('/text').type('text').send(docs.requestBody.content['text/plain'].example);
+    assert.equal(result.status, 201);
+    assert.equal(result.text, 'a message');
+    assert.match(result.headers['content-type'], /^text\/plain/);
+    assert.equal(docs.responses[201].content['text/plain'].schema.type, 'string');
   });
 
   it('keeps public schema output reproducible through the CLI without starting application services', async () => {

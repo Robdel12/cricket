@@ -49,7 +49,7 @@ function schemaProperties(schema, source) {
   }));
 }
 
-function jsonContent(schema, contentType = JSON_CONTENT_TYPE, example) {
+function contentForSchema(schema, contentType = JSON_CONTENT_TYPE, example) {
   if (typeof contentType !== 'string' || !/^[\w!#$&^_.+-]+\/[\w!#$&^_.+-]+$/.test(contentType))
     throw new Error('Content type must be a media type without parameters');
   return {
@@ -69,6 +69,26 @@ function parametersFromSchema(source, schema) {
   }));
 }
 
+function multipartBodySchema(schema, fileSchema) {
+  if (schema && schema.type !== 'object')
+    throw new Error('Multipart body schema must describe an object');
+  let files = toJsonSchema(fileSchema);
+  if (!files || files.type !== 'object')
+    throw new Error('requestBody.files must describe an object of file parts');
+  for (let key of Object.keys(files)) {
+    if (!['type', 'properties', 'required'].includes(key))
+      throw new Error(`requestBody.files only supports type, properties, and required; received ${key}`);
+  }
+  let overlap = Object.keys(files.properties ?? {}).find(name => Object.hasOwn(schema?.properties ?? {}, name));
+  if (overlap) throw new Error(`Multipart file and body field overlap: ${overlap}`);
+  return {
+    ...schema,
+    type: 'object',
+    properties: { ...schema?.properties, ...files.properties },
+    required: [...(schema?.required ?? []), ...(files.required ?? [])]
+  };
+}
+
 function requestBodyForEndpoint(endpoint) {
   let metadata = endpoint.requestBody ?? {};
   let schema = toJsonSchema(metadata.schema ?? endpoint.body);
@@ -76,23 +96,7 @@ function requestBodyForEndpoint(endpoint) {
   if (metadata.files) {
     if (!endpoint.multipart)
       throw new Error('requestBody.files requires multipart');
-    if (schema && schema.type !== 'object')
-      throw new Error('Multipart body schema must describe an object');
-    let files = toJsonSchema(metadata.files);
-    if (!files || files.type !== 'object')
-      throw new Error('requestBody.files must describe an object of file parts');
-    for (let key of Object.keys(files)) {
-      if (!['type', 'properties', 'required'].includes(key))
-        throw new Error(`requestBody.files only supports type, properties, and required; received ${key}`);
-    }
-    let overlap = Object.keys(files.properties ?? {}).find(name => Object.hasOwn(schema?.properties ?? {}, name));
-    if (overlap) throw new Error(`Multipart file and body field overlap: ${overlap}`);
-    schema = {
-      ...schema,
-      type: 'object',
-      properties: { ...schema?.properties, ...files.properties },
-      required: [...(schema?.required ?? []), ...(files.required ?? [])]
-    };
+    schema = multipartBodySchema(schema, metadata.files);
   }
   if (!schema) {
     if (endpoint.requestBody)
@@ -106,7 +110,7 @@ function requestBodyForEndpoint(endpoint) {
   return {
     required: metadata.required ?? (endpoint.body?.isOptional ? !endpoint.body.isOptional() : true),
     ...(metadata.description ? { description: metadata.description } : {}),
-    content: jsonContent(schema, contentType, metadata.example)
+    content: contentForSchema(schema, contentType, metadata.example)
   };
 }
 
@@ -141,7 +145,7 @@ function normalizeResponse(status, response, method) {
   return {
     description: descriptor.description ?? (noBody ? 'No content' : 'Success'),
     ...(descriptor.headers ? { headers: responseHeaders(descriptor.headers) } : {}),
-    ...(schema ? { content: jsonContent(schema, descriptor.contentType, descriptor.example) } : {})
+    ...(schema ? { content: contentForSchema(schema, descriptor.contentType, descriptor.example) } : {})
   };
 }
 
@@ -175,17 +179,8 @@ function responseWithSchema(response, schema) {
     return schema;
 
   let { example, ...metadata } = response;
-  if (Object.hasOwn(response, 'body')) {
-    return {
-      ...metadata,
-      body: schema
-    };
-  }
-
-  return {
-    ...metadata,
-    schema
-  };
+  let key = Object.hasOwn(response, 'body') ? 'body' : 'schema';
+  return { ...metadata, [key]: schema };
 }
 
 function selectedApiVersion(endpoint, selections) {
@@ -289,7 +284,8 @@ function endpointOperation(endpoint, apiVersions) {
     apiVersionParameter(selection)
   ].filter(Boolean);
   let headerNames = new Set();
-  for (let parameter of parameters.filter(value => value.in === 'header')) {
+  for (let parameter of parameters) {
+    if (parameter.in !== 'header') continue;
     let name = parameter.name.toLowerCase();
     if (headerNames.has(name)) throw new Error(`Duplicate header parameter ${name}`);
     if (['authorization', 'content-type', 'accept'].includes(name))

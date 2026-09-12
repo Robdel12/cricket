@@ -29,18 +29,6 @@ export function parseZod(schema, value, errorFactory) {
   return result.data;
 }
 
-/**
- * Strip generator-only metadata from generated output so OpenAPI does not leak
- * Zod dialect markers or Cricket field visibility hints.
- *
- * @param {any} schema
- * @returns {any}
- */
-function withoutSchemaDialect(schema) {
-  let { $schema, ...rest } = schema;
-  return rest;
-}
-
 let unrepresentableTypes = new Set([
   'bigint', 'symbol', 'undefined', 'void', 'nan', 'custom', 'function',
   'transform', 'map', 'set', 'date'
@@ -72,9 +60,13 @@ function cricketJsonSchemaOptions(io) {
         jsonSchema['x-cricket-unrepresentable'] = `${definition.type} coercion`;
         return;
       }
-      if ((definition.type === 'literal' && definition.values.some(value => ['bigint', 'undefined', 'symbol'].includes(typeof value))) ||
-          unrepresentableTypes.has(definition.type) ||
-          (io === 'input' && definition.type === 'pipe' && definition.in._zod.def.type === 'transform')) {
+      let unsupportedLiteral = definition.type === 'literal' &&
+        definition.values.some(value =>
+          ['bigint', 'undefined', 'symbol'].includes(typeof value)
+        );
+      let preprocess = io === 'input' && definition.type === 'pipe' &&
+        definition.in._zod.def.type === 'transform';
+      if (unsupportedLiteral || unrepresentableTypes.has(definition.type) || preprocess) {
         jsonSchema['x-cricket-unrepresentable'] = definition.type;
       }
     }
@@ -114,11 +106,11 @@ function assertRepresentable(schema, io) {
 export function toJsonSchema(schema, { io = 'input' } = {}) {
   if (!schema) return undefined;
 
-  if (isZodSchema(schema)) {
-    let result = withoutSchemaDialect(z.toJSONSchema(schema, cricketJsonSchemaOptions(io)));
-    assertRepresentable(result, io);
-    return result;
-  }
+  if (!isZodSchema(schema)) return schema;
 
-  return schema;
+  let { $schema, ...result } = z.toJSONSchema(schema, cricketJsonSchemaOptions(io));
+  // Zod visits inner types before their metadata overrides. Check the finished
+  // schema so an explicit override can replace an otherwise unsupported type.
+  assertRepresentable(result, io);
+  return result;
 }
