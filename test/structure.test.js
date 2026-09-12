@@ -344,6 +344,12 @@ describe('Cricket CLI', () => {
     assert.match(agents, /defineApiVersions/);
     assert.match(agents, /Historical serializers receive the parsed current/);
     assert.match(agents, /Sunset dates only announce policy/);
+    for (let guidance of [agents, cricketSkill]) {
+      assert.match(guidance, /securitySchemes/);
+      assert.match(guidance, /validated `input.headers`/);
+      assert.match(guidance, /components exclude views containing private fields/);
+    }
+    assert.match(testingSkill, /compare generated OpenAPI with actual HTTP/);
     assert.match(cricketSkill, /name: cricket/);
     assert.match(cricketSkill, /Domain Files/);
     assert.match(cricketSkill, /normalizers/);

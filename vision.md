@@ -237,7 +237,15 @@ budgets, or bypass endpoint handling. Apps own setup and data policy.
 
 ## Inspect And Documentation
 
-OpenAPI is the public HTTP spec.
+OpenAPI is the public HTTP spec. Endpoint schemas describe validated input and
+serialized output. Security declarations and wire metadata compose into those
+contracts without installing authentication or changing transport behavior.
+Rules enforce access, services own data, and handlers return response headers.
+Unsupported schema conversions should fail with an actionable error instead
+of quietly weakening the public contract. Automatic model components must not
+include views containing private fields; deliberately declared endpoint output
+remains the app's responsibility to review. The generator returns a frozen
+snapshot without mutating the caller or starting application services.
 
 `cricket inspect` is the framework topology map: architecture, domains, models,
 sensitive fields, rules, services, jobs, routes, operation IDs, database

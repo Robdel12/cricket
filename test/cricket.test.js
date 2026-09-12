@@ -216,7 +216,7 @@ describe('Cricket core', () => {
     });
 
     assert.equal(docs.components.schemas.AccountPublic.properties.owner_id, undefined);
-    assert.equal(docs.components.schemas.AccountOwner.properties.owner_id.format, 'uuid');
+    assert.equal(docs.components.schemas.AccountOwner, undefined);
     assert.deepEqual(Account.fieldMetadata, {
       id: {
         visibility: 'public',

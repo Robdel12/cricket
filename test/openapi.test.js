@@ -309,18 +309,25 @@ describe('Cricket OpenAPI', () => {
         }
       }),
       body: CurrentInput,
+      security: [{ bearer: [] }],
+      headers: z.object({ 'x-client': z.string().optional() }),
+      requestBody: { description: 'Session creation input', example: { durationMinutes: 3 } },
       responses: {
         201: {
           description: 'Session created',
-          schema: CurrentResponse
+          headers: { 'Cache-Control': { schema: z.string() } },
+          schema: CurrentResponse,
+          example: { id: 's1', durationMinutes: 3 }
         }
       },
       handler() {
         return {};
       }
     });
-    let defaultDocs = generateOpenApi({ endpoints: [endpoint] });
+    let securitySchemes = { bearer: { type: 'http', scheme: 'bearer' } };
+    let defaultDocs = generateOpenApi({ endpoints: [endpoint], securitySchemes });
     let currentDocs = generateOpenApi({
+      securitySchemes,
       endpoints: [endpoint],
       apiVersions: {
         'tornadic.ios': '2026-09-01'
@@ -335,6 +342,13 @@ describe('Cricket OpenAPI', () => {
       parameter.name === 'Tornadic-Version'
     );
 
+    assert.deepEqual(defaultOperation.security, currentOperation.security);
+    assert.equal(defaultOperation.requestBody.content['application/json'].example, undefined);
+    assert.equal(defaultOperation.responses[201].content['application/json'].example, undefined);
+    assert.deepEqual(currentOperation.requestBody.content['application/json'].example, { durationMinutes: 3 });
+    assert.equal(defaultOperation.requestBody.description, 'Session creation input');
+    assert.deepEqual(defaultOperation.responses[201].headers, currentOperation.responses[201].headers);
+    assert.equal(defaultOperation.parameters.find(value => value.name === 'x-client').schema.type, 'string');
     assert.ok(defaultOperation.requestBody.content['application/json'].schema.properties.duration_seconds);
     assert.ok(defaultOperation.responses[201].content['application/json'].schema.properties.session_id);
     assert.equal(defaultOperation.responses[201].description, 'Session created');
@@ -351,12 +365,14 @@ describe('Cricket OpenAPI', () => {
 
     assert.throws(() => generateOpenApi({
       endpoints: [endpoint],
+      securitySchemes,
       apiVersions: {
         'tornadic.ios': 'unknown'
       }
     }), /Unknown tornadic\.ios API version/);
     assert.throws(() => generateOpenApi({
       endpoints: [endpoint],
+      securitySchemes,
       apiVersions: {
         typo: '2026-09-01'
       }

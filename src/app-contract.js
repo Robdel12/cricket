@@ -173,6 +173,7 @@ function appContractFromResolvedApp(resolvedApp) {
     name: resolvedApp.name,
     version: resolvedApp.version,
     description: resolvedApp.description,
+    securitySchemes: resolvedApp.securitySchemes,
     prefix: resolvedApp.prefix,
     database: resolvedApp.database,
     observability: resolvedApp.observability,
@@ -393,6 +394,7 @@ export function createOpenApiFromContract(contract, options = {}) {
     version: contract.version,
     description: contract.description,
     pathPrefix: contract.prefix,
+    securitySchemes: contract.securitySchemes,
     ...options,
     endpoints: contract.endpoints,
     models: contract.models

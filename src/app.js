@@ -9,6 +9,7 @@ import {
 } from './domain.js';
 import { flattenRoutes } from './http/router.js';
 import { collectApiVersionFamilies } from './api-version.js';
+import { frozenPlain } from './immutable.js';
 import { assertKnownOptions } from './options.js';
 import { normalizeDatabaseConfig } from './persistence/database.js';
 
@@ -31,6 +32,7 @@ let appOptionKeys = new Set([
   'onError',
   'onShutdown',
   'prefix',
+  'securitySchemes',
   'services',
   'setup',
   'trustProxy',
@@ -99,6 +101,9 @@ function freezeAppContract(contract) {
     if (Object.hasOwn(stable, key))
       stable[key] = stableList(stable[key]);
   }
+
+  if (Object.hasOwn(stable, 'securitySchemes'))
+    stable.securitySchemes = frozenPlain(stable.securitySchemes);
 
   stable[definedAppContract] = Object.freeze({
     architecture: stable.architecture,
