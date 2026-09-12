@@ -29,46 +29,87 @@ export function parseZod(schema, value, errorFactory) {
   return result.data;
 }
 
+let unrepresentableTypes = new Set([
+  'bigint', 'symbol', 'undefined', 'void', 'nan', 'custom', 'function',
+  'transform', 'map', 'set', 'date'
+]);
+
 /**
- * Strip generator-only metadata from generated output so OpenAPI does not leak
- * Zod dialect markers or Cricket field visibility hints.
+ * Configure Zod conversion for request input or response output.
+ * Mark unsupported types so metadata overrides can replace them before
+ * toJsonSchema checks the finished schema. The override edits Zod's output.
  *
- * @param {any} schema
- * @returns {any}
+ * @param {'input'|'output'} io
+ * @returns {object} Zod JSON Schema conversion options.
  */
-function withoutSchemaDialect(schema) {
-  if (!schema || typeof schema !== 'object')
-    return schema;
-
-  if (Array.isArray(schema))
-    return schema.map(withoutSchemaDialect);
-
-  let {
-    $schema,
-    cricket,
-    ...rest
-  } = schema;
-
-  return Object.fromEntries(
-    Object.entries(rest).map(([key, value]) => [
-      key,
-      withoutSchemaDialect(value)
-    ])
-  );
-}
-
-function cricketJsonSchemaOptions() {
+function cricketJsonSchemaOptions(io) {
   return {
-    io: 'input',
+    io,
     unrepresentable: 'any',
     override({ zodSchema, jsonSchema }) {
-      if (zodSchema?._zod?.def?.type !== 'date')
+      let definition = zodSchema._zod.def;
+      let declared = zodSchema.meta?.()?.jsonSchema;
+      delete jsonSchema.jsonSchema;
+      delete jsonSchema.cricket;
+      if (declared !== undefined) {
+        if (!declared || typeof declared !== 'object' || Array.isArray(declared))
+          throw new Error('jsonSchema metadata must be a JSON Schema object');
+        for (let key of Object.keys(jsonSchema)) delete jsonSchema[key];
+        for (let [key, value] of Object.entries(declared))
+          Object.defineProperty(jsonSchema, key, { value, enumerable: true, configurable: true, writable: true });
         return;
-
-      jsonSchema.type = 'string';
-      jsonSchema.format = 'date-time';
+      }
+      if (definition.type === 'date' && io === 'output') {
+        jsonSchema.type = 'string';
+        jsonSchema.format = 'date-time';
+        return;
+      }
+      if (io === 'input' && definition.coerce) {
+        jsonSchema['x-cricket-unrepresentable'] = `${definition.type} coercion`;
+        return;
+      }
+      let unsupportedLiteral = definition.type === 'literal' &&
+        definition.values.some(value =>
+          ['bigint', 'undefined', 'symbol'].includes(typeof value)
+        );
+      let preprocess = io === 'input' && definition.type === 'pipe' &&
+        definition.in._zod.def.type === 'transform';
+      if (unsupportedLiteral || unrepresentableTypes.has(definition.type) || preprocess) {
+        jsonSchema['x-cricket-unrepresentable'] = definition.type;
+      }
     }
   };
+}
+
+/**
+ * Visit schema objects through properties, definitions, and nested schema keywords.
+ * Skip example/default values and boolean schemas. A property named `examples`
+ * still gets visited because its value is a schema, not example data.
+ *
+ * @param {object|boolean|undefined} schema
+ * @param {(schema: object) => void} visit - Called before visiting child schemas.
+ * @returns {void}
+ */
+export function visitJsonSchema(schema, visit) {
+  if (!schema || typeof schema !== 'object') return;
+  visit(schema);
+  for (let key of ['properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas']) {
+    for (let child of Object.values(schema[key] ?? {})) visitJsonSchema(child, visit);
+  }
+  for (let key of ['allOf', 'anyOf', 'oneOf', 'prefixItems']) {
+    for (let child of schema[key] ?? []) visitJsonSchema(child, visit);
+  }
+  for (let key of ['items', 'additionalProperties', 'unevaluatedProperties', 'unevaluatedItems', 'contains', 'propertyNames', 'not', 'if', 'then', 'else']) {
+    visitJsonSchema(schema[key], visit);
+  }
+}
+
+function assertRepresentable(schema, io) {
+  visitJsonSchema(schema, node => {
+    let unsupported = node['x-cricket-unrepresentable'];
+    if (typeof unsupported === 'string')
+      throw new Error(`Cannot describe ${unsupported} as ${io} JSON Schema; declare jsonSchema metadata or use a representable schema`);
+  });
 }
 
 /**
@@ -77,11 +118,12 @@ function cricketJsonSchemaOptions() {
  * @param {any} schema
  * @returns {any}
  */
-export function toJsonSchema(schema) {
+export function toJsonSchema(schema, { io = 'input' } = {}) {
   if (!schema) return undefined;
 
-  if (isZodSchema(schema))
-    return withoutSchemaDialect(z.toJSONSchema(schema, cricketJsonSchemaOptions()));
+  if (!isZodSchema(schema)) return schema;
 
-  return schema;
+  let { $schema, ...result } = z.toJSONSchema(schema, cricketJsonSchemaOptions(io));
+  assertRepresentable(result, io);
+  return result;
 }

@@ -46,6 +46,9 @@ let endpointOptionKeys = new Set([
   'body',
   'params',
   'query',
+  'headers',
+  'auth',
+  'requestBody',
   'response',
   'responses',
   'beforeBodyRules',
@@ -296,6 +299,46 @@ export function defaultStatusForMethod(method) {
   return method.toUpperCase() === 'POST' ? 201 : 200;
 }
 
+function assertHttpDocumentation({ headers, requestBody, rawBody, multipart, auth }) {
+  if (headers !== undefined) {
+    if (!isZodSchema(headers) || !headers.shape)
+      throw new Error('Endpoint headers must be a Zod object with named lowercase headers');
+    for (let name of Object.keys(headers.shape)) {
+      if (!/^[!#$%&'*+.^_`|~0-9a-z-]+$/.test(name))
+        throw new Error('Endpoint header names must be lowercase HTTP header names');
+      if (['authorization', 'content-type', 'accept'].includes(name))
+        throw new Error(`Describe ${name} through auth or content types, not header parameters`);
+    }
+  }
+  if (requestBody !== undefined) {
+    if (!requestBody || typeof requestBody !== 'object' || Array.isArray(requestBody))
+      throw new Error('Endpoint requestBody must be a documentation object');
+    for (let key of Object.keys(requestBody)) {
+      if (!['description', 'contentType', 'example', 'files', 'schema', 'required'].includes(key))
+        throw new Error(`Unsupported requestBody option ${key}`);
+    }
+    if (requestBody.required !== undefined && typeof requestBody.required !== 'boolean')
+      throw new Error('requestBody.required must be a boolean');
+    if (requestBody.description !== undefined && typeof requestBody.description !== 'string')
+      throw new Error('requestBody.description must be a string');
+    if (requestBody.schema && !rawBody)
+      throw new Error('requestBody.schema is only for rawBody; normal requests use body');
+    if (requestBody.files && !multipart)
+      throw new Error('requestBody.files requires multipart');
+  }
+  if (auth !== undefined && !Array.isArray(auth))
+    throw new Error('Endpoint auth must be an array of requirements');
+}
+
+function parseRequestHeaders(schema, headers = {}) {
+  let selected = Object.fromEntries(
+    Object.keys(schema.shape)
+      .filter(name => Object.hasOwn(headers, name))
+      .map(name => [name, headers[name]])
+  );
+  return parseRequestObjectSchema(schema, selected);
+}
+
 /**
  * Define a request/response contract around a handler.
  *
@@ -317,6 +360,9 @@ export function defaultStatusForMethod(method) {
  * @param {import('zod').ZodTypeAny} [config.body]
  * @param {import('zod').ZodTypeAny} [config.params]
  * @param {import('zod').ZodTypeAny} [config.query]
+ * @param {import('zod').ZodObject} [config.headers] - Lowercase request headers, parsed into input.headers.
+ * @param {Array<object>} [config.auth] - OpenAPI requirements; rules still enforce access.
+ * @param {object} [config.requestBody] - Wire documentation: description, contentType, example, required, multipart files, or rawBody schema.
  * @param {any} [config.response]
  * @param {Record<string | number, any>} [config.responses]
  * @param {Array<Function>} [config.beforeBodyRules=[]] - Rules that run before request body parsing.
@@ -368,6 +414,9 @@ export function defineEndpoint(config) {
     body,
     params,
     query,
+    headers,
+    auth,
+    requestBody,
     response,
     responses,
     beforeBodyRules = [],
@@ -383,6 +432,7 @@ export function defineEndpoint(config) {
     throw new Error(`${normalizedMethod} ${path} needs a handler`);
   if (traceName !== undefined && typeof traceName !== 'string')
     throw new Error(`${normalizedMethod} ${path} traceName must be a string`);
+  assertHttpDocumentation({ headers, requestBody, rawBody, multipart, auth });
   assertApiVersions(apiVersions, normalizedMethod, path, {
     body,
     response,
@@ -404,6 +454,9 @@ export function defineEndpoint(config) {
     body,
     params,
     query,
+    ...(headers === undefined ? {} : { headers }),
+    ...(auth === undefined ? {} : { auth: frozenPlain(auth) }),
+    ...(requestBody === undefined ? {} : { requestBody: frozenPlain(requestBody) }),
     response: frozenPlain(response),
     responses: frozenPlain(responses),
     beforeBodyRules: Object.freeze([...beforeBodyRules]),
@@ -424,7 +477,10 @@ export function defineEndpoint(config) {
       let input = await timePhase(timing, 'validationMs', () => ({
         body: requestBodyForVersion(body, versionContract, request, versionContext),
         params: parseRequestObjectSchema(params, request.params),
-        query: parseRequestObjectSchema(query, request.query)
+        query: parseRequestObjectSchema(query, request.query),
+        ...(headers === undefined ? {} : {
+          headers: parseRequestHeaders(headers, request.headers)
+        })
       }));
 
       let endpointContext = {

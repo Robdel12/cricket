@@ -900,6 +900,122 @@ operation IDs, and observability posture. `docs` writes OpenAPI from the same
 app module your server runs. `test` wraps Node's built-in test runner with
 Cricket defaults and optional JSON output.
 
+## Document your HTTP API
+
+Run `cricket docs api/index.js` to generate OpenAPI 3.1 without starting your
+server or running setup. It includes every registered endpoint, so choose which
+endpoints to include before publishing public docs.
+
+### Describe authentication and headers
+
+```js
+let showReport = defineEndpoint({
+  method: 'get',
+  path: '/reports/:id',
+  params: z.object({ id: z.string() }),
+  headers: z.object({ 'x-client-version': z.string().optional() }),
+  auth: [{ bearer: [] }],
+  rules: [requireUser],
+  response: {
+    schema: Report.public,
+    headers: { 'Cache-Control': { schema: z.string(), example: 'private, no-store' } }
+  },
+  handler: async context => withHeaders(ok(await reports.find(context.input.params.id)), {
+    'Cache-Control': 'private, no-store'
+  })
+});
+
+let app = defineCricketApp({
+  authMethods: { bearer: { type: 'http', scheme: 'bearer' } },
+  domains: [{ name: 'report', endpoints: [showReport] }]
+});
+```
+
+`authMethods` names the app's authentication methods. Endpoint `auth`
+describes which ones a request needs. Rules and middleware enforce access.
+Generated OpenAPI uses the standard `securitySchemes` and `security` names.
+
+Methods in one object are required together; separate array entries are
+alternatives. `auth: []` documents anonymous access. Cricket supports HTTP,
+API key, OAuth 2, OpenID Connect, and mutual TLS descriptions.
+
+Use lowercase names in request `headers`. Cricket validates only those headers
+and puts the parsed values in `input.headers`; missing or invalid required
+values return 422. Rules can read raw credentials from `request.headers`.
+Describe `authorization` through authentication methods, and `accept`/`content-type`
+through content types.
+
+Response definitions accept `schema` (or `body`), `description`, `contentType`,
+`headers`, and `example`, including under status-specific `responses`. Each
+header needs a schema and can have a description or example. Return its actual
+value with `withHeaders`. HEAD, 204, 205, and 304 responses have no documented body.
+
+### Describe custom types
+
+```js
+let BinaryFile = z.instanceof(Buffer).meta({
+  jsonSchema: { type: 'string', format: 'binary' }
+});
+
+// The handler also sets this Content-Type with withHeaders.
+let response = { schema: BinaryFile, contentType: 'application/octet-stream' };
+```
+
+Cricket documents Zod input types for requests and output types for responses.
+A string transformed to a number is a string request or numeric response;
+response dates become date-time strings.
+
+If Cricket can't describe a transform or custom type, docs generation fails.
+Add a known output type with `.pipe(...)` or describe the sent value with
+`jsonSchema` metadata, as above. This metadata doesn't change validation or
+serialization, so check it against a real HTTP response.
+
+Input coercion also needs metadata because JavaScript accepts more than the
+resulting type suggests. For a numeric query parameter, use
+`z.coerce.number().meta({ jsonSchema: { type: 'number' } })`.
+
+### Describe uploads and raw bodies
+
+```js
+let body = z.object({ label: z.string() });
+let requestBody = {
+  files: {
+    type: 'object',
+    properties: { asset: { type: 'string', format: 'binary' } }
+  }
+};
+// Use these with multipart: { maxFiles: 1, maxFileBytes: 1048576 }.
+```
+
+`requestBody` adds a `description`, `example`, or `contentType` to the `body`
+schema. JSON is the default; multipart endpoints use `multipart/form-data`.
+
+`files` accepts `type`, `properties`, and optional `required`. File names can't
+overlap body fields. Rules check required files, MIME types, and contents;
+Cricket enforces the configured size and count limits.
+
+For raw requests, set `rawBody` and describe the input with `requestBody.schema`
+and a content type such as `text/plain`. Rules validate the raw data.
+`requestBody.required` only changes the docs; by default, it follows whether
+`body` accepts a missing value.
+
+### Check the generated docs
+
+Model components include public schemas and views containing only public fields.
+Review endpoint responses and examples too: they can still declare private data.
+Cricket copies and freezes documentation metadata without freezing your objects.
+
+Versioned docs keep auth, headers, descriptions, and content types. When an
+older normalizer or serializer replaces a schema, Cricket drops its current
+body/response example. Put version-specific examples on that version's Zod schema.
+
+Duplicate operations/components, conflicting route parameters, unknown auth
+methods, and broken local references fail generation. Use document JSON pointers
+for local references; Cricket doesn't relocate recursive Zod references into
+OpenAPI components or fetch external references.
+
+See [the public API example](examples/public-contracts.js).
+
 ## Exports
 
 ```js

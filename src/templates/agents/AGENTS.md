@@ -93,6 +93,16 @@ test every supported version through HTTP. Query/params, authorization, and
 thrown errors stay shared. Sunset dates only announce policy; remove a version
 and its deltas to reject it, then regenerate each published OpenAPI projection.
 
+Declare app `authMethods` and endpoint `auth` to document authentication.
+Rules and middleware enforce access. Use lowercase `headers` schemas for
+validated `input.headers`; return response headers with `withHeaders`.
+
+Use `requestBody.files` for multipart docs and `requestBody.schema` for raw-body
+docs. Rules validate the files or raw data. If Cricket can't describe a type,
+supply `jsonSchema` metadata and check it through HTTP. Automatic model
+components exclude views containing private fields. Review endpoint responses
+and examples before publishing; generate docs without starting services.
+
 ## Jobs
 
 Use `defineJob` for asynchronous work that needs validated input, retry policy,

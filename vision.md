@@ -237,7 +237,14 @@ budgets, or bypass endpoint handling. Apps own setup and data policy.
 
 ## Inspect And Documentation
 
-OpenAPI is the public HTTP spec.
+OpenAPI describes the HTTP API: validated requests, serialized responses,
+authentication methods, and headers. Rules enforce access, services handle data,
+and handlers return headers. Docs generation should fail when it can't describe
+a schema accurately.
+
+Exclude private model views from automatic components. Apps still review their
+endpoint responses before publishing. Generate frozen docs without changing
+caller-owned objects or starting services.
 
 `cricket inspect` is the framework topology map: architecture, domains, models,
 sensitive fields, rules, services, jobs, routes, operation IDs, database

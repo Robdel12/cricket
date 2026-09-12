@@ -28,7 +28,7 @@ function frozenPlainCopy(value, seen = new WeakMap()) {
   seen.set(value, copy);
 
   for (let [key, child] of Object.entries(value))
-    copy[key] = frozenPlainCopy(child, seen);
+    Object.defineProperty(copy, key, { value: frozenPlainCopy(child, seen), enumerable: true });
 
   return Object.freeze(copy);
 }
