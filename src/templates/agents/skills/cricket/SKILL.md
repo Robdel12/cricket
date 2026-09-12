@@ -88,6 +88,8 @@ docs. Rules validate the files or raw data. If Cricket can't describe a type,
 supply `jsonSchema` metadata and check it through HTTP. Automatic model
 components exclude views containing private fields. Review endpoint responses
 and examples before publishing; generate docs without starting services.
+Recursive Zod schemas and `z.json()` work in generated OpenAPI. Keep their
+validation intact; generated component names are internal.
 
 ## Change Flow
 

@@ -16,21 +16,21 @@ let showReport = defineEndpoint({
   rules: [requireUser],
   responses: {
     200: {
-      schema: z.object({ id: z.string(), title: z.string(), internalNote: z.string() }),
+      schema: z.object({ id: z.string(), title: z.string(), details: z.json(), internalNote: z.string() }),
       serializer: defineSerializer({
         name: 'report.public',
-        output: z.object({ id: z.string(), title: z.string() }),
-        serialize: ({ id, title }) => ({ id, title })
+        output: z.object({ id: z.string(), title: z.string(), details: z.json() }),
+        serialize: ({ id, title, details }) => ({ id, title, details })
       }),
       headers: { 'Cache-Control': { schema: z.string(), example: 'private, no-store' } },
-      example: { id: 'report-1', title: 'Race results' }
+      example: { id: 'report-1', title: 'Race results', details: { laps: [61.2, 59.8] } }
     },
     401: {
       description: 'A user credential is required',
       schema: z.object({ error: z.object({ code: z.string(), message: z.string() }) })
     }
   },
-  handler: ({ input }) => withHeaders(ok({ id: input.params.id, title: 'Race results', internalNote: 'For staff' }), {
+  handler: ({ input }) => withHeaders(ok({ id: input.params.id, title: 'Race results', details: { laps: [61.2, 59.8] }, internalNote: 'For staff' }), {
     'Cache-Control': 'private, no-store'
   })
 });

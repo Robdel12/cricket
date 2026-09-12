@@ -180,8 +180,6 @@ describe('Public HTTP contracts and generated OpenAPI', () => {
       method: 'post', path: '/coercion', body: z.object({ count: z.coerce.number() }), handler: () => ({})
     })] }), /Cannot describe number coercion/);
     assert.throws(() => docsFor({ schema: { $ref: '#/components/schemas/Missing' } }), /Unresolved OpenAPI schema reference/);
-    let recursive = z.object({ get children() { return z.array(recursive); } });
-    assert.throws(() => docsFor(recursive), /OpenAPI schema references/);
     let schema = { type: 'object', properties: { child: { $ref: '#/paths/~1data/get/responses/200/content/application~1json/schema' } } };
     assert.deepEqual(docsFor({ schema }).paths['/data'].get.responses[200].content['application/json'].schema, schema);
     assert.throws(() => generateOpenApi({ authMethods: { oauth: { type: 'oauth2', flows: { authorizationCode: { scopes: {} } } } } }), /authorizationUrl/);
