@@ -62,15 +62,22 @@ than public HTTP responses.
 API versioning is endpoint-owned and opt-in. Reuse one `defineApiVersions`
 family across participating routes, keep current schemas as the base endpoint
 contract, and place only historical body normalizers and response serializers
-inside `apiVersions`. Do not put API versions on models or branch services and
-handlers by SDK version. Routes without `apiVersions` ignore version headers.
+inside `apiVersions`. Do not put API versions on models or branch services by SDK version. Routes without `apiVersions` ignore version headers.
 
 Reuse the endpoint body schema as a version normalizer's output; skipped
-bodies are contract failures. Historical serializers receive the parsed current
-response and validate their own output. Use explicit public Zod projections and
+bodies are contract failures. Historical serializers receive validated canonical data
+and validate their own output. Use explicit public Zod projections and
 test every supported version through HTTP. Query/params, authorization, and
 thrown errors stay shared. Sunset dates only announce policy; remove a version
 and its deltas to reject it, then regenerate each published OpenAPI projection.
+
+When canonical data differs from current output, use
+`response: { schema: Canonical, serializer: currentSerializer }` (also per status
+in `responses`). Cricket validates canonical data, then runs one validated public
+serializer. OpenAPI uses that serializer's output. Rules and handlers receive
+negotiated `apiVersion`; derive data requirements there and pass those to services.
+Keep field selection in app code and require each selected fact in its output schema.
+
 
 Declare app `authMethods` and endpoint `auth` to document authentication.
 Rules and middleware enforce access. Use lowercase `headers` schemas for

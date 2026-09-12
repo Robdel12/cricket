@@ -150,7 +150,10 @@ function normalizeResponse(status, response, method) {
   if (!/^(?:[1-5][0-9]{2}|[1-5]XX|default)$/.test(status))
     throw new Error(`Invalid response status ${status}`);
   let noBody = method === 'HEAD' || ['204', '205', '304'].includes(status);
-  let schema = noBody ? undefined : toJsonSchema(descriptor.schema ?? descriptor.body, { io: 'output' });
+  let schema = noBody ? undefined : toJsonSchema(
+    descriptor.serializer?.output ?? descriptor.schema ?? descriptor.body,
+    { io: 'output' }
+  );
   return {
     description: descriptor.description ?? (noBody ? 'No content' : 'Success'),
     ...(descriptor.headers ? { headers: responseHeaders(descriptor.headers) } : {}),
@@ -187,7 +190,7 @@ function responseWithSchema(response, schema) {
   if (!isPlainObject(response) || response.type || response.properties)
     return schema;
 
-  let { example, ...metadata } = response;
+  let { example, serializer, ...metadata } = response;
   let key = Object.hasOwn(response, 'body') ? 'body' : 'schema';
   return { ...metadata, [key]: schema };
 }

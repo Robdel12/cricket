@@ -338,16 +338,40 @@ export let sdkVersions = defineApiVersions({
 });
 ```
 
-The endpoint's normal `body`, `response`, and `responses` remain the current
-contract. Historical entries contain only the compatibility work that endpoint
-earned. Body compatibility uses a Cricket normalizer, so rules and handlers
-still receive canonical input. Response compatibility uses Cricket serializers
-and may select by exact, declared HTTP status. The normalizer's `output` must
-reuse the endpoint's `body` schema; Cricket parses it once and rejects skipped
-(null/undefined) results. Historical serializers receive the already-parsed
-current response, then parse their own output. Both response contracts must be
-Zod schemas, so older versions cannot bypass current validation or restore
-fields stripped from the handler result.
+The endpoint's `body`, `response`, and `responses` define the base contract.
+Historical entries contain only the compatibility work that endpoint needs.
+Body normalizers must reuse the endpoint's `body` schema as their `output`;
+Cricket parses it once and rejects skipped (null/undefined) results.
+
+By default, the response schema validates both canonical data and current public
+output. When those shapes differ, pair a canonical schema with a current serializer:
+
+```js
+let currentReport = defineSerializer({
+  name: 'report.current',
+  output: z.object({ id: z.string(), title: z.string() }),
+  serialize: value => ({ id: value.id, title: value.title })
+});
+
+let response = {
+  schema: ReportData, // Validated data needed by supported representations.
+  serializer: currentReport
+};
+```
+
+Use this definition in `response` or under a status in `responses`. Cricket
+validates the handler result first, then runs exactly one serializer: the
+historical override when present, otherwise the base serializer. Each serializer
+validates its own public output. Fields removed by canonical validation stay
+removed. OpenAPI describes the selected serializer's output, not `ReportData`.
+A serializer requires a canonical Zod schema and must come from `defineSerializer`.
+The current serializer belongs in the base response, not an `apiVersions` override.
+
+Endpoint rules, including `beforeBodyRules`, and handlers receive the negotiated
+`apiVersion`. Use it at that boundary to choose explicit data requirements before
+calling a service. Services receive those requirements, not API versions. Field
+selection and loading policy stay in the app; use schemas that require the facts
+each selected response promises instead of making every field optional.
 
 Keep these adapters pure and explicit. Their context is trusted app context;
 Cricket cannot prevent app code from intentionally loading or returning private
@@ -945,8 +969,8 @@ values return 422. Rules can read raw credentials from `request.headers`.
 Describe `authorization` through authentication methods, and `accept`/`content-type`
 through content types.
 
-Response definitions accept `schema` (or `body`), `description`, `contentType`,
-`headers`, and `example`, including under status-specific `responses`. Each
+Response definitions accept `schema` (or `body`), `serializer`, `description`,
+`contentType`, `headers`, and `example`, including under status-specific `responses`. Each
 header needs a schema and can have a description or example. Return its actual
 value with `withHeaders`. HEAD, 204, 205, and 304 responses have no documented body.
 

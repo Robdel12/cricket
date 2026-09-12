@@ -112,6 +112,15 @@ function responseSchemaFrom(definition) {
   return definition.schema ?? definition.body;
 }
 
+function assertResponseSerializer(definition, label) {
+  let serializer = definition?.serializer;
+  if (serializer === undefined) return;
+  if (!isZodSchema(responseSchemaFrom(definition)))
+    throw new Error(`${label} serializer needs a canonical Zod schema`);
+  if (typeof serializer !== 'function' || !serializer.serializerName || !isZodSchema(serializer.output))
+    throw new Error(`${label} serializer must be a Cricket serializer`);
+}
+
 function parseResponse(schema, value) {
   if (!schema) return value;
   if (!isZodSchema(schema)) return value;
@@ -363,7 +372,7 @@ function parseRequestHeaders(schema, headers = {}) {
  * @param {import('zod').ZodObject} [config.headers] - Lowercase request headers, parsed into input.headers.
  * @param {Array<object>} [config.auth] - OpenAPI requirements; rules still enforce access.
  * @param {object} [config.requestBody] - Wire documentation: description, contentType, example, required, multipart files, or rawBody schema.
- * @param {any} [config.response]
+ * @param {any} [config.response] - Zod schema or { schema, serializer }; canonical parsing precedes the selected public serializer.
  * @param {Record<string | number, any>} [config.responses]
  * @param {Array<Function>} [config.beforeBodyRules=[]] - Rules that run before request body parsing.
  * @param {Array<Function>} [config.rules=[]]
@@ -433,6 +442,9 @@ export function defineEndpoint(config) {
   if (traceName !== undefined && typeof traceName !== 'string')
     throw new Error(`${normalizedMethod} ${path} traceName must be a string`);
   assertHttpDocumentation({ headers, requestBody, rawBody, multipart, auth });
+  assertResponseSerializer(response, `${normalizedMethod} ${path} response`);
+  for (let [status, definition] of Object.entries(responses ?? {}))
+    assertResponseSerializer(definition, `${normalizedMethod} ${path} response ${status}`);
   assertApiVersions(apiVersions, normalizedMethod, path, {
     body,
     response,
@@ -484,7 +496,7 @@ export function defineEndpoint(config) {
       }));
 
       let endpointContext = {
-        ...context,
+        ...versionContext,
         request,
         input
       };
@@ -533,15 +545,21 @@ export function deprecateEndpoint(endpoint, deprecation) {
   });
 }
 
+/**
+ * Validate canonical handler data before the selected public projection.
+ * Historical serializers replace the base serializer; they never run after it.
+ */
 function parseEndpointResponse(endpoint, result, versionContract, context) {
   let response = resolveHttpResponse(result, defaultStatusForMethod(endpoint.method));
 
   if (response.redirect)
     return response;
 
-  let serializer = responseSerializerFor(versionContract, response.status);
+  let definition = responseDefinitionFor(endpoint, response.status);
+  let serializer = responseSerializerFor(versionContract, response.status)
+    ?? definition?.serializer;
   let canonicalBody = parseResponse(
-    responseSchemaFrom(responseDefinitionFor(endpoint, response.status)),
+    responseSchemaFrom(definition),
     response.body
   );
   let body = serializer ? serializer(canonicalBody, context) : canonicalBody;

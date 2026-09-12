@@ -46,3 +46,8 @@ Use `pnpm test` for the app's normal suite when the repo already defines it.
 When HTTP docs change, compare generated OpenAPI with actual HTTP requests and
 responses. Cover the affected auth, headers, private fields, uploads, and
 response types. Run the docs CLI without starting services. Don't mock Cricket.
+
+For response projections, test current and historical HTTP output, required
+selected facts, private-field stripping, and generated schemas. Prove focused
+requests work without loading legacy-only data. Keep data requirements explicit
+at the service boundary.
