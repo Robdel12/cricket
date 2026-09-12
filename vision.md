@@ -101,13 +101,17 @@ Cricket's standard suffixes.
 API compatibility belongs at the endpoint boundary. Apps may share an
 immutable `defineApiVersions` family across routes, but each endpoint opts in
 explicitly and declares only its historical normalizer and serializer deltas.
-The current endpoint schemas remain the base contract. Historical requests
-must normalize through that same body schema; historical responses are projected
-from the parsed current output and then validated themselves. This preserves
-current field stripping and contract failures across supported versions. Models, services, rules,
-and handlers stay versionless, and `defineCricketApp` does not own an API
-version registry. An endpoint without version metadata does not inspect or
-reject version headers.
+The endpoint schemas remain the base contract. Historical requests normalize
+through the same body schema. Responses validate canonical data first, then run
+one validated public serializer: the historical override or the base response's
+serializer. Canonical-only data must not appear in generated public schemas.
+
+Endpoint rules and handlers may use the negotiated version to choose data
+requirements. Services receive those explicit requirements and stay versionless;
+selectors and loading policy belong to the app. Keep public projections pure,
+validate each promised response shape, and preserve field stripping. Models don't
+own API versions, and `defineCricketApp` has no version registry. Endpoints
+without version metadata leave version headers alone.
 
 ## Runtime
 

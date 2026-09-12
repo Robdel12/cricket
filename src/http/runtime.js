@@ -880,6 +880,9 @@ function createRuntimeHandler({
           let contextAfterBeforeBodyRules = await timing.time('beforeBodyRulesMs', () =>
             applyRules(match.endpoint.beforeBodyRules, {
               ...requestContextForMatchedRequest.context,
+              ...(apiVersionNegotiation ? {
+                apiVersion: apiVersionNegotiation.version
+              } : {}),
               request: requestContextForMatchedRequest.request
             })
           );

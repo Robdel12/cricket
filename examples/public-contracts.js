@@ -1,5 +1,5 @@
 import {
-  defineCricketApp, defineEndpoint, defineRule, ok, unauthenticated, withHeaders, z
+  defineCricketApp, defineEndpoint, defineRule, defineSerializer, ok, unauthenticated, withHeaders, z
 } from '../src/index.js';
 
 let requireUser = defineRule('report.requireUser', ({ user }) => {
@@ -16,7 +16,12 @@ let showReport = defineEndpoint({
   rules: [requireUser],
   responses: {
     200: {
-      schema: z.object({ id: z.string(), title: z.string() }),
+      schema: z.object({ id: z.string(), title: z.string(), internalNote: z.string() }),
+      serializer: defineSerializer({
+        name: 'report.public',
+        output: z.object({ id: z.string(), title: z.string() }),
+        serialize: ({ id, title }) => ({ id, title })
+      }),
       headers: { 'Cache-Control': { schema: z.string(), example: 'private, no-store' } },
       example: { id: 'report-1', title: 'Race results' }
     },
@@ -25,7 +30,7 @@ let showReport = defineEndpoint({
       schema: z.object({ error: z.object({ code: z.string(), message: z.string() }) })
     }
   },
-  handler: ({ input }) => withHeaders(ok({ id: input.params.id, title: 'Race results' }), {
+  handler: ({ input }) => withHeaders(ok({ id: input.params.id, title: 'Race results', internalNote: 'For staff' }), {
     'Cache-Control': 'private, no-store'
   })
 });

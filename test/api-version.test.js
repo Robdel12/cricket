@@ -127,7 +127,7 @@ function versionedEndpoint(family = tornadicVersions()) {
     },
     rules: [requireCanonicalInput],
     handler({ input, apiVersion }) {
-      assert.equal(apiVersion, undefined);
+      assert.ok(['2025-11-15', '2026-09-01'].includes(apiVersion));
 
       let session = {
         id: 'session_123',
