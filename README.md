@@ -914,7 +914,7 @@ let showReport = defineEndpoint({
   path: '/reports/:id',
   params: z.object({ id: z.string() }),
   headers: z.object({ 'x-client-version': z.string().optional() }),
-  security: [{ bearer: [] }],
+  auth: [{ bearer: [] }],
   rules: [requireUser],
   response: {
     schema: Report.public,
@@ -926,22 +926,23 @@ let showReport = defineEndpoint({
 });
 
 let app = defineCricketApp({
-  securitySchemes: { bearer: { type: 'http', scheme: 'bearer' } },
+  authMethods: { bearer: { type: 'http', scheme: 'bearer' } },
   domains: [{ name: 'report', endpoints: [showReport] }]
 });
 ```
 
-`securitySchemes` names the app's authentication methods. Endpoint `security`
+`authMethods` names the app's authentication methods. Endpoint `auth`
 describes which ones a request needs. Rules and middleware enforce access.
+Generated OpenAPI uses the standard `securitySchemes` and `security` names.
 
-Schemes in one object are required together; separate array entries are
-alternatives. `security: []` documents anonymous access. Cricket supports HTTP,
+Methods in one object are required together; separate array entries are
+alternatives. `auth: []` documents anonymous access. Cricket supports HTTP,
 API key, OAuth 2, OpenID Connect, and mutual TLS descriptions.
 
 Use lowercase names in request `headers`. Cricket validates only those headers
 and puts the parsed values in `input.headers`; missing or invalid required
 values return 422. Rules can read raw credentials from `request.headers`.
-Describe `authorization` through security schemes, and `accept`/`content-type`
+Describe `authorization` through authentication methods, and `accept`/`content-type`
 through content types.
 
 Response definitions accept `schema` (or `body`), `description`, `contentType`,
@@ -1004,12 +1005,12 @@ Model components include public schemas and views containing only public fields.
 Review endpoint responses and examples too: they can still declare private data.
 Cricket copies and freezes documentation metadata without freezing your objects.
 
-Versioned docs keep security, headers, descriptions, and content types. When an
+Versioned docs keep auth, headers, descriptions, and content types. When an
 older normalizer or serializer replaces a schema, Cricket drops its current
 body/response example. Put version-specific examples on that version's Zod schema.
 
-Duplicate operations/components, conflicting route parameters, unknown security
-schemes, and broken local references fail generation. Use document JSON pointers
+Duplicate operations/components, conflicting route parameters, unknown auth
+methods, and broken local references fail generation. Use document JSON pointers
 for local references; Cricket doesn't relocate recursive Zod references into
 OpenAPI components or fetch external references.
 

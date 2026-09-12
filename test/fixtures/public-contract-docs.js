@@ -5,7 +5,7 @@ export let app = defineCricketApp({
   name: example.name,
   version: example.version,
   domains: example.domains,
-  securitySchemes: example.securitySchemes,
+  authMethods: example.authMethods,
   setup() {
     throw new Error('Documentation must not initialize application services');
   }

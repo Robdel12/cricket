@@ -565,13 +565,13 @@ describe('Cricket HTTP routing', () => {
     );
   });
 
-  it('rejects unsupported endpoint options at definition time', () => {
+  it('rejects invalid or unsupported endpoint options at definition time', () => {
     assert.throws(() => defineEndpoint({
       method: 'get',
       path: '/session',
       auth: true,
       handler: () => ok({ success: true })
-    }), /Unsupported endpoint option auth/);
+    }), /Endpoint auth must be an array of requirements/);
 
     assert.throws(() => defineEndpoint({
       method: 'post',

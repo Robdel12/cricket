@@ -18,14 +18,14 @@ let execFileAsync = promisify(execFile);
 describe('Public HTTP contracts and generated OpenAPI', () => {
   it('describes credentials and validated headers while rules enforce access to real rows', async () => {
     let schemes = { bearer: { type: 'http', scheme: 'bearer', description: 'Project credential' } };
-    let security = [{ bearer: [] }];
+    let auth = [{ bearer: [] }];
     let requireProject = defineRule('project.access', async ({ request: incoming, db }) => {
       let project = await db('projects').where({ credential: incoming.headers.authorization ?? '' }).first();
       if (!project) throw unauthenticated('Project credential required');
       return { project };
     });
     let endpoint = defineEndpoint({
-      method: 'get', path: '/project', security,
+      method: 'get', path: '/project', auth,
       headers: z.object({ 'x-client-revision': z.string().regex(/^\d+$/).transform(Number).pipe(z.number()) }).strict(),
       rules: [requireProject],
       responses: {
@@ -41,7 +41,7 @@ describe('Public HTTP contracts and generated OpenAPI', () => {
       })
     });
     let app = defineManualTestApp({
-      securitySchemes: schemes, endpoints: [endpoint],
+      authMethods: schemes, endpoints: [endpoint],
       database: { client: 'sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true },
       async setup({ db }) {
         await db.schema.createTable('projects', table => {
@@ -51,11 +51,13 @@ describe('Public HTTP contracts and generated OpenAPI', () => {
       }
     });
     schemes.bearer.description = 'Caller mutation';
-    security[0].bearer.push('unexpected');
+    auth[0].bearer.push('unexpected');
     let docs = createOpenApiFromContract(app);
     let operation = docs.paths['/project'].get;
     assert.equal(docs.components.securitySchemes.bearer.description, 'Project credential');
     assert.deepEqual(operation.security, [{ bearer: [] }]);
+    assert.equal(operation.auth, undefined);
+    assert.equal(docs.components.authMethods, undefined);
     assert.deepEqual(operation.parameters[0].schema.type, 'string');
     assert.ok(Object.isFrozen(docs.components.securitySchemes.bearer));
     assert.equal(Object.isFrozen(schemes), false);
@@ -136,13 +138,15 @@ describe('Public HTTP contracts and generated OpenAPI', () => {
     let endpoint = config => defineEndpoint({ method: 'get', path: '/items/:id', handler: () => ({}), ...config });
     assert.throws(() => generateOpenApi({ endpoints: [endpoint({}), endpoint({ path: '/items/:name' })] }), /Duplicate OpenAPI route/);
     assert.throws(() => generateOpenApi({ endpoints: [endpoint({ operationId: 'read' }), endpoint({ path: '/other', operationId: 'read' })] }), /Duplicate operation ID/);
-    assert.throws(() => generateOpenApi({ endpoints: [endpoint({ security: [{ missing: [] }] })] }), /Unknown security scheme/);
+    assert.throws(() => generateOpenApi({ endpoints: [endpoint({ auth: [{ missing: [] }] })] }), /Unknown auth method/);
     assert.throws(() => generateOpenApi({ endpoints: [endpoint({ response: z.string().transform(Number) })] }), /Cannot describe transform/);
     assert.throws(() => generateOpenApi({ endpoints: [endpoint({ query: z.object({ count: z.preprocess(Number, z.number()) }) })] }), /Cannot describe pipe/);
     let documented = endpoint({ response: { schema: z.instanceof(Buffer).meta({ jsonSchema: { type: 'string', format: 'binary' } }), contentType: 'application/octet-stream' } });
     assert.equal(generateOpenApi({ endpoints: [documented] }).paths['/items/{id}'].get.responses[200].content['application/octet-stream'].schema.format, 'binary');
     assert.throws(() => generateOpenApi({ endpoints: [endpoint({ requestBody: { description: 'Missing schema' } })] }), /documentation needs body/);
     assert.throws(() => generateOpenApi({ endpoints: [endpoint({ multipart: true, requestBody: { files: { type: 'object', minProperties: 1 } } })] }), /only supports/);
+    assert.throws(() => endpoint({ security: [] }), /[Uu]nknown|[Uu]nsupported/);
+    assert.throws(() => defineManualTestApp({ securitySchemes: {} }), /[Uu]nknown|[Uu]nsupported/);
     assert.throws(() => endpoint({ headers: z.object({ 'X-Uppercase': z.string() }) }), /lowercase/);
   });
 
@@ -182,7 +186,7 @@ describe('Public HTTP contracts and generated OpenAPI', () => {
     assert.throws(() => docsFor(recursive), /OpenAPI schema references/);
     let schema = { type: 'object', properties: { child: { $ref: '#/paths/~1data/get/responses/200/content/application~1json/schema' } } };
     assert.deepEqual(docsFor({ schema }).paths['/data'].get.responses[200].content['application/json'].schema, schema);
-    assert.throws(() => generateOpenApi({ securitySchemes: { oauth: { type: 'oauth2', flows: { authorizationCode: { scopes: {} } } } } }), /authorizationUrl/);
+    assert.throws(() => generateOpenApi({ authMethods: { oauth: { type: 'oauth2', flows: { authorizationCode: { scopes: {} } } } } }), /authorizationUrl/);
   });
 
   it('describes raw text requests and serves their declared response through HTTP', async () => {

@@ -32,7 +32,7 @@ let appOptionKeys = new Set([
   'onError',
   'onShutdown',
   'prefix',
-  'securitySchemes',
+  'authMethods',
   'services',
   'setup',
   'trustProxy',
@@ -102,8 +102,8 @@ function freezeAppContract(contract) {
       stable[key] = stableList(stable[key]);
   }
 
-  if (Object.hasOwn(stable, 'securitySchemes'))
-    stable.securitySchemes = frozenPlain(stable.securitySchemes);
+  if (Object.hasOwn(stable, 'authMethods'))
+    stable.authMethods = frozenPlain(stable.authMethods);
 
   stable[definedAppContract] = Object.freeze({
     architecture: stable.architecture,

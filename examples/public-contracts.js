@@ -10,7 +10,7 @@ let showReport = defineEndpoint({
   method: 'get',
   path: '/reports/:id',
   summary: 'Read a report',
-  security: [{ bearer: [] }],
+  auth: [{ bearer: [] }],
   params: z.object({ id: z.string() }),
   headers: z.object({ 'x-client-version': z.string().optional() }),
   rules: [requireUser],
@@ -31,10 +31,10 @@ let showReport = defineEndpoint({
 });
 
 // Resolve user credentials in middleware or request context.
-// The rule above checks access; security metadata only documents it.
+// The rule above checks access; auth metadata only documents it.
 export let app = defineCricketApp({
   name: 'Public contract example',
   version: '1.0.0',
-  securitySchemes: { bearer: { type: 'http', scheme: 'bearer' } },
+  authMethods: { bearer: { type: 'http', scheme: 'bearer' } },
   domains: [{ name: 'report', endpoints: [showReport] }]
 });

@@ -47,7 +47,7 @@ let endpointOptionKeys = new Set([
   'params',
   'query',
   'headers',
-  'security',
+  'auth',
   'requestBody',
   'response',
   'responses',
@@ -299,7 +299,7 @@ export function defaultStatusForMethod(method) {
   return method.toUpperCase() === 'POST' ? 201 : 200;
 }
 
-function assertHttpDocumentation({ headers, requestBody, rawBody, multipart, security }) {
+function assertHttpDocumentation({ headers, requestBody, rawBody, multipart, auth }) {
   if (headers !== undefined) {
     if (!isZodSchema(headers) || !headers.shape)
       throw new Error('Endpoint headers must be a Zod object with named lowercase headers');
@@ -307,7 +307,7 @@ function assertHttpDocumentation({ headers, requestBody, rawBody, multipart, sec
       if (!/^[!#$%&'*+.^_`|~0-9a-z-]+$/.test(name))
         throw new Error('Endpoint header names must be lowercase HTTP header names');
       if (['authorization', 'content-type', 'accept'].includes(name))
-        throw new Error(`Describe ${name} through security or content types, not header parameters`);
+        throw new Error(`Describe ${name} through auth or content types, not header parameters`);
     }
   }
   if (requestBody !== undefined) {
@@ -326,8 +326,8 @@ function assertHttpDocumentation({ headers, requestBody, rawBody, multipart, sec
     if (requestBody.files && !multipart)
       throw new Error('requestBody.files requires multipart');
   }
-  if (security !== undefined && !Array.isArray(security))
-    throw new Error('Endpoint security must be an array of requirements');
+  if (auth !== undefined && !Array.isArray(auth))
+    throw new Error('Endpoint auth must be an array of requirements');
 }
 
 function parseRequestHeaders(schema, headers = {}) {
@@ -361,7 +361,7 @@ function parseRequestHeaders(schema, headers = {}) {
  * @param {import('zod').ZodTypeAny} [config.params]
  * @param {import('zod').ZodTypeAny} [config.query]
  * @param {import('zod').ZodObject} [config.headers] - Lowercase request headers, parsed into input.headers.
- * @param {Array<object>} [config.security] - OpenAPI requirements; rules still enforce access.
+ * @param {Array<object>} [config.auth] - OpenAPI requirements; rules still enforce access.
  * @param {object} [config.requestBody] - Wire documentation: description, contentType, example, required, multipart files, or rawBody schema.
  * @param {any} [config.response]
  * @param {Record<string | number, any>} [config.responses]
@@ -415,7 +415,7 @@ export function defineEndpoint(config) {
     params,
     query,
     headers,
-    security,
+    auth,
     requestBody,
     response,
     responses,
@@ -432,7 +432,7 @@ export function defineEndpoint(config) {
     throw new Error(`${normalizedMethod} ${path} needs a handler`);
   if (traceName !== undefined && typeof traceName !== 'string')
     throw new Error(`${normalizedMethod} ${path} traceName must be a string`);
-  assertHttpDocumentation({ headers, requestBody, rawBody, multipart, security });
+  assertHttpDocumentation({ headers, requestBody, rawBody, multipart, auth });
   assertApiVersions(apiVersions, normalizedMethod, path, {
     body,
     response,
@@ -455,7 +455,7 @@ export function defineEndpoint(config) {
     params,
     query,
     ...(headers === undefined ? {} : { headers }),
-    ...(security === undefined ? {} : { security: frozenPlain(security) }),
+    ...(auth === undefined ? {} : { auth: frozenPlain(auth) }),
     ...(requestBody === undefined ? {} : { requestBody: frozenPlain(requestBody) }),
     response: frozenPlain(response),
     responses: frozenPlain(responses),

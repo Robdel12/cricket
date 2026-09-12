@@ -345,7 +345,7 @@ describe('Cricket CLI', () => {
     assert.match(agents, /Historical serializers receive the parsed current/);
     assert.match(agents, /Sunset dates only announce policy/);
     for (let guidance of [agents, cricketSkill]) {
-      assert.match(guidance, /securitySchemes/);
+      assert.match(guidance, /authMethods/);
       assert.match(guidance, /validated `input.headers`/);
       assert.match(guidance, /components exclude views containing private fields/);
     }

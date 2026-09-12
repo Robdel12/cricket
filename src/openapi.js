@@ -293,7 +293,7 @@ function endpointOperation(endpoint, apiVersions) {
     let name = parameter.name.toLowerCase();
     if (headerNames.has(name)) throw new Error(`Duplicate header parameter ${name}`);
     if (['authorization', 'content-type', 'accept'].includes(name))
-      throw new Error(`Describe ${name} through security or content types, not header parameters`);
+      throw new Error(`Describe ${name} through auth or content types, not header parameters`);
     headerNames.add(name);
   }
   let requestBody = requestBodyForEndpoint(projectedEndpoint);
@@ -308,22 +308,22 @@ function endpointOperation(endpoint, apiVersions) {
       'x-cricket-deprecation': deprecation
     } : {}),
     operationId: operationIdFor(endpoint),
-    ...(endpoint.security === undefined ? {} : { security: endpoint.security }),
+    ...(endpoint.auth === undefined ? {} : { security: endpoint.auth }),
     ...(parameters.length ? { parameters } : {}),
     ...(requestBody ? { requestBody } : {}),
     responses: responsesForEndpoint(projectedEndpoint)
   };
 }
 
-function validateSecuritySchemes(schemes) {
-  if (!isPlainObject(schemes)) throw new Error('securitySchemes must be an object');
+function validateAuthMethods(schemes) {
+  if (!isPlainObject(schemes)) throw new Error('authMethods must be an object');
   for (let [name, scheme] of Object.entries(schemes)) {
     if (!/^[A-Za-z0-9._-]+$/.test(name) || !isPlainObject(scheme))
-      throw new Error('Security schemes need named object definitions');
+      throw new Error('Auth methods need named object definitions');
     if (!['http', 'apiKey', 'oauth2', 'openIdConnect', 'mutualTLS'].includes(scheme.type))
-      throw new Error(`Unsupported security scheme ${name}`);
+      throw new Error(`Unsupported auth method ${name}`);
     if (scheme.type === 'http' && (typeof scheme.scheme !== 'string' || !scheme.scheme.trim()))
-      throw new Error(`HTTP security scheme ${name} needs scheme`);
+      throw new Error(`HTTP auth method ${name} needs scheme`);
     if (scheme.type === 'apiKey' && (typeof scheme.name !== 'string' || !scheme.name.trim() || !['header', 'query', 'cookie'].includes(scheme.in)))
       throw new Error(`API key scheme ${name} needs name and in`);
     if (scheme.type === 'oauth2' && (!isPlainObject(scheme.flows) || !Object.keys(scheme.flows).length))
@@ -380,17 +380,17 @@ function validateSchemaReferences(document) {
   }
 }
 
-function validateSecurityRequirements(requirements, schemes) {
+function validateAuthRequirements(requirements, schemes) {
   if (requirements === undefined) return;
-  if (!Array.isArray(requirements)) throw new Error('Endpoint security must be an array');
+  if (!Array.isArray(requirements)) throw new Error('Endpoint auth must be an array');
   for (let requirement of requirements) {
-    if (!isPlainObject(requirement)) throw new Error('Security requirements must be objects');
+    if (!isPlainObject(requirement)) throw new Error('Auth requirements must be objects');
     for (let [name, scopes] of Object.entries(requirement)) {
-      if (!Object.hasOwn(schemes, name)) throw new Error(`Unknown security scheme ${name}`);
+      if (!Object.hasOwn(schemes, name)) throw new Error(`Unknown auth method ${name}`);
       if (!Array.isArray(scopes) || scopes.some(scope => typeof scope !== 'string'))
-        throw new Error(`Security scopes for ${name} must be strings`);
+        throw new Error(`Auth scopes for ${name} must be strings`);
       if (!['oauth2', 'openIdConnect'].includes(schemes[name].type) && scopes.length)
-        throw new Error(`Security scheme ${name} does not support scopes`);
+        throw new Error(`Auth method ${name} does not support scopes`);
     }
   }
 }
@@ -411,7 +411,7 @@ function validateSecurityRequirements(requirements, schemes) {
  * @param {Array<object>} [options.endpoints=[]] - Endpoint contracts to translate into path operations.
  * @param {Array<object>} [options.models=[]] - Model contracts used to generate component schemas.
  * @param {Record<string, string>} [options.apiVersions={}] - Exact API version selected for each endpoint family.
- * @param {Record<string, object>} [options.securitySchemes={}] - Named OpenAPI authentication descriptions; rules enforce access.
+ * @param {Record<string, object>} [options.authMethods={}] - Named OpenAPI authentication descriptions; rules enforce access.
  * @returns {object} A frozen OpenAPI 3.1 document object with `info`, `paths`, and `components`.
  */
 export function generateOpenApi({
@@ -423,7 +423,7 @@ export function generateOpenApi({
   endpoints = [],
   models = [],
   apiVersions = {},
-  securitySchemes = {}
+  authMethods = {}
 } = {}) {
   let families = collectApiVersionFamilies(endpoints);
   let familyNames = new Set(families.map(family => family.name));
@@ -433,7 +433,7 @@ export function generateOpenApi({
       throw new Error(`Unknown API version family ${familyName}`);
   }
 
-  validateSecuritySchemes(securitySchemes);
+  validateAuthMethods(authMethods);
   let paths = {};
   let operations = new Set();
   let routes = new Set();
@@ -441,7 +441,7 @@ export function generateOpenApi({
   let schemas = componentSchemas(models);
   let components = {
     ...(Object.keys(schemas).length ? { schemas } : {}),
-    ...(Object.keys(securitySchemes).length ? { securitySchemes } : {})
+    ...(Object.keys(authMethods).length ? { securitySchemes: authMethods } : {})
   };
 
   for (let endpoint of endpoints) {
@@ -456,7 +456,7 @@ export function generateOpenApi({
     pathNames.set(normalizedPath, openApiPath);
     routes.add(routeKey);
     operations.add(operationId);
-    validateSecurityRequirements(endpoint.security, securitySchemes);
+    validateAuthRequirements(endpoint.auth, authMethods);
     if (!Object.hasOwn(paths, openApiPath))
       Object.defineProperty(paths, openApiPath, { value: {}, enumerable: true });
     paths[openApiPath][endpoint.method.toLowerCase()] = endpointOperation(endpoint, apiVersions);

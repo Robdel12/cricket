@@ -309,7 +309,7 @@ describe('Cricket OpenAPI', () => {
         }
       }),
       body: CurrentInput,
-      security: [{ bearer: [] }],
+      auth: [{ bearer: [] }],
       headers: z.object({ 'x-client': z.string().optional() }),
       requestBody: { description: 'Session creation input', example: { durationMinutes: 3 } },
       responses: {
@@ -324,10 +324,10 @@ describe('Cricket OpenAPI', () => {
         return {};
       }
     });
-    let securitySchemes = { bearer: { type: 'http', scheme: 'bearer' } };
-    let defaultDocs = generateOpenApi({ endpoints: [endpoint], securitySchemes });
+    let authMethods = { bearer: { type: 'http', scheme: 'bearer' } };
+    let defaultDocs = generateOpenApi({ endpoints: [endpoint], authMethods });
     let currentDocs = generateOpenApi({
-      securitySchemes,
+      authMethods,
       endpoints: [endpoint],
       apiVersions: {
         'tornadic.ios': '2026-09-01'
@@ -365,14 +365,14 @@ describe('Cricket OpenAPI', () => {
 
     assert.throws(() => generateOpenApi({
       endpoints: [endpoint],
-      securitySchemes,
+      authMethods,
       apiVersions: {
         'tornadic.ios': 'unknown'
       }
     }), /Unknown tornadic\.ios API version/);
     assert.throws(() => generateOpenApi({
       endpoints: [endpoint],
-      securitySchemes,
+      authMethods,
       apiVersions: {
         typo: '2026-09-01'
       }

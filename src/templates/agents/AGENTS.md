@@ -93,7 +93,7 @@ test every supported version through HTTP. Query/params, authorization, and
 thrown errors stay shared. Sunset dates only announce policy; remove a version
 and its deltas to reject it, then regenerate each published OpenAPI projection.
 
-Declare app `securitySchemes` and endpoint `security` to document authentication.
+Declare app `authMethods` and endpoint `auth` to document authentication.
 Rules and middleware enforce access. Use lowercase `headers` schemas for
 validated `input.headers`; return response headers with `withHeaders`.
 
