@@ -43,8 +43,6 @@ pnpm cricket test --output cricket-test-report.json
 
 Use `pnpm test` for the app's normal suite when the repo already defines it.
 
-When public HTTP contracts change, compare generated OpenAPI with actual HTTP
-requests and responses, including authentication rules, validated headers,
-private-field stripping, multipart bytes, and non-JSON/empty responses as
-applicable. Run the docs CLI without starting application services. Keep tests
-at those real boundaries; do not mock Cricket's generator or runtime.
+When HTTP docs change, compare generated OpenAPI with actual HTTP requests and
+responses. Cover the affected auth, headers, private fields, uploads, and
+response types. Run the docs CLI without starting services. Don't mock Cricket.

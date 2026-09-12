@@ -900,15 +900,13 @@ operation IDs, and observability posture. `docs` writes OpenAPI from the same
 app module your server runs. `test` wraps Node's built-in test runner with
 Cricket defaults and optional JSON output.
 
-## Public HTTP documentation
+## Document your HTTP API
 
-`cricket docs` builds OpenAPI 3.1 from immutable app and endpoint contracts
-without starting the HTTP server or running application setup. Declare public
-operations deliberately when building a public schema; the normal app docs
-include all registered endpoints. Cricket does not decide which routes your
-product should publish.
+Run `cricket docs api/index.js` to generate OpenAPI 3.1 without starting your
+server or running setup. It includes every registered endpoint, so choose which
+endpoints to include before publishing public docs.
 
-Name authentication schemes on the app, then declare requirements on endpoints:
+### Describe authentication and headers
 
 ```js
 let showReport = defineEndpoint({
@@ -933,59 +931,49 @@ let app = defineCricketApp({
 });
 ```
 
-Security metadata describes authentication; rules and middleware enforce it.
-Cricket does not infer security from rule names or install authentication from
-a declaration. A requirement object combines schemes; array entries describe
-alternatives. `security: []` explicitly documents anonymous access. HTTP, API
-key, OAuth 2, OpenID Connect, and mutual TLS scheme descriptions are supported.
-Credentials belong in security schemes, not an `authorization` parameter.
+`securitySchemes` names the app's authentication methods. Endpoint `security`
+describes which ones a request needs. Rules and middleware enforce access.
 
-Request `headers` must be a Zod object with lowercase HTTP header names. Cricket
-selects those names from the incoming headers, validates them alongside body,
-params, and query, and exposes parsed values in `input.headers`. Rules can still
-read raw credentials from `request.headers`. Missing or invalid required headers
-produce the same 422 validation response as other invalid input. Use security
-and media types for `authorization`, `accept`, and `content-type` declarations.
+Schemes in one object are required together; separate array entries are
+alternatives. `security: []` documents anonymous access. Cricket supports HTTP,
+API key, OAuth 2, OpenID Connect, and mutual TLS descriptions.
 
-Response descriptors accept `schema` (or `body`), `description`, `contentType`,
-`headers`, and `example`, including inside status-specific `responses`.
-Documented headers have a `schema` and optional `description`/`example`.
-These descriptions do not set response headers: return the actual values with
-`withHeaders`. HEAD, 204, 205, and 304 responses have no documented content.
+Use lowercase names in request `headers`. Cricket validates only those headers
+and puts the parsed values in `input.headers`; missing or invalid required
+values return 422. Rules can read raw credentials from `request.headers`.
+Describe `authorization` through security schemes, and `accept`/`content-type`
+through content types.
 
-### Describe the bytes clients send and receive
+Response definitions accept `schema` (or `body`), `description`, `contentType`,
+`headers`, and `example`, including under status-specific `responses`. Each
+header needs a schema and can have a description or example. Return its actual
+value with `withHeaders`. HEAD, 204, 205, and 304 responses have no documented body.
 
-Cricket derives request schemas from Zod's input side and response schemas from
-its output side. For example, a string transformed through `.pipe(z.number())`
-is documented as a string request or a numeric response. Dates in responses
-become date-time strings. An unsupported transform, coercion, preprocessing step, or
-custom type fails documentation generation instead of silently becoming an
-unconstrained schema. Use a representable pipeline or explicitly describe its
-wire value with `.meta({ jsonSchema: { ... } })`. Input coercion needs explicit
-metadata because JavaScript coercion accepts more values than its resulting
-primitive type suggests. For a numeric query parameter, for example, declare
-`.meta({ jsonSchema: { type: 'number' } })` on the coercing schema to state the
-supported client contract:
-
+### Describe custom types
 
 ```js
 let BinaryFile = z.instanceof(Buffer).meta({
   jsonSchema: { type: 'string', format: 'binary' }
 });
 
-// Endpoint response declaration; the handler also sets this Content-Type.
+// The handler also sets this Content-Type with withHeaders.
 let response = { schema: BinaryFile, contentType: 'application/octet-stream' };
 ```
 
-The explicit JSON Schema describes the serialized value; it does not change
-Zod parsing or the HTTP writer. Keep it honest with a real HTTP test. Supply
-custom schema references as document JSON pointers; unresolved local references
-fail generation. Automatic recursive Zod references are not rebased into
-OpenAPI components. External references are preserved without fetching them.
+Cricket documents Zod input types for requests and output types for responses.
+A string transformed to a number is a string request or numeric response;
+response dates become date-time strings.
 
-Endpoint `requestBody` adds `description`, `example`, and `contentType` to the
-schema derived from `body`. JSON remains the default. Multipart endpoints use
-`multipart/form-data`; describe file parts separately from validated form fields:
+If Cricket can't describe a transform or custom type, docs generation fails.
+Add a known output type with `.pipe(...)` or describe the sent value with
+`jsonSchema` metadata, as above. This metadata doesn't change validation or
+serialization, so check it against a real HTTP response.
+
+Input coercion also needs metadata because JavaScript accepts more than the
+resulting type suggests. For a numeric query parameter, use
+`z.coerce.number().meta({ jsonSchema: { type: 'number' } })`.
+
+### Describe uploads and raw bodies
 
 ```js
 let body = z.object({ label: z.string() });
@@ -995,32 +983,37 @@ let requestBody = {
     properties: { asset: { type: 'string', format: 'binary' } }
   }
 };
-// Compose these into an endpoint with multipart: { maxFiles: 1, maxFileBytes: 1048576 }.
+// Use these with multipart: { maxFiles: 1, maxFileBytes: 1048576 }.
 ```
 
-`files` is an object schema with `type`, `properties`, and optional `required`.
-It describes multipart parts; it does not validate required filenames,
-MIME types, or file contents. Endpoint rules own those checks, while Cricket's
-multipart parser enforces configured size and count limits. File names cannot
-overlap validated form field names. A `rawBody` endpoint can supply
-`requestBody.schema` and a non-JSON media type such as `text/plain`; its rules
-own raw payload validation. `requestBody.required` can describe a raw or
-multipart requirement; otherwise it follows the body schema's optionality.
-It is documentation and does not add a body requirement at runtime.
+`requestBody` adds a `description`, `example`, or `contentType` to the `body`
+schema. JSON is the default; multipart endpoints use `multipart/form-data`.
 
-Model components include public schemas and named views containing only public
-fields. Internal views containing private fields are excluded from automatic
-components. Endpoint response declarations remain authoritative, so review
-those schemas and examples for private data before publishing. Generated docs
-do not contain rule implementations, database configuration, or field visibility
-metadata. Caller-owned metadata stays mutable; Cricket stores frozen copies.
+`files` accepts `type`, `properties`, and optional `required`. File names can't
+overlap body fields. Rules check required files, MIME types, and contents;
+Cricket enforces the configured size and count limits.
 
-Versioned projections preserve security, headers, descriptions, and media types.
-Examples attached to an endpoint body/response descriptor are omitted when a
-historical normalizer/serializer replaces that schema. Put version-specific
-examples on the corresponding Zod schema. Duplicate operations, conflicting
-route parameters, duplicate components, and unknown security schemes fail the
-build. See [the public contract example](examples/public-contracts.js).
+For raw requests, set `rawBody` and describe the input with `requestBody.schema`
+and a content type such as `text/plain`. Rules validate the raw data.
+`requestBody.required` only changes the docs; by default, it follows whether
+`body` accepts a missing value.
+
+### Check the generated docs
+
+Model components include public schemas and views containing only public fields.
+Review endpoint responses and examples too: they can still declare private data.
+Cricket copies and freezes documentation metadata without freezing your objects.
+
+Versioned docs keep security, headers, descriptions, and content types. When an
+older normalizer or serializer replaces a schema, Cricket drops its current
+body/response example. Put version-specific examples on that version's Zod schema.
+
+Duplicate operations/components, conflicting route parameters, unknown security
+schemes, and broken local references fail generation. Use document JSON pointers
+for local references; Cricket doesn't relocate recursive Zod references into
+OpenAPI components or fetch external references.
+
+See [the public API example](examples/public-contracts.js).
 
 ## Exports
 

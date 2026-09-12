@@ -30,8 +30,8 @@ let showReport = defineEndpoint({
   })
 });
 
-// A real application resolves user credentials in its middleware/context.
-// Security declarations describe the contract; the rule above enforces access.
+// Resolve user credentials in middleware or request context.
+// The rule above checks access; security metadata only documents it.
 export let app = defineCricketApp({
   name: 'Public contract example',
   version: '1.0.0',

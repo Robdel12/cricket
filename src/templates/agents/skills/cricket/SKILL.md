@@ -72,18 +72,15 @@ test every supported version through HTTP. Query/params, authorization, and
 thrown errors stay shared. Sunset dates only announce policy; remove a version
 and its deltas to reject it, then regenerate each published OpenAPI projection.
 
-Public HTTP docs belong to endpoint contracts. Declare app `securitySchemes`
-and endpoint `security` explicitly; rules and middleware still enforce access.
-Use lowercase `headers` schemas for validated `input.headers`. Response
-`contentType`, `headers`, and `example` describe the wire response; handlers
-still set real headers with `withHeaders`. `requestBody.files` describes
-multipart file parts and `requestBody.schema` describes raw bodies; rules own
-file/raw validation. Use representable input/output schemas or explicit
-`jsonSchema` metadata and verify the actual bytes through HTTP. Automatic model
-components exclude views containing private fields. Review selected operations,
-response schemas, and examples before publishing OpenAPI; metadata is not an
-authorization policy. Generate docs without starting application services.
+Declare app `securitySchemes` and endpoint `security` to document authentication.
+Rules and middleware enforce access. Use lowercase `headers` schemas for
+validated `input.headers`; return response headers with `withHeaders`.
 
+Use `requestBody.files` for multipart docs and `requestBody.schema` for raw-body
+docs. Rules validate the files or raw data. If Cricket can't describe a type,
+supply `jsonSchema` metadata and check it through HTTP. Automatic model
+components exclude views containing private fields. Review endpoint responses
+and examples before publishing; generate docs without starting services.
 
 ## Change Flow
 
