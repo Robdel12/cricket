@@ -21,7 +21,7 @@ function headerValues(headers, rawHeaders, name) {
   if (rawValues.length)
     return rawValues;
 
-  let value = headers[lowerName];
+  let value = headers?.[lowerName];
 
   if (Array.isArray(value))
     return value.map(String);
@@ -29,7 +29,7 @@ function headerValues(headers, rawHeaders, name) {
   return value === undefined ? [] : [String(value)];
 }
 
-function singleHeaderValue(req, name, {
+export function singleHeaderValue(req, name, {
   ambiguousMessage,
   rejectCommaSeparated = false,
   requiredMessage

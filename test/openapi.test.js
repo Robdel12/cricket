@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 
 import {
   deprecateEndpoint,
+  defineApiVersions,
   defineEndpoint,
   defineModel,
+  defineNormalizer,
+  defineSerializer,
   field,
   generateOpenApi,
   respond,
@@ -247,6 +250,117 @@ describe('Cricket OpenAPI', () => {
       reason: 'Use the batch screenshot upload flow instead.'
     });
     assert.equal(operation.responses[200].description, 'Success');
+  });
+
+  it('projects endpoint-owned API versions into exact OpenAPI contracts', () => {
+    let CurrentInput = z.object({
+      durationMinutes: z.number()
+    });
+    let LegacyInput = z.object({
+      duration_seconds: z.number()
+    });
+    let CurrentResponse = z.object({
+      id: z.string(),
+      durationMinutes: z.number()
+    });
+    let LegacyResponse = z.object({
+      session_id: z.string(),
+      duration_seconds: z.number()
+    });
+    let normalizeLegacy = defineNormalizer({
+      name: 'session.input.legacy',
+      source: LegacyInput,
+      output: CurrentInput,
+      normalize(value) {
+        return {
+          durationMinutes: value.duration_seconds / 60
+        };
+      }
+    });
+    let serializeLegacy = defineSerializer({
+      name: 'session.output.legacy',
+      output: LegacyResponse,
+      serialize(value) {
+        return {
+          session_id: value.id,
+          duration_seconds: value.durationMinutes * 60
+        };
+      }
+    });
+    let versions = defineApiVersions({
+      name: 'tornadic.ios',
+      header: 'Tornadic-Version',
+      current: '2026-09-01',
+      default: '2025-11-15',
+      versions: {
+        '2025-11-15': {},
+        '2026-09-01': {}
+      }
+    });
+    let endpoint = defineEndpoint({
+      method: 'post',
+      path: '/sessions',
+      apiVersions: versions({
+        '2025-11-15': {
+          body: normalizeLegacy,
+          responses: {
+            201: serializeLegacy
+          }
+        }
+      }),
+      body: CurrentInput,
+      responses: {
+        201: {
+          description: 'Session created',
+          schema: CurrentResponse
+        }
+      },
+      handler() {
+        return {};
+      }
+    });
+    let defaultDocs = generateOpenApi({ endpoints: [endpoint] });
+    let currentDocs = generateOpenApi({
+      endpoints: [endpoint],
+      apiVersions: {
+        'tornadic.ios': '2026-09-01'
+      }
+    });
+    let defaultOperation = defaultDocs.paths['/sessions'].post;
+    let currentOperation = currentDocs.paths['/sessions'].post;
+    let defaultHeader = defaultOperation.parameters.find(parameter =>
+      parameter.name === 'Tornadic-Version'
+    );
+    let currentHeader = currentOperation.parameters.find(parameter =>
+      parameter.name === 'Tornadic-Version'
+    );
+
+    assert.ok(defaultOperation.requestBody.content['application/json'].schema.properties.duration_seconds);
+    assert.ok(defaultOperation.responses[201].content['application/json'].schema.properties.session_id);
+    assert.equal(defaultOperation.responses[201].description, 'Session created');
+    assert.deepEqual(defaultHeader.schema, {
+      type: 'string',
+      enum: ['2025-11-15'],
+      default: '2025-11-15'
+    });
+    assert.equal(defaultHeader.required, false);
+    assert.ok(currentOperation.requestBody.content['application/json'].schema.properties.durationMinutes);
+    assert.ok(currentOperation.responses[201].content['application/json'].schema.properties.id);
+    assert.equal(currentHeader.required, true);
+    assert.deepEqual(currentHeader.schema.enum, ['2026-09-01']);
+
+    assert.throws(() => generateOpenApi({
+      endpoints: [endpoint],
+      apiVersions: {
+        'tornadic.ios': 'unknown'
+      }
+    }), /Unknown tornadic\.ios API version/);
+    assert.throws(() => generateOpenApi({
+      endpoints: [endpoint],
+      apiVersions: {
+        typo: '2026-09-01'
+      }
+    }), /Unknown API version family typo/);
   });
 
 });

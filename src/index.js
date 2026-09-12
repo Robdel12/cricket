@@ -27,6 +27,10 @@ export {
 } from './endpoint.js';
 
 export {
+  defineApiVersions
+} from './api-version.js';
+
+export {
   created,
   ok,
   redirect,

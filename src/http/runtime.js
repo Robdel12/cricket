@@ -6,6 +6,11 @@ import {
 
 import { supportedEndpointMethods } from '../endpoint.js';
 import {
+  apiVersionLogMetadata,
+  applyApiVersionHeaders,
+  resolveEndpointApiVersion
+} from '../api-version.js';
+import {
   isMainModule,
   resolveCricketApp
 } from '../app.js';
@@ -734,6 +739,8 @@ function createRuntimeHandler({
     let trace = createNoopTrace();
     let observedRequest;
     let route;
+    let routeEndpoint;
+    let apiVersionNegotiation;
 
     function writeContinue() {
       if (!expectContinue || continued || res.headersSent)
@@ -824,25 +831,34 @@ function createRuntimeHandler({
         if (match) {
           let matchedRequest = withMatchedParams(nextRequestContext.request, match);
           observedRequest = matchedRequest;
-          route = routeIdentityFor(match.endpoint);
+          routeEndpoint = match.endpoint;
+          route = routeIdentityFor(routeEndpoint);
+          apiVersionNegotiation = resolveEndpointApiVersion(routeEndpoint, matchedRequest);
+          let versionMetadata = apiVersionLogMetadata(apiVersionNegotiation);
           let routeLogger = requestLogger.child({
-            route
+            route,
+            ...versionMetadata
           });
           let routeTrace = trace.child({
-            route
+            route,
+            ...versionMetadata
           });
           requestLogger = routeLogger;
+          if (apiVersionNegotiation)
+            logRuntimeEvent(routeLogger, 'info', 'http.api_version.resolved', versionMetadata);
           logRuntimeEvent(routeLogger, 'info', 'http.route.matched', {
             request: safeRequestSnapshot(matchedRequest),
             route,
-            ...deprecationMetadata(match.endpoint)
+            ...versionMetadata,
+            ...deprecationMetadata(routeEndpoint)
           });
           await emitObserved(observability, replay, () => ({
             type: 'route.matched',
             requestId,
             request: safeRequestSnapshot(matchedRequest),
             route,
-            ...deprecationMetadata(match.endpoint)
+            ...versionMetadata,
+            ...deprecationMetadata(routeEndpoint)
           }));
           let matchedRequestContext = {
             ...nextRequestContext,
@@ -877,16 +893,17 @@ function createRuntimeHandler({
               () => completeRequestBody(
                 req,
                 requestContextForMatchedRequest.request,
-                match.endpoint
+                routeEndpoint
               )
             );
             observedRequest = parsedRequest;
 
-            let response = await match.endpoint.handle(parsedRequest, contextAfterBeforeBodyRules, {
+            let response = await routeEndpoint.handle(parsedRequest, contextAfterBeforeBodyRules, {
+              apiVersionNegotiation,
               timing
             });
 
-            return applyDeprecationHeaders(response, match.endpoint.deprecation);
+            return applyDeprecationHeaders(response, routeEndpoint.deprecation);
           } finally {
             await parsedRequest?.cleanup?.();
           }
@@ -918,6 +935,7 @@ function createRuntimeHandler({
       };
       let result = await composeMiddleware(middleware, finalHandler, timing)(requestContext);
       let response = resolveHttpResponse(result);
+      response = applyApiVersionHeaders(response, routeEndpoint, apiVersionNegotiation);
 
       writeObservedResponse(req, res, response, {
         logger: requestLogger,
@@ -929,6 +947,8 @@ function createRuntimeHandler({
       });
     } catch (error) {
       let response = toHttpError(error);
+
+      response = applyApiVersionHeaders(response, routeEndpoint, apiVersionNegotiation);
 
       await reportRequestError(appContract, {
         baseRequest,

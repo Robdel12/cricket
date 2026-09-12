@@ -98,6 +98,17 @@ Domains can use only the files they earn. Optional files stay optional, and
 domain-local filenames can describe the slice they contain as long as they keep
 Cricket's standard suffixes.
 
+API compatibility belongs at the endpoint boundary. Apps may share an
+immutable `defineApiVersions` family across routes, but each endpoint opts in
+explicitly and declares only its historical normalizer and serializer deltas.
+The current endpoint schemas remain the base contract. Historical requests
+must normalize through that same body schema; historical responses are projected
+from the parsed current output and then validated themselves. This preserves
+current field stripping and contract failures across supported versions. Models, services, rules,
+and handlers stay versionless, and `defineCricketApp` does not own an API
+version registry. An endpoint without version metadata does not inspect or
+reject version headers.
+
 ## Runtime
 
 Cricket provides its HTTP runtime. It should not wrap another web framework or pass

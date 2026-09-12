@@ -16,6 +16,10 @@ Use this when a change touches how a Cricket app explains itself.
 - Prefer structured metadata over formatted strings.
 - Do not log secrets. Cricket redacts common secret-shaped keys, but app code should still avoid putting sensitive values in logs.
 - Use child metadata for stable facts such as `requestId`, job identity, route identity, account IDs, or operation names.
+- Endpoint API version families add bounded family, selected version, source,
+  and optional client-version metadata to matched-route logs and traces. Use
+  those fields to measure compatibility usage; never log unsupported raw header
+  values.
 
 ## Trace
 

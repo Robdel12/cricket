@@ -3,6 +3,10 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { routeIdentityFor } from './route-identity.js';
+import {
+  collectApiVersionFamilies,
+  endpointApiVersionFamily
+} from './api-version.js';
 import { resolveCricketApp } from './app.js';
 import { generateOpenApi } from './openapi.js';
 import { normalizeDatabaseConfig } from './persistence/database.js';
@@ -230,12 +234,23 @@ export function createAppMap(contract) {
   let jobs = toArray(contract.jobs);
   let models = toArray(contract.models);
   let routes = toArray(contract.endpoints);
+  let apiVersions = collectApiVersionFamilies(routes);
 
   return {
     architecture: contract.architecture,
     name: contract.name,
     database: databaseSummaryFor(contract),
     observability: observabilitySummaryFor(contract),
+    ...(apiVersions.length ? {
+      apiVersions: apiVersions.map(family => ({
+        name: family.name,
+        header: family.header,
+        clientHeader: family.clientHeader,
+        current: family.current,
+        default: family.default,
+        versions: Object.keys(family.versions)
+      }))
+    } : {}),
     domains: domains.map((domain, index) => ({
       name: domainNameFor(domain, index),
       models: toArray(domain.models ?? domain.model).map(modelSummaryFor),
@@ -256,6 +271,12 @@ export function createAppMap(contract) {
       ...routeIdentityFor(endpoint),
       path: withPathPrefix(endpoint.path, contract.prefix),
       deprecation: endpoint.deprecation,
+      ...(endpoint.apiVersions ? {
+        apiVersions: {
+          family: endpointApiVersionFamily(endpoint).name,
+          deltas: Object.keys(endpoint.apiVersions.versions)
+        }
+      } : {}),
       rules: ruleNamesFor(endpoint),
       summary: endpoint.summary,
       tags: endpoint.tags
@@ -283,6 +304,19 @@ export function formatAppMap(appMap) {
       ? `Database: ${appMap.database.client ?? 'configured'}${appMap.database.environment ? ` (${appMap.database.environment})` : ''}`
       : 'Database: disabled'
   );
+
+  if (appMap.apiVersions?.length) {
+    lines.push('', 'API versions');
+    for (let family of appMap.apiVersions) {
+      lines.push(`  ${family.name}`);
+      lines.push(`    header: ${family.header}`);
+      if (family.clientHeader)
+        lines.push(`    client header: ${family.clientHeader}`);
+      lines.push(`    current: ${family.current}`);
+      lines.push(`    default: ${family.default}`);
+      lines.push(`    supported: ${family.versions.join(', ')}`);
+    }
+  }
 
   lines.push('', 'Domains');
   for (let domain of appMap.domains) {
@@ -326,6 +360,10 @@ export function formatAppMap(appMap) {
   lines.push('', 'Routes');
   for (let route of appMap.routes) {
     lines.push(`  ${routeLine(route)} (${route.operationId})`);
+    if (route.apiVersions) {
+      lines.push(`    API versions: ${route.apiVersions.family}`);
+      lines.push(`    compatibility deltas: ${route.apiVersions.deltas.join(', ') || 'none'}`);
+    }
     if (route.deprecation?.sunset)
       lines.push(`    sunset: ${route.deprecation.sunset}`);
     if (route.deprecation?.replacement)

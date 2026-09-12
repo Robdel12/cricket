@@ -8,6 +8,7 @@ import {
   loadDomains
 } from './domain.js';
 import { flattenRoutes } from './http/router.js';
+import { collectApiVersionFamilies } from './api-version.js';
 import { assertKnownOptions } from './options.js';
 import { normalizeDatabaseConfig } from './persistence/database.js';
 
@@ -168,6 +169,9 @@ export function defineCricketApp(options = {}) {
   let middleware = options.middleware ?? [];
   let database = normalizeDatabaseConfig(options.database);
 
+  if (endpoints !== undefined)
+    collectApiVersionFamilies(flattenRoutes(endpoints));
+
   let contract = freezeAppContract({
     ...options,
     architecture,
@@ -204,10 +208,14 @@ export async function resolveCricketApp(app, {
   let hasExplicitJobs = Object.hasOwn(definedApp, 'jobs');
   let hasExplicitModels = Object.hasOwn(definedApp, 'models');
 
+  let endpoints = flattenRoutes(hasExplicitEndpoints ? definedApp.endpoints : collectEndpoints(domains));
+
+  collectApiVersionFamilies(endpoints);
+
   return freezeAppContract({
     ...definedApp,
     domains,
-    endpoints: flattenRoutes(hasExplicitEndpoints ? definedApp.endpoints : collectEndpoints(domains)),
+    endpoints,
     jobs: hasExplicitJobs ? definedApp.jobs : collectJobs(domains),
     models: hasExplicitModels ? definedApp.models : collectModels(domains)
   });

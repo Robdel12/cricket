@@ -1,5 +1,11 @@
 import { applyRules } from './rule.js';
 import {
+  endpointVersionContract,
+  isApiVersionContract,
+  resolveEndpointApiVersion
+} from './api-version.js';
+import {
+  normalizerContractFailed,
   responseContractFailed,
   validationFailed
 } from './errors.js';
@@ -36,6 +42,7 @@ let endpointOptionKeys = new Set([
   'maxBodyBytes',
   'multipart',
   'rawBody',
+  'apiVersions',
   'body',
   'params',
   'query',
@@ -107,6 +114,60 @@ function parseResponse(schema, value) {
   if (!isZodSchema(schema)) return value;
 
   return parseZod(schema, value, responseContractFailed);
+}
+
+function assertApiVersions(apiVersions, method, path, {
+  body,
+  response,
+  responses
+}) {
+  if (apiVersions === undefined)
+    return;
+
+  if (!isApiVersionContract(apiVersions))
+    throw new Error(`${method} ${path} apiVersions must come from defineApiVersions`);
+
+  for (let [version, contract] of Object.entries(apiVersions.versions)) {
+    if (contract.body && !body)
+      throw new Error(`${method} ${path} API version ${version} body needs a current body contract`);
+    if (contract.body && contract.body.output !== body)
+      throw new Error(`${method} ${path} API version ${version} normalizer output must be the endpoint body schema`);
+    if ((contract.response || contract.responses) && !response && !responses)
+      throw new Error(`${method} ${path} API version ${version} response needs a current response contract`);
+    if (responses && contract.response)
+      throw new Error(`${method} ${path} API version ${version} must use status-specific responses`);
+    if (response && contract.responses)
+      throw new Error(`${method} ${path} API version ${version} must use one response serializer`);
+    if (contract.response && !isZodSchema(responseSchemaFrom(response)))
+      throw new Error(`${method} ${path} API version ${version} needs a current Zod response schema`);
+    for (let status of Object.keys(contract.responses ?? {})) {
+      if (!Object.hasOwn(responses ?? {}, status))
+        throw new Error(`${method} ${path} API version ${version} response ${status} needs a current response contract`);
+      if (!isZodSchema(responseSchemaFrom(responses[status])))
+        throw new Error(`${method} ${path} API version ${version} response ${status} needs a current Zod response schema`);
+    }
+  }
+}
+
+function requestBodyForVersion(body, versionContract, request, context) {
+  if (versionContract?.body) {
+    let normalized = versionContract.body(request.body, context);
+    if (normalized === null || normalized === undefined)
+      throw normalizerContractFailed({});
+    return normalized;
+  }
+
+  return parseRequestSchema(body, request.body);
+}
+
+function responseSerializerFor(versionContract, status) {
+  if (!versionContract)
+    return undefined;
+
+  if (versionContract.responses)
+    return versionContract.responses[status];
+
+  return versionContract.response;
 }
 
 function assertKnownEndpointOptions(config) {
@@ -252,6 +313,7 @@ export function defaultStatusForMethod(method) {
  * @param {number} [config.maxBodyBytes] - Maximum buffered request body size for this endpoint.
  * @param {boolean|object} [config.multipart=false] - Parse multipart form data for this endpoint.
  * @param {boolean|object} [config.rawBody=false] - Endpoint option for requests that need the unparsed request body.
+ * @param {object} [config.apiVersions] - Optional endpoint version contract returned by defineApiVersions().
  * @param {import('zod').ZodTypeAny} [config.body]
  * @param {import('zod').ZodTypeAny} [config.params]
  * @param {import('zod').ZodTypeAny} [config.query]
@@ -302,6 +364,7 @@ export function defineEndpoint(config) {
     maxBodyBytes,
     multipart = false,
     rawBody = false,
+    apiVersions,
     body,
     params,
     query,
@@ -320,6 +383,11 @@ export function defineEndpoint(config) {
     throw new Error(`${normalizedMethod} ${path} needs a handler`);
   if (traceName !== undefined && typeof traceName !== 'string')
     throw new Error(`${normalizedMethod} ${path} traceName must be a string`);
+  assertApiVersions(apiVersions, normalizedMethod, path, {
+    body,
+    response,
+    responses
+  });
 
   let endpoint = {
     method: normalizedMethod,
@@ -332,6 +400,7 @@ export function defineEndpoint(config) {
     maxBodyBytes,
     multipart: frozenPlain(multipart),
     rawBody: frozenPlain(rawBody),
+    ...(apiVersions === undefined ? {} : { apiVersions }),
     body,
     params,
     query,
@@ -341,10 +410,19 @@ export function defineEndpoint(config) {
     rules: Object.freeze([...rules]),
 
     async handle(request, context = {}, {
+      apiVersionNegotiation,
       timing
     } = {}) {
+      let negotiation = apiVersions
+        ? apiVersionNegotiation ?? resolveEndpointApiVersion(endpoint, request)
+        : undefined;
+      let versionContract = endpointVersionContract(endpoint, negotiation?.version);
+      let versionContext = negotiation ? {
+        ...context,
+        apiVersion: negotiation.version
+      } : context;
       let input = await timePhase(timing, 'validationMs', () => ({
-        body: parseRequestSchema(body, request.body),
+        body: requestBodyForVersion(body, versionContract, request, versionContext),
         params: parseRequestObjectSchema(params, request.params),
         query: parseRequestObjectSchema(query, request.query)
       }));
@@ -365,9 +443,13 @@ export function defineEndpoint(config) {
 
         return handler(handlerContext);
       });
+      let serializerContext = negotiation ? {
+        ...handlerContext,
+        apiVersion: negotiation.version
+      } : handlerContext;
 
       return await timePhase(timing, 'responseValidationMs', () =>
-        parseEndpointResponse(endpoint, result)
+        parseEndpointResponse(endpoint, result, versionContract, serializerContext)
       );
     }
   };
@@ -395,15 +477,18 @@ export function deprecateEndpoint(endpoint, deprecation) {
   });
 }
 
-function parseEndpointResponse(endpoint, result) {
+function parseEndpointResponse(endpoint, result, versionContract, context) {
   let response = resolveHttpResponse(result, defaultStatusForMethod(endpoint.method));
 
   if (response.redirect)
     return response;
 
-  let schema = responseSchemaFrom(
-    responseDefinitionFor(endpoint, response.status)
+  let serializer = responseSerializerFor(versionContract, response.status);
+  let canonicalBody = parseResponse(
+    responseSchemaFrom(responseDefinitionFor(endpoint, response.status)),
+    response.body
   );
+  let body = serializer ? serializer(canonicalBody, context) : canonicalBody;
 
-  return withResponseBody(response, parseResponse(schema, response.body));
+  return withResponseBody(response, body);
 }

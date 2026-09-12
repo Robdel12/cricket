@@ -152,6 +152,30 @@ export function withHeaders(response, headers) {
 }
 
 /**
+ * Replace every response header with an exact immutable header object.
+ *
+ * Framework response policies use this after case-insensitive normalization so
+ * differently-cased caller headers cannot survive as duplicate wire fields.
+ *
+ * @param {object} response
+ * @param {Record<string, any>} headers
+ * @returns {object}
+ */
+export function withResponseHeaders(response, headers) {
+  assertResponse(response, 'withResponseHeaders');
+
+  if (!headers || typeof headers !== 'object' || Array.isArray(headers))
+    throw new Error('withResponseHeaders needs a header object');
+
+  return responseValue({
+    ...response,
+    headers,
+    location: response.redirect,
+    cleanup: response.onClose
+  });
+}
+
+/**
  * Append response cookies to an explicit Cricket response.
  *
  * @param {object} response
