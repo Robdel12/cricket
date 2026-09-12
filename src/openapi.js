@@ -25,8 +25,54 @@ function withPathPrefix(path, prefix) {
   return `${prefix.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
 }
 
-function schemaProperties(schema, source) {
-  let jsonSchema = toJsonSchema(schema);
+function localSchemaTarget(schema, reference) {
+  if (reference === '#') return schema;
+  if (!reference.startsWith('#/')) return undefined;
+  let target = schema;
+  for (let part of decodeURIComponent(reference.slice(2)).split('/')) {
+    let key = part.replace(/~1/g, '/').replace(/~0/g, '~');
+    if (!target || !Object.hasOwn(target, key)) return undefined;
+    target = target[key];
+  }
+  return target;
+}
+
+/**
+ * Keep each converted Zod schema's local references in its own component.
+ * State belongs to one document build; only freshly generated schemas are edited.
+ * Explicit OpenAPI references and caller-owned JSON Schema are left alone.
+ */
+function createSchemaConverter(models) {
+  let reservedNames = new Set((models ?? []).flatMap(model =>
+    schemaEntriesForModel(model).map(([name]) => name)
+  ));
+  let schemas = {};
+  let nextId = 1;
+  function convert(schema, { inline = false, ...options } = {}) {
+    let converted = toJsonSchema(schema, options);
+    if (!isZodSchema(schema)) return converted;
+    let references = [];
+    visitJsonSchema(converted, node => {
+      if (typeof node.$ref === 'string' && localSchemaTarget(converted, node.$ref) !== undefined)
+        references.push(node);
+    });
+    if (!references.length) return converted;
+    let name;
+    do { name = `RecursiveSchema${nextId++}`; } while (reservedNames.has(name));
+    let root = `#/components/schemas/${name}`;
+    for (let node of references) node.$ref = root + node.$ref.slice(1);
+    schemas[name] = converted;
+    if (!inline) return { $ref: root };
+    // Parameters and multipart fields need the object shape, but their references
+    // now resolve through the component, so they don't need a second copy of defs.
+    let { $defs, definitions, ...shape } = converted;
+    return shape;
+  }
+  return { convert, schemas };
+}
+
+function schemaProperties(schema, source, convert) {
+  let jsonSchema = convert(schema, { inline: true });
 
   if (!jsonSchema) return [];
 
@@ -60,8 +106,8 @@ function contentForSchema(schema, contentType = JSON_CONTENT_TYPE, example) {
   };
 }
 
-function parametersFromSchema(source, schema) {
-  return schemaProperties(schema, source).map(parameter => ({
+function parametersFromSchema(source, schema, convert) {
+  return schemaProperties(schema, source, convert).map(parameter => ({
     name: parameter.name,
     in: source,
     required: source === 'path' ? true : parameter.required,
@@ -76,12 +122,13 @@ function parametersFromSchema(source, schema) {
  *
  * @param {object|undefined} schema - Converted form-field schema.
  * @param {object} fileSchema - Zod or JSON Schema describing the file parts.
+ * @param {Function} convert - Convert schemas within this document.
  * @returns {object} Combined multipart object schema.
  */
-function multipartBodySchema(schema, fileSchema) {
+function multipartBodySchema(schema, fileSchema, convert) {
   if (schema && schema.type !== 'object')
     throw new Error('Multipart body schema must describe an object');
-  let files = toJsonSchema(fileSchema);
+  let files = convert(fileSchema, { inline: true });
   if (!files || files.type !== 'object')
     throw new Error('requestBody.files must describe an object of file parts');
   for (let key of Object.keys(files)) {
@@ -98,14 +145,14 @@ function multipartBodySchema(schema, fileSchema) {
   };
 }
 
-function requestBodyForEndpoint(endpoint) {
+function requestBodyForEndpoint(endpoint, convert) {
   let metadata = endpoint.requestBody ?? {};
-  let schema = toJsonSchema(metadata.schema ?? endpoint.body);
+  let schema = convert(metadata.schema ?? endpoint.body, { inline: Boolean(endpoint.multipart) });
   let contentType = metadata.contentType ?? (endpoint.multipart ? 'multipart/form-data' : JSON_CONTENT_TYPE);
   if (metadata.files) {
     if (!endpoint.multipart)
       throw new Error('requestBody.files requires multipart');
-    schema = multipartBodySchema(schema, metadata.files);
+    schema = multipartBodySchema(schema, metadata.files, convert);
   }
   if (!schema) {
     if (endpoint.requestBody)
@@ -123,7 +170,7 @@ function requestBodyForEndpoint(endpoint) {
   };
 }
 
-function responseHeaders(headers = {}) {
+function responseHeaders(headers = {}, convert) {
   if (!isPlainObject(headers)) throw new Error('Response headers must be an object');
   let names = new Set();
   return Object.fromEntries(Object.entries(headers).map(([name, definition]) => {
@@ -133,7 +180,7 @@ function responseHeaders(headers = {}) {
     if (names.has(normalizedName)) throw new Error(`Duplicate response header ${name}`);
     names.add(normalizedName);
     let descriptor = isZodSchema(definition) ? { schema: definition } : definition;
-    let schema = toJsonSchema(descriptor?.schema);
+    let schema = convert(descriptor?.schema);
     if (!schema) throw new Error(`Response header ${name} needs a schema`);
     return [name, {
       ...(descriptor.description ? { description: descriptor.description } : {}),
@@ -143,30 +190,30 @@ function responseHeaders(headers = {}) {
   }));
 }
 
-function normalizeResponse(status, response, method) {
+function normalizeResponse(status, response, method, convert) {
   let descriptor = isZodSchema(response) || response?.type || response?.properties
     ? { schema: response }
     : response ?? {};
   if (!/^(?:[1-5][0-9]{2}|[1-5]XX|default)$/.test(status))
     throw new Error(`Invalid response status ${status}`);
   let noBody = method === 'HEAD' || ['204', '205', '304'].includes(status);
-  let schema = noBody ? undefined : toJsonSchema(
+  let schema = noBody ? undefined : convert(
     descriptor.serializer?.output ?? descriptor.schema ?? descriptor.body,
     { io: 'output' }
   );
   return {
     description: descriptor.description ?? (noBody ? 'No content' : 'Success'),
-    ...(descriptor.headers ? { headers: responseHeaders(descriptor.headers) } : {}),
+    ...(descriptor.headers ? { headers: responseHeaders(descriptor.headers, convert) } : {}),
     ...(schema ? { content: contentForSchema(schema, descriptor.contentType, descriptor.example) } : {})
   };
 }
 
-function responsesForEndpoint(endpoint) {
+function responsesForEndpoint(endpoint, convert) {
   if (endpoint.responses) {
     return Object.fromEntries(
       Object.entries(endpoint.responses).map(([status, response]) => [
         status,
-        normalizeResponse(status, response, endpoint.method)
+        normalizeResponse(status, response, endpoint.method, convert)
       ])
     );
   }
@@ -175,7 +222,7 @@ function responsesForEndpoint(endpoint) {
     let status = String(defaultStatusForMethod(endpoint.method));
 
     return {
-      [status]: normalizeResponse(status, endpoint.response, endpoint.method)
+      [status]: normalizeResponse(status, endpoint.response, endpoint.method, convert)
     };
   }
 
@@ -271,14 +318,14 @@ function schemaEntriesForModel(model) {
   return entries.filter(([, schema]) => schema);
 }
 
-function componentSchemas(models) {
+function componentSchemas(models, convert) {
   let schemas = {};
 
   for (let model of models ?? []) {
     for (let [name, schema] of schemaEntriesForModel(model)) {
       if (Object.hasOwn(schemas, name)) throw new Error(`Duplicate component schema ${name}`);
       Object.defineProperty(schemas, name, {
-        value: toJsonSchema(schema, { io: 'output' }), enumerable: true
+        value: convert(schema, { io: 'output' }), enumerable: true
       });
     }
   }
@@ -286,13 +333,13 @@ function componentSchemas(models) {
   return schemas;
 }
 
-function endpointOperation(endpoint, apiVersions) {
+function endpointOperation(endpoint, apiVersions, convert) {
   let selection = selectedApiVersion(endpoint, apiVersions);
   let projectedEndpoint = endpointForApiVersion(endpoint, selection);
   let parameters = [
-    ...parametersFromSchema('path', projectedEndpoint.params),
-    ...parametersFromSchema('query', projectedEndpoint.query),
-    ...parametersFromSchema('header', projectedEndpoint.headers),
+    ...parametersFromSchema('path', projectedEndpoint.params, convert),
+    ...parametersFromSchema('query', projectedEndpoint.query, convert),
+    ...parametersFromSchema('header', projectedEndpoint.headers, convert),
     apiVersionParameter(selection)
   ].filter(Boolean);
   let headerNames = new Set();
@@ -304,7 +351,7 @@ function endpointOperation(endpoint, apiVersions) {
       throw new Error(`Describe ${name} through auth or content types, not header parameters`);
     headerNames.add(name);
   }
-  let requestBody = requestBodyForEndpoint(projectedEndpoint);
+  let requestBody = requestBodyForEndpoint(projectedEndpoint, convert);
   let deprecation = endpoint.deprecation;
 
   return {
@@ -319,7 +366,7 @@ function endpointOperation(endpoint, apiVersions) {
     ...(endpoint.auth === undefined ? {} : { security: endpoint.auth }),
     ...(parameters.length ? { parameters } : {}),
     ...(requestBody ? { requestBody } : {}),
-    responses: responsesForEndpoint(projectedEndpoint)
+    responses: responsesForEndpoint(projectedEndpoint, convert)
   };
 }
 
@@ -454,11 +501,8 @@ export function generateOpenApi({
   let operations = new Set();
   let routes = new Set();
   let pathNames = new Map();
-  let schemas = componentSchemas(models);
-  let components = {
-    ...(Object.keys(schemas).length ? { schemas } : {}),
-    ...(Object.keys(authMethods).length ? { securitySchemes: authMethods } : {})
-  };
+  let converter = createSchemaConverter(models);
+  let schemas = componentSchemas(models, converter.convert);
 
   for (let endpoint of endpoints) {
     let openApiPath = toOpenApiPath(withPathPrefix(endpoint.path, pathPrefix));
@@ -475,9 +519,14 @@ export function generateOpenApi({
     validateAuthRequirements(endpoint.auth, authMethods);
     if (!Object.hasOwn(paths, openApiPath))
       Object.defineProperty(paths, openApiPath, { value: {}, enumerable: true });
-    paths[openApiPath][endpoint.method.toLowerCase()] = endpointOperation(endpoint, apiVersions);
+    paths[openApiPath][endpoint.method.toLowerCase()] = endpointOperation(endpoint, apiVersions, converter.convert);
   }
 
+  schemas = { ...schemas, ...converter.schemas };
+  let components = {
+    ...(Object.keys(schemas).length ? { schemas } : {}),
+    ...(Object.keys(authMethods).length ? { securitySchemes: authMethods } : {})
+  };
   let document = {
     openapi: '3.1.0',
     info: {

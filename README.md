@@ -1035,8 +1035,10 @@ body/response example. Put version-specific examples on that version's Zod schem
 
 Duplicate operations/components, conflicting route parameters, unknown auth
 methods, and broken local references fail generation. Use document JSON pointers
-for local references; Cricket doesn't relocate recursive Zod references into
-OpenAPI components or fetch external references.
+for references you write yourself. Cricket moves recursive Zod schemas, including
+`z.json()`, into OpenAPI components and keeps their local references intact.
+Generated component names are internal; don't hardcode them. Cricket doesn't
+fetch external references.
 
 See [the public API example](examples/public-contracts.js).
 

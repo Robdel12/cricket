@@ -347,6 +347,7 @@ describe('Cricket CLI', () => {
     for (let guidance of [agents, cricketSkill]) {
       assert.match(guidance, /authMethods/);
       assert.match(guidance, /serializer: currentSerializer/);
+      assert.match(guidance, /Recursive Zod schemas and `z.json\(\)` work/);
       assert.match(guidance, /derive data requirements there/);
       assert.match(guidance, /validated `input.headers`/);
       assert.match(guidance, /components exclude views containing private fields/);
