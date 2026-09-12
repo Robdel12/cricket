@@ -5,6 +5,7 @@ import {
   resolveEndpointApiVersion
 } from './api-version.js';
 import {
+  normalizerContractFailed,
   responseContractFailed,
   validationFailed
 } from './errors.js';
@@ -39,6 +40,7 @@ let endpointOptionKeys = new Set([
   'operationId',
   'traceName',
   'maxBodyBytes',
+  'multipart',
   'rawBody',
   'apiVersions',
   'body',
@@ -46,6 +48,7 @@ let endpointOptionKeys = new Set([
   'query',
   'response',
   'responses',
+  'beforeBodyRules',
   'rules',
   'handler'
 ]);
@@ -127,18 +130,32 @@ function assertApiVersions(apiVersions, method, path, {
   for (let [version, contract] of Object.entries(apiVersions.versions)) {
     if (contract.body && !body)
       throw new Error(`${method} ${path} API version ${version} body needs a current body contract`);
+    if (contract.body && contract.body.output !== body)
+      throw new Error(`${method} ${path} API version ${version} normalizer output must be the endpoint body schema`);
     if ((contract.response || contract.responses) && !response && !responses)
       throw new Error(`${method} ${path} API version ${version} response needs a current response contract`);
     if (responses && contract.response)
       throw new Error(`${method} ${path} API version ${version} must use status-specific responses`);
     if (response && contract.responses)
       throw new Error(`${method} ${path} API version ${version} must use one response serializer`);
+    if (contract.response && !isZodSchema(responseSchemaFrom(response)))
+      throw new Error(`${method} ${path} API version ${version} needs a current Zod response schema`);
+    for (let status of Object.keys(contract.responses ?? {})) {
+      if (!Object.hasOwn(responses ?? {}, status))
+        throw new Error(`${method} ${path} API version ${version} response ${status} needs a current response contract`);
+      if (!isZodSchema(responseSchemaFrom(responses[status])))
+        throw new Error(`${method} ${path} API version ${version} response ${status} needs a current Zod response schema`);
+    }
   }
 }
 
 function requestBodyForVersion(body, versionContract, request, context) {
-  if (versionContract?.body)
-    return versionContract.body(request.body, context);
+  if (versionContract?.body) {
+    let normalized = versionContract.body(request.body, context);
+    if (normalized === null || normalized === undefined)
+      throw normalizerContractFailed({});
+    return normalized;
+  }
 
   return parseRequestSchema(body, request.body);
 }
@@ -294,6 +311,7 @@ export function defaultStatusForMethod(method) {
  * @param {string} [config.operationId]
  * @param {string} [config.traceName] - Optional request trace span name for the handler.
  * @param {number} [config.maxBodyBytes] - Maximum buffered request body size for this endpoint.
+ * @param {boolean|object} [config.multipart=false] - Parse multipart form data for this endpoint.
  * @param {boolean|object} [config.rawBody=false] - Endpoint option for requests that need the unparsed request body.
  * @param {object} [config.apiVersions] - Optional endpoint version contract returned by defineApiVersions().
  * @param {import('zod').ZodTypeAny} [config.body]
@@ -301,6 +319,7 @@ export function defaultStatusForMethod(method) {
  * @param {import('zod').ZodTypeAny} [config.query]
  * @param {any} [config.response]
  * @param {Record<string | number, any>} [config.responses]
+ * @param {Array<Function>} [config.beforeBodyRules=[]] - Rules that run before request body parsing.
  * @param {Array<Function>} [config.rules=[]]
  * @param {(context: any) => any|Promise<any>} config.handler
  * @returns {{
@@ -312,12 +331,14 @@ export function defaultStatusForMethod(method) {
  *   operationId?: string,
  *   traceName?: string,
  *   maxBodyBytes?: number,
+ *   multipart?: boolean|object,
  *   rawBody?: boolean|object,
  *   body?: any,
  *   params?: any,
  *   query?: any,
  *   response?: any,
  *   responses?: Record<string | number, any>,
+ *   beforeBodyRules: Array<Function>,
  *   rules: Array<Function>,
  *   handle(request: any, context?: any): Promise<{
  *     status: number,
@@ -341,6 +362,7 @@ export function defineEndpoint(config) {
     operationId,
     traceName,
     maxBodyBytes,
+    multipart = false,
     rawBody = false,
     apiVersions,
     body,
@@ -348,6 +370,7 @@ export function defineEndpoint(config) {
     query,
     response,
     responses,
+    beforeBodyRules = [],
     rules = [],
     handler
   } = config;
@@ -375,6 +398,7 @@ export function defineEndpoint(config) {
     operationId,
     traceName,
     maxBodyBytes,
+    multipart: frozenPlain(multipart),
     rawBody: frozenPlain(rawBody),
     ...(apiVersions === undefined ? {} : { apiVersions }),
     body,
@@ -382,6 +406,7 @@ export function defineEndpoint(config) {
     query,
     response: frozenPlain(response),
     responses: frozenPlain(responses),
+    beforeBodyRules: Object.freeze([...beforeBodyRules]),
     rules: Object.freeze([...rules]),
 
     async handle(request, context = {}, {
@@ -459,12 +484,11 @@ function parseEndpointResponse(endpoint, result, versionContract, context) {
     return response;
 
   let serializer = responseSerializerFor(versionContract, response.status);
-  let body = serializer
-    ? serializer(response.body, context)
-    : parseResponse(
-      responseSchemaFrom(responseDefinitionFor(endpoint, response.status)),
-      response.body
-    );
+  let canonicalBody = parseResponse(
+    responseSchemaFrom(responseDefinitionFor(endpoint, response.status)),
+    response.body
+  );
+  let body = serializer ? serializer(canonicalBody, context) : canonicalBody;
 
   return withResponseBody(response, body);
 }

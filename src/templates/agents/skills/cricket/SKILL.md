@@ -65,6 +65,13 @@ contract, and place only historical body normalizers and response serializers
 inside `apiVersions`. Do not put API versions on models or branch services and
 handlers by SDK version. Routes without `apiVersions` ignore version headers.
 
+Reuse the endpoint body schema as a version normalizer's output; skipped
+bodies are contract failures. Historical serializers receive the parsed current
+response and validate their own output. Use explicit public Zod projections and
+test every supported version through HTTP. Query/params, authorization, and
+thrown errors stay shared. Sunset dates only announce policy; remove a version
+and its deltas to reject it, then regenerate each published OpenAPI projection.
+
 ## Change Flow
 
 1. Update the schema at the boundary that changed.

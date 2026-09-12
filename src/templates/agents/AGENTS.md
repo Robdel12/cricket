@@ -86,6 +86,13 @@ current endpoint schemas as the base contract. Do not register versions on
 `defineCricketApp`, put versions on models, or branch services and handlers by
 client version. Endpoints without `apiVersions` ignore version headers.
 
+Reuse the endpoint body schema as a version normalizer's output; skipped
+bodies are contract failures. Historical serializers receive the parsed current
+response and validate their own output. Use explicit public Zod projections and
+test every supported version through HTTP. Query/params, authorization, and
+thrown errors stay shared. Sunset dates only announce policy; remove a version
+and its deltas to reject it, then regenerate each published OpenAPI projection.
+
 ## Jobs
 
 Use `defineJob` for asynchronous work that needs validated input, retry policy,

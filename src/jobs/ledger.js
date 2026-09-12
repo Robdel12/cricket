@@ -34,18 +34,11 @@ function ledgerRowForEnvelope(envelope, now) {
   };
 }
 
-async function updateOrInsert(db, tableName, envelope, values) {
-  let updated = await db(tableName)
-    .where('id', envelope.id)
-    .update(values);
-
-  if (updated)
-    return;
-
+async function upsertLifecycleState(db, tableName, envelope, values) {
   await db(tableName).insert({
     ...ledgerRowForEnvelope(envelope),
     ...values
-  });
+  }).onConflict('id').merge(values);
 }
 
 /**
@@ -127,14 +120,17 @@ export function createJobLedger({
 
   return {
     async queued(envelope) {
-      await db(tableName).insert(ledgerRowForEnvelope(envelope));
+      await db(tableName)
+        .insert(ledgerRowForEnvelope(envelope))
+        .onConflict('id')
+        .ignore();
     },
 
     async started(envelope, {
       attempt,
       jobRunId
     }) {
-      await updateOrInsert(db, tableName, envelope, {
+      await upsertLifecycleState(db, tableName, envelope, {
         status: 'active',
         attempts: attempt,
         job_run_id: jobRunId,
@@ -146,7 +142,7 @@ export function createJobLedger({
     async progressed(envelope, {
       progress
     }) {
-      await updateOrInsert(db, tableName, envelope, {
+      await upsertLifecycleState(db, tableName, envelope, {
         latest_progress: textValue(progress),
         updated_at: timestamp()
       });
@@ -155,7 +151,7 @@ export function createJobLedger({
     async completed(envelope, {
       result
     }) {
-      await updateOrInsert(db, tableName, envelope, {
+      await upsertLifecycleState(db, tableName, envelope, {
         status: 'completed',
         result: textValue(result),
         finished_at: timestamp(),
@@ -169,7 +165,7 @@ export function createJobLedger({
       error,
       status
     }) {
-      await updateOrInsert(db, tableName, envelope, {
+      await upsertLifecycleState(db, tableName, envelope, {
         status,
         attempts: attempt,
         available_at: availableAt,
@@ -182,7 +178,7 @@ export function createJobLedger({
       attempt,
       error
     }) {
-      await updateOrInsert(db, tableName, envelope, {
+      await upsertLifecycleState(db, tableName, envelope, {
         status: 'failed',
         attempts: attempt,
         last_error: textValue(error),

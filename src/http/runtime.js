@@ -24,6 +24,7 @@ import { resolveLogger } from '../logger.js';
 import { normalizeObservability } from '../observability.js';
 import { assertKnownOptions } from '../options.js';
 import { createDatabaseConnection } from '../persistence/database.js';
+import { applyRules } from '../rule.js';
 import {
   createNoopTrace,
   createTrace
@@ -636,6 +637,14 @@ function writeObservedResponse(req, res, response, {
   route,
   timing
 }) {
+  if (!req.complete && !req.destroyed) {
+    res.shouldKeepAlive = false;
+    res.setHeader('connection', 'close');
+    res.once('finish', () => {
+      if (!req.destroyed) req.destroy();
+    });
+  }
+
   let observer = observeResponse({
     logger,
     replay,
@@ -868,26 +877,36 @@ function createRuntimeHandler({
             })
           );
 
+          let contextAfterBeforeBodyRules = await timing.time('beforeBodyRulesMs', () =>
+            applyRules(match.endpoint.beforeBodyRules, {
+              ...requestContextForMatchedRequest.context,
+              request: requestContextForMatchedRequest.request
+            })
+          );
+
           writeContinue();
 
-          let parsedRequest = await timing.time(
-            'bodyMs',
-            () => completeRequestBody(
-              req,
-              requestContextForMatchedRequest.request,
-              routeEndpoint
-            )
-          );
-          observedRequest = parsedRequest;
+          let parsedRequest;
+          try {
+            parsedRequest = await timing.time(
+              'bodyMs',
+              () => completeRequestBody(
+                req,
+                requestContextForMatchedRequest.request,
+                routeEndpoint
+              )
+            );
+            observedRequest = parsedRequest;
 
-          let response = await routeEndpoint.handle(parsedRequest, requestContextForMatchedRequest.context, {
-            apiVersionNegotiation,
-            timing
-          });
+            let response = await routeEndpoint.handle(parsedRequest, contextAfterBeforeBodyRules, {
+              apiVersionNegotiation,
+              timing
+            });
 
-          response = applyDeprecationHeaders(response, routeEndpoint.deprecation);
-
-          return applyApiVersionHeaders(response, routeEndpoint, apiVersionNegotiation);
+            return applyDeprecationHeaders(response, routeEndpoint.deprecation);
+          } finally {
+            await parsedRequest?.cleanup?.();
+          }
         }
 
         let allowedMethods = await timing.time('routeMatchMs', () =>
@@ -916,6 +935,7 @@ function createRuntimeHandler({
       };
       let result = await composeMiddleware(middleware, finalHandler, timing)(requestContext);
       let response = resolveHttpResponse(result);
+      response = applyApiVersionHeaders(response, routeEndpoint, apiVersionNegotiation);
 
       writeObservedResponse(req, res, response, {
         logger: requestLogger,

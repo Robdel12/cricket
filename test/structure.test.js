@@ -342,11 +342,15 @@ describe('Cricket CLI', () => {
     assert.match(agents, /worker boundary/);
     assert.match(agents, /API versioning is optional and endpoint-owned/);
     assert.match(agents, /defineApiVersions/);
+    assert.match(agents, /Historical serializers receive the parsed current/);
+    assert.match(agents, /Sunset dates only announce policy/);
     assert.match(cricketSkill, /name: cricket/);
     assert.match(cricketSkill, /Domain Files/);
     assert.match(cricketSkill, /normalizers/);
     assert.match(cricketSkill, /API versioning is endpoint-owned and opt-in/);
     assert.match(cricketSkill, /defineApiVersions/);
+    assert.match(cricketSkill, /Historical serializers receive the parsed current/);
+    assert.match(cricketSkill, /Sunset dates only announce policy/);
     assert.match(cricketSkill, /\*\.jobs\.js/);
     assert.match(cricketSkill, /OpenAPI/);
     assert.match(cricketSkill, /cricket-jobs/);

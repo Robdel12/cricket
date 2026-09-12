@@ -110,11 +110,13 @@ describe('Cricket core', () => {
 
   it('keeps app, endpoint, and rule definitions stable after construction', () => {
     let rules = [defineRule('requireUser', () => {})];
+    let beforeBodyRules = [defineRule('requireToken', () => {})];
     let tags = ['projects'];
     let endpoints = [defineEndpoint({
       method: 'get',
       path: '/projects',
       tags,
+      beforeBodyRules,
       rules,
       handler() {
         return ok({ success: true });
@@ -127,6 +129,7 @@ describe('Cricket core', () => {
     });
 
     tags.push('mutated');
+    beforeBodyRules.push(defineRule('lateBeforeBodyRule', () => {}));
     rules.push(defineRule('lateRule', () => {}));
     endpoints.push(defineEndpoint({
       method: 'get',
@@ -140,9 +143,15 @@ describe('Cricket core', () => {
     assert.ok(Object.isFrozen(app.endpoints));
     assert.ok(Object.isFrozen(app.endpoints[0]));
     assert.ok(Object.isFrozen(app.endpoints[0].tags));
+    assert.ok(Object.isFrozen(app.endpoints[0].beforeBodyRules));
+    assert.ok(Object.isFrozen(app.endpoints[0].beforeBodyRules[0]));
     assert.ok(Object.isFrozen(app.endpoints[0].rules));
     assert.ok(Object.isFrozen(app.endpoints[0].rules[0]));
     assert.deepEqual(app.endpoints[0].tags, ['projects']);
+    assert.deepEqual(
+      app.endpoints[0].beforeBodyRules.map(rule => rule.ruleName),
+      ['requireToken']
+    );
     assert.deepEqual(app.endpoints[0].rules.map(rule => rule.ruleName), ['requireUser']);
     assert.deepEqual(app.endpoints.map(endpoint => endpoint.path), ['/projects']);
   });

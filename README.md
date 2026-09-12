@@ -342,7 +342,18 @@ The endpoint's normal `body`, `response`, and `responses` remain the current
 contract. Historical entries contain only the compatibility work that endpoint
 earned. Body compatibility uses a Cricket normalizer, so rules and handlers
 still receive canonical input. Response compatibility uses Cricket serializers
-and may select by status.
+and may select by exact, declared HTTP status. The normalizer's `output` must
+reuse the endpoint's `body` schema; Cricket parses it once and rejects skipped
+(null/undefined) results. Historical serializers receive the already-parsed
+current response, then parse their own output. Both response contracts must be
+Zod schemas, so older versions cannot bypass current validation or restore
+fields stripped from the handler result.
+
+Keep these adapters pure and explicit. Their context is trusted app context;
+Cricket cannot prevent app code from intentionally loading or returning private
+data. Review every supported projection and test authorization through HTTP.
+Version deltas cover body and handler response shape only; params, query,
+rules, thrown framework errors, and transport behavior remain shared.
 
 ```js
 export let createProject = defineEndpoint({
@@ -371,6 +382,9 @@ Use `apiVersions: sdkVersions()` on an unchanged endpoint when it should still
 negotiate the family and report usage. Omit `apiVersions` entirely when an
 endpoint should ignore version headers. Unsupported or ambiguous values fail
 with a bounded bad request; unknown raw values are not logged or echoed.
+Use dedicated version headers, distinct from credentials and transport headers.
+Version identifiers are exact visible ASCII strings without commas (128 chars
+maximum); the optional client version is bounded telemetry, not trusted identity.
 
 Cricket adds the effective version and `Vary` response headers, and attaches
 the selected family/version to route logs and traces. The optional client header
@@ -382,6 +396,11 @@ pnpm cricket docs api/index.js \
   --api-version project.sdk=2026-09-01 \
   --out openapi.json
 ```
+
+Deprecation and sunset dates announce policy; they do not disable versions on
+a timer. To retire a version, remove its family entry and endpoint deltas, and
+update the pinned default if necessary. Requests naming that version then fail
+with 400. Regenerate each published version's OpenAPI after changing contracts.
 
 When compatibility is no longer needed, remove the endpoint's `apiVersions`
 option and eventually delete the unused family definition. Old clients may
@@ -434,6 +453,45 @@ return withResponseCleanup(
   () => stream.destroy()
 );
 ```
+
+### Multipart requests
+
+Endpoints that accept uploads can opt into bounded multipart parsing:
+
+```js
+let upload = defineEndpoint({
+  method: 'POST',
+  path: '/uploads',
+  beforeBodyRules: [requireProjectToken],
+  multipart: {
+    maxBytes: 50 * 1024 * 1024,
+    maxFiles: 10,
+    maxFileBytes: 50 * 1024 * 1024,
+    maxFields: 50
+  },
+  handler({ request }) {
+    return created({
+      fields: request.body,
+      files: request.files.map(file => ({
+        fieldName: file.fieldName,
+        originalName: file.originalName,
+        mimeType: file.mimeType,
+        path: file.path,
+        size: file.size
+      }))
+    });
+  }
+});
+```
+
+Multipart fields are plain values; repeated fields become arrays. Files are streamed to temporary
+files and exposed through `request.files` during the handler. Cricket removes those files after the
+endpoint returns, including when parsing or validation fails. Set `maxBodyBytes`, `maxFileBytes`,
+`maxFieldBytes`, `maxFiles`, and `maxFields` for the upload's actual limits.
+
+Use `beforeBodyRules` for authentication and other inexpensive checks that must pass before Cricket
+accepts an upload. These rules receive request headers, route parameters, and app context, but no
+parsed body. Their returned facts are available to the endpoint's remaining rules and handler.
 
 Use `ok(body)` for 200, `created(body)` for 201, and `respond(status, body)` for
 other statuses. Compose `withHeaders`, `withCookies`, and
@@ -709,7 +767,9 @@ export async function down(db) {
 ```
 
 The ledger is execution history for debugging and operators. It is not product
-state.
+state. Producer enqueue and worker lifecycle inserts are race-safe, so a fast
+claim cannot collide with a late queued insert or regress an active row back to
+queued.
 
 Recovery is app-owned. Cricket renews an active claim's heartbeat while its
 `run` function is working and records normal logs, spans, progress, and driver

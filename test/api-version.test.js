@@ -8,11 +8,12 @@ import {
   defineApiVersions,
   defineEndpoint,
   defineNormalizer,
-    defineRule,
-    defineSerializer,
-    respond,
-    withHeaders,
-    z
+  defineRule,
+  defineSerializer,
+  respond,
+  unauthenticated,
+  withHeaders,
+  z
 } from '../src/index.js';
 import { createTestRuntime } from '../src/test/index.js';
 import {
@@ -539,4 +540,147 @@ describe('endpoint API versions', () => {
       await cleanup();
     }
   });
+});
+
+
+describe('versioned contract safety', () => {
+  it('strips private canonical fields before historical projection and rejects invalid canonical output', async () => {
+    let family = tornadicVersions();
+    let legacy = defineSerializer({
+      name: 'public.legacy',
+      output: z.object({ id: z.string(), leaked: z.string().optional() }),
+      serialize: value => ({ id: value.id, leaked: value.secret })
+    });
+    let endpoints = [false, true].map(broken => defineEndpoint({
+      method: 'get',
+      path: broken ? '/broken' : '/public',
+      apiVersions: family({ '2025-11-15': { response: legacy } }),
+      response: z.object({ id: z.string(), required: z.literal(true) }),
+      handler: () => ({ id: 'one', required: broken ? undefined : true, secret: 'private-token' })
+    }));
+    let { api, cleanup } = await createTestRuntime(defineManualTestApp({ endpoints }));
+    try {
+      let publicResponse = await api.get('/public');
+      let broken = await api.get('/broken');
+      assert.equal(publicResponse.status, 200);
+      assert.deepEqual(publicResponse.body, { id: 'one' });
+      assert.equal(broken.status, 500);
+      assert.deepEqual(broken.body.error, {
+        code: 'RESPONSE_CONTRACT_FAILED', message: 'Internal server error'
+      });
+      assert.equal(broken.headers['tornadic-version'], '2025-11-15');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('keeps normalized input canonical, parses transforms once, and rejects skipped bodies', async () => {
+    let body = z.object({ count: z.number().transform(value => value + 1) });
+    let family = tornadicVersions();
+    let endpoint = skip => defineEndpoint({
+      method: 'post', path: skip ? '/skip' : '/normalize', body,
+      apiVersions: family({ '2025-11-15': { body: defineNormalizer({
+        name: 'count.legacy', source: z.object({ count: z.number() }), output: body,
+        normalize: value => skip ? null : value
+      }) } }),
+      handler: ({ input }) => input.body
+    });
+    assert.throws(() => defineEndpoint({
+      method: 'post', path: '/bad', body,
+      apiVersions: family({ '2025-11-15': { body: defineNormalizer({
+        name: 'wrong', source: z.object({}), output: z.any(), normalize: value => value
+      }) } }),
+      handler() {}
+    }), /output must be the endpoint body schema/);
+    let { api, cleanup } = await createTestRuntime(defineManualTestApp({ endpoints: [endpoint(false), endpoint(true)] }));
+    try {
+      let response = await api.post('/normalize', { body: { count: 1 } });
+      let skipped = await api.post('/skip', { body: { count: 1 } });
+      assert.equal(response.status, 201);
+      assert.deepEqual(response.body, { count: 2 });
+      assert.equal(skipped.status, 500);
+      assert.equal(skipped.body.error.code, 'NORMALIZER_CONTRACT_FAILED');
+      assert.equal(skipped.body.error.issues, undefined);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('rejects unsafe family headers, non-HTTP versions, and undeclared status projections', () => {
+    let options = { name: 'sdk', header: 'SDK-Version', current: 'v2', default: 'v1', versions: { v1: {}, v2: {} } };
+    for (let header of ['Content-Length', 'Authorization', 'Vary', 'Set-Cookie'])
+      assert.throws(() => defineApiVersions({ ...options, header }), /dedicated API version header/);
+    assert.throws(() => defineApiVersions({ ...options, clientHeader: 'sdk-version' }), /must differ/);
+    assert.throws(() => defineApiVersions({ ...options, current: 'v😀', versions: { v1: {}, 'v😀': {} } }), /invalid version/);
+    let family = defineApiVersions(options);
+    for (let contract of [{ body: null }, { response: false }, { responses: null }])
+      assert.throws(() => family({ v1: contract }));
+    assert.throws(() => family({ v1: { responses: { default: serializeLegacySession } } }), /exact HTTP status/);
+    assert.throws(() => defineEndpoint({
+      method: 'get', path: '/bad-status', responses: { 200: CurrentSession },
+      apiVersions: family({ v1: { responses: { 201: serializeLegacySession } } }), handler() {}
+    }), /201 needs a current response contract/);
+    assert.throws(() => defineEndpoint({
+      method: 'get', path: '/unchecked-response', response: { type: 'object' },
+      apiVersions: family({ v1: { response: serializeLegacySession } }), handler() {}
+    }), /current Zod response schema/);
+  });
+});
+
+
+it('preserves version headers after middleware and applies access rules to every version', async () => {
+  let family = tornadicVersions();
+  let endpoint = defineEndpoint({
+    method: 'post', path: '/guarded', apiVersions: family(),
+    body: z.object({ name: z.string() }),
+    beforeBodyRules: [defineRule('authenticate', ({ request }) => {
+      if (request.headers.authorization !== 'Bearer allowed') throw unauthenticated();
+      return { accountId: 'account-one' };
+    })],
+    handler: ({ accountId, input }) => ({ accountId, name: input.body.name })
+  });
+  let { api, cleanup } = await createTestRuntime(defineManualTestApp({
+    endpoints: [endpoint],
+    middleware: [async (context, next) => withHeaders(await next(context), {
+      Vary: 'Origin', 'Tornadic-Version': 'stale'
+    })]
+  }));
+  try {
+    for (let version of ['2025-11-15', '2026-09-01']) {
+      let denied = await api.post('/guarded', { headers: { 'Tornadic-Version': version }, body: {} });
+      assert.equal(denied.status, 401);
+      assert.equal(denied.headers['tornadic-version'], version);
+      let allowed = await api.post('/guarded', {
+        headers: { 'Tornadic-Version': version, authorization: 'Bearer allowed' }, body: { name: 'public' }
+      });
+      assert.equal(allowed.status, 201);
+      assert.deepEqual(allowed.body, { accountId: 'account-one', name: 'public' });
+      assert.equal(allowed.headers['tornadic-version'], version);
+      assert.equal(allowed.headers.vary, 'Origin, Tornadic-Version');
+    }
+  } finally {
+    await cleanup();
+  }
+});
+
+it('retires versions by explicit removal while sunset remains announcement metadata', async () => {
+  let version = 'v2';
+  let family = defineApiVersions({
+    name: 'retirement', header: 'API-Version', current: version, default: version,
+    versions: { v2: { sunsetAt: '2000-01-01' } }
+  });
+  let { api, cleanup } = await createTestRuntime(defineManualTestApp({ endpoints: [defineEndpoint({
+    method: 'get', path: '/retired', apiVersions: family(), handler: () => ({ ok: true })
+  })] }));
+  try {
+    let retired = await api.get('/retired', { headers: { 'API-Version': 'v1' } });
+    let current = await api.get('/retired');
+    assert.equal(retired.status, 400);
+    assert.equal(retired.headers['api-version'], undefined);
+    assert.equal(retired.headers.vary, 'API-Version');
+    assert.equal(current.status, 200);
+    assert.equal(current.headers.sunset, 'Sat, 01 Jan 2000 00:00:00 GMT');
+  } finally {
+    await cleanup();
+  }
 });

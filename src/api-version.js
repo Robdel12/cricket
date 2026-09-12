@@ -4,10 +4,16 @@ import {
   isPlainObject
 } from './immutable.js';
 import { assertKnownOptions } from './options.js';
+import { isZodSchema } from './schema.js';
 import { withResponseHeaders } from './response.js';
 import { singleHeaderValue } from './http/request.js';
 
 let apiVersionContractKind = Symbol('cricket.apiVersionContract');
+let reservedHeaders = new Set([
+  'authorization', 'proxy-authorization', 'cookie', 'set-cookie',
+  'connection', 'content-length', 'content-type', 'host', 'transfer-encoding',
+  'trailer', 'upgrade', 'vary', 'deprecation', 'sunset'
+]);
 let familyOptionKeys = new Set([
   'clientHeader',
   'current',
@@ -43,13 +49,16 @@ function normalizedHeaderName(value, name) {
   if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(header))
     throw new Error(`${name} must be a valid HTTP header name`);
 
+  if (reservedHeaders.has(header.toLowerCase()))
+    throw new Error(`${name} must use a dedicated API version header`);
+
   return header;
 }
 
 function normalizedVersion(value, message) {
   let version = nonEmptyString(value, message);
 
-  if (version.length > 128 || /[\s,\x00-\x1F\x7F]/.test(version))
+  if (version.length > 128 || /[^\x21-\x7E]|,/.test(version))
     throw new Error(message);
 
   return version;
@@ -102,8 +111,8 @@ function assertNormalizer(normalizer, familyName, version) {
   if (
     typeof normalizer !== 'function' ||
     !normalizer.normalizerName ||
-    !normalizer.source ||
-    !normalizer.output
+    !isZodSchema(normalizer.source) ||
+    !isZodSchema(normalizer.output)
   ) {
     throw new Error(`API version ${familyName} ${version} body must be a Cricket normalizer`);
   }
@@ -113,7 +122,7 @@ function assertSerializer(serializer, familyName, version, label) {
   if (
     typeof serializer !== 'function' ||
     !serializer.serializerName ||
-    !serializer.output
+    !isZodSchema(serializer.output)
   ) {
     throw new Error(`API version ${familyName} ${version} ${label} must be a Cricket serializer`);
   }
@@ -135,18 +144,21 @@ function normalizedEndpointVersions(family, overrides) {
 
     assertKnownOptions(contract, endpointVersionKeys, `API version ${family.name} ${version} endpoint contract`);
 
-    if (contract.body)
+    if (Object.hasOwn(contract, 'body'))
       assertNormalizer(contract.body, family.name, version);
-    if (contract.response)
+    if (Object.hasOwn(contract, 'response'))
       assertSerializer(contract.response, family.name, version, 'response');
     if (contract.response && contract.responses)
       throw new Error(`API version ${family.name} ${version} cannot define response and responses together`);
-    if (contract.responses) {
+    if (Object.hasOwn(contract, 'responses')) {
       if (!isPlainObject(contract.responses))
         throw new Error(`API version ${family.name} ${version} responses must be a plain object`);
 
-      for (let [status, serializer] of Object.entries(contract.responses))
+      for (let [status, serializer] of Object.entries(contract.responses)) {
+        if (!/^[1-5][0-9]{2}$/.test(status))
+          throw new Error(`API version ${family.name} ${version} response status must be an exact HTTP status`);
         assertSerializer(serializer, family.name, version, `response ${status}`);
+      }
     }
 
     return [version, contract];
@@ -174,6 +186,8 @@ export function defineApiVersions(options = {}) {
   let clientHeader = options.clientHeader === undefined
     ? undefined
     : normalizedHeaderName(options.clientHeader, `API version family ${name} clientHeader`);
+  if (clientHeader?.toLowerCase() === header.toLowerCase())
+    throw new Error(`API version family ${name} clientHeader must differ from header`);
   let versions = normalizedVersions(options.versions, name);
   let current = normalizedVersion(options.current, `API version family ${name} current is required`);
   let defaultVersion = normalizedVersion(options.default, `API version family ${name} default is required`);

@@ -15,6 +15,7 @@ import {
   startCricketWorker,
   z
 } from '../src/index.js';
+import { createJobLedger } from '../src/jobs/ledger.js';
 import { defineManualTestApp } from '../test-support/app.js';
 import {
   createManualClock,
@@ -51,6 +52,47 @@ async function createLedgerDatabase({
 }
 
 describe('Cricket jobs: ledger', () => {
+  it('keeps started state when producer and worker ledger writes cross', async () => {
+    let database = await createLedgerDatabase();
+    let db = knex(database);
+    let ledger = createJobLedger({ db });
+    let envelope = {
+      id: 'jobenv_crossed_ledger_writes',
+      name: 'reports.generate',
+      queueName: 'reports',
+      idempotencyKey: 'report_crossed_ledger_writes',
+      concurrency: [],
+      context: {
+        source: 'report.requested'
+      },
+      policy: {},
+      input: {
+        reportId: 'report_crossed_ledger_writes'
+      },
+      priority: 0,
+      availableAt: '2026-07-26T12:00:00.000Z',
+      createdAt: '2026-07-26T12:00:00.000Z'
+    };
+
+    try {
+      await Promise.all([
+        ledger.started(envelope, {
+          attempt: 1,
+          jobRunId: 'jobrun_crossed_ledger_writes'
+        }),
+        ledger.queued(envelope)
+      ]);
+
+      let row = await db('cricket_jobs').where({ id: envelope.id }).first();
+      assert.equal(row.status, 'active');
+      assert.equal(row.attempts, 1);
+      assert.equal(row.job_run_id, 'jobrun_crossed_ledger_writes');
+      assert.equal(row.source, 'report.requested');
+    } finally {
+      await db.destroy();
+    }
+  });
+
   it('records retry availability in the job ledger', async () => {
     let time = createManualClock('2026-06-18T12:00:00.000Z');
     let attempts = 0;
@@ -125,11 +167,10 @@ describe('Cricket jobs: ledger', () => {
   it('keeps producer enqueue best-effort when the ledger write fails', async () => {
     let job = reportJob();
     let warnings = [];
-    let db = () => ({
-      async insert() {
-        throw new Error('missing cricket_jobs table');
-      }
+    let database = await createLedgerDatabase({
+      withLedger: false
     });
+    let db = knex(database);
     let producer = await createCricketJobs({
       jobs: [job],
       ledger: {
@@ -161,6 +202,7 @@ describe('Cricket jobs: ledger', () => {
       assert.ok(warnings.some(warning => warning.event === 'job.ledger_failed'));
     } finally {
       await producer.cleanup();
+      await db.destroy();
     }
   });
 
