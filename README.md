@@ -298,6 +298,19 @@ product policy. It can connect plugin endpoints to app services for product
 data and actions, so the package does not need a shared user, moderation, or
 resource table.
 
+Cricket plugins are backend packages; they do not serve CSS or frontend files.
+If a plugin includes React UI, export its components and stylesheet from a
+frontend package and import them through the app's normal build:
+
+```js
+import { SuperAdminRoutes } from '@acme/super-admin-ui';
+import '@acme/super-admin-ui/styles.css';
+```
+
+The app chooses where the UI appears and connects it to its auth and API
+client. Keep CSS file paths out of `defineCricketPlugin`; Cricket does not own
+the frontend build.
+
 See [`examples/plugin-composition/`](examples/plugin-composition/) for a
 filesystem domain combined with a package-style plugin, including user support
 actions and a separately paged moderation adapter.

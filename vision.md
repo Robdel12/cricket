@@ -122,6 +122,11 @@ moderation, and actions to the plugin's endpoint contracts. Models contributed
 by a plugin still need app-owned migrations. This keeps shared tools useful
 across products with different tables and policies.
 
+Cricket plugins do not serve browser files or styles. A shared React UI belongs
+in a frontend package that the app imports through its normal build. The app
+owns route placement, auth, and API wiring; backend plugin descriptors do not
+point at CSS paths.
+
 API compatibility belongs at the endpoint boundary. Apps may share an
 immutable `defineApiVersions` family across routes, but each endpoint opts in
 explicitly and declares only its historical normalizer and serializer deltas.
