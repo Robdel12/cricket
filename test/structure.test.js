@@ -318,6 +318,9 @@ describe('Cricket CLI', () => {
     assert.match(agents, /Cricket App Guidance/);
     assert.match(agents, /Domains are Cricket's required default architecture/);
     assert.match(agents, /manual mode as visible tech debt/);
+    assert.match(agents, /defineCricketPlugin/);
+    assert.match(agents, /definePluginSchema/);
+    assert.match(agents, /Apps own auth/);
     assert.match(agents, /pnpm cricket check api\/index\.js/);
     assert.match(agents, /App Shape/);
     assert.match(agents, /Domain Shape/);
@@ -332,6 +335,9 @@ describe('Cricket CLI', () => {
     assert.match(agents, /lifecycle/);
     assert.match(agents, /\{ dependencies, services, cleanup \}/);
     assert.match(agents, /Recovery receives evidence, time, logger, and trace/);
+    assert.match(cricketSkill, /defineCricketPlugin/);
+    assert.match(cricketSkill, /definePluginSchema/);
+    assert.match(cricketSkill, /The app owns auth, product data access, and migrations/);
     assert.match(agents, /defineJob/);
     assert.match(agents, /cronSchedule/);
     assert.match(agents, /createCricketJobs/);
@@ -558,6 +564,92 @@ describe('Cricket CLI', () => {
     assert.match(result.stdout, /rules: requireUser, isNamedBuild/);
     assert.match(result.stdout, /GET\s+\/api\/builds\/:buildId \(getBuildsBuildId\)/);
     assert.match(result.stdout, /Build -> build/);
+  });
+
+  it('inspects, checks, and documents filesystem plus plugin domains', async () => {
+    let outputPath = path.join(await tempRoot(), 'plugin-openapi.json');
+    let appPath = 'examples/plugin-composition/app.js';
+    let inspected = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'inspect',
+      appPath
+    ]);
+    let checked = await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'check',
+      appPath
+    ]);
+    await execFileAsync(process.execPath, [
+      'bin/cricket.js',
+      'docs',
+      appPath,
+      '--out',
+      outputPath
+    ]);
+    let document = JSON.parse(await fs.readFile(outputPath, 'utf8'));
+
+    assert.match(inspected.stdout, /Plugins\n  super-admin\n    domains: adminActions/);
+    assert.match(inspected.stdout, /schema services:\n      adminAccess: requireAdmin\n      userSupport: listUsers/);
+    assert.match(inspected.stdout, /projects/);
+    assert.match(inspected.stdout, /adminActions/);
+    assert.match(inspected.stdout, /GET\s+\/admin\/support\/users/);
+    assert.match(inspected.stdout, /rules: requireAdmin/);
+    assert.match(inspected.stdout, /POST\s+\/admin\/moderation\/reports\/:reportId\/approve/);
+    assert.match(checked.stdout, /check passed: 2 domains loaded/);
+    assert.ok(document.paths['/admin/support/users']);
+    assert.ok(document.paths['/admin/moderation/reports/{reportId}/approve']);
+    assert.ok(document.paths['/projects']);
+    assert.ok(document.components.schemas.AdminActionPublic);
+    assert.ok(document.components.schemas.ProjectPublic);
+  });
+
+  it('reports duplicate plugin operation IDs and model schemas during docs generation', async () => {
+    let root = await tempRoot();
+    let appPath = path.join(root, 'app.js');
+    let cricketUrl = pathToFileURL(path.resolve('src/index.js')).href;
+    let packageJsonPath = path.join(root, 'package.json');
+    await fs.writeFile(packageJsonPath, JSON.stringify({ type: 'module' }));
+
+    await fs.writeFile(appPath, `
+      import { defineCricketApp, defineCricketPlugin, defineEndpoint } from '${cricketUrl}';
+      let plugin = defineCricketPlugin({
+        name: 'collision',
+        domains: [
+          { name: 'first', endpoints: [defineEndpoint({
+            method: 'get', path: '/first', operationId: 'sameOperation', handler() { return {}; }
+          })] },
+          { name: 'second', endpoints: [defineEndpoint({
+            method: 'get', path: '/second', operationId: 'sameOperation', handler() { return {}; }
+          })] }
+        ]
+      });
+      export let app = defineCricketApp({ domains: [], plugins: [plugin] });
+    `);
+
+    await assert.rejects(execFileAsync(process.execPath, [
+      'bin/cricket.js', 'docs', appPath
+    ]), error => {
+      assert.match(error.stderr, /Duplicate operation ID sameOperation/);
+      return true;
+    });
+
+    await fs.writeFile(appPath, `
+      import { defineCricketApp, defineCricketPlugin, defineModel, field, z } from '${cricketUrl}';
+      let first = defineModel({ name: 'SharedRecord', table: 'shared_one', row: { id: field.public(z.string()) } });
+      let second = defineModel({ name: 'SharedRecord', table: 'shared_two', row: { id: field.public(z.string()) } });
+      let plugin = defineCricketPlugin({
+        name: 'collision',
+        domains: [{ name: 'first', models: [first] }, { name: 'second', models: [second] }]
+      });
+      export let app = defineCricketApp({ domains: [], plugins: [plugin] });
+    `);
+
+    await assert.rejects(execFileAsync(process.execPath, [
+      'bin/cricket.js', 'docs', appPath
+    ]), error => {
+      assert.match(error.stderr, /Duplicate component schema SharedRecordPublic/);
+      return true;
+    });
   });
 
   it('checks structured and explicit manual architecture through the CLI', async () => {
@@ -1007,6 +1099,72 @@ describe('Cricket CLI', () => {
     assert.match(version.stdout, /Current version: 20260616000000/);
     assert.match(rollback.stdout, /Migrations run:/);
     assert.match(rollback.stdout, /20260616000000_create_projects\.js/);
+  });
+
+  it('keeps plugin model tables under the app migration directory', async () => {
+    let {
+      appPath,
+      databasePath,
+      migrationsDir
+    } = await writeSqliteAppFixture();
+    let cricketUrl = pathToFileURL(path.resolve('src/index.js')).href;
+
+    await fs.writeFile(appPath, `
+      import {
+        defineCricketApp,
+        defineCricketPlugin,
+        defineModel,
+        field,
+        z
+      } from '${cricketUrl}';
+
+      let pluginModel = defineModel({
+        name: 'AdminAction',
+        table: 'admin_action',
+        row: { id: field.public(z.string()) }
+      });
+      let plugin = defineCricketPlugin({
+        name: 'super-admin',
+        domains: [{ name: 'adminActions', models: [pluginModel] }]
+      });
+      export let app = defineCricketApp({
+        domains: [],
+        plugins: [plugin],
+        database: {
+          client: 'sqlite3',
+          connection: { filename: ${JSON.stringify(databasePath)} },
+          useNullAsDefault: true
+        }
+      });
+    `);
+    await fs.writeFile(path.join(migrationsDir, '20260928000000_create_app_owned_table.js'), `
+      export async function up(db) {
+        await db.schema.createTable('app_owned_projects', table => {
+          table.increments('id');
+        });
+      }
+
+      export async function down(db) {
+        await db.schema.dropTable('app_owned_projects');
+      }
+    `);
+
+    let latest = await execFileAsync(process.execPath, [
+      'bin/cricket.js', 'migrate', 'latest', appPath
+    ]);
+    let db = knex({
+      client: 'sqlite3',
+      connection: { filename: databasePath },
+      useNullAsDefault: true
+    });
+
+    try {
+      assert.match(latest.stdout, /20260928000000_create_app_owned_table\.js/);
+      assert.equal(await db.schema.hasTable('app_owned_projects'), true);
+      assert.equal(await db.schema.hasTable('admin_action'), false);
+    } finally {
+      await db.destroy();
+    }
   });
 
   it('runs database migrations against an explicit environment', async () => {

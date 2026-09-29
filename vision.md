@@ -98,6 +98,35 @@ Domains can use only the files they earn. Optional files stay optional, and
 domain-local filenames can describe the slice they contain as long as they keep
 Cricket's standard suffixes.
 
+### Plugins compose domains
+
+Packages may export a `defineCricketPlugin({ name, domains })` descriptor made
+from already-built, named Cricket domains. Apps register descriptors explicitly
+with `defineCricketApp({ domains: './domains', plugins: [...] })`. Cricket
+resolves the app's domain root first, then appends plugin domains in declaration
+order. Contributions use the same route, service, model, job, inspect, and docs
+paths as app domains. Descriptor containers are copied and frozen while built
+contracts keep their identities.
+
+A plugin can also export a `definePluginSchema` with Zod input and output
+schemas for the app service methods it needs. The app supplies those methods;
+Cricket checks that each one exists at runtime setup and validates its inputs
+and results. The plugin owns the shared data shape, while the app maps its own
+tables and services into that shape. Trusted actor and scope facts come from
+app rules, then pass to adapters as explicit input.
+
+The plugin boundary stays domain-only. Cricket does not discover package paths,
+load plugin migrations, or let a package control app auth or product data. The
+app supplies rules and services that adapt its own users, support,
+moderation, and actions to the plugin's endpoint contracts. Models contributed
+by a plugin still need app-owned migrations. This keeps shared tools useful
+across products with different tables and policies.
+
+Cricket plugins do not serve browser files or styles. A shared React UI belongs
+in a frontend package that the app imports through its normal build. The app
+owns route placement, auth, and API wiring; backend plugin descriptors do not
+point at CSS paths.
+
 API compatibility belongs at the endpoint boundary. Apps may share an
 immutable `defineApiVersions` family across routes, but each endpoint opts in
 explicitly and declares only its historical normalizer and serializer deltas.

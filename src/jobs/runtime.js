@@ -59,7 +59,16 @@ function finishedJobRemovalResult(result = {}) {
 }
 
 function jobsByName(jobs) {
-  return new Map(jobs.map(job => [job.name, job]));
+  let byName = new Map();
+
+  for (let job of jobs) {
+    if (byName.has(job.name))
+      throw new Error(`Cricket worker has duplicate job name ${job.name}.`);
+
+    byName.set(job.name, job);
+  }
+
+  return byName;
 }
 
 function safeError(error) {
@@ -492,6 +501,7 @@ export async function startCricketWorker(cricketApp, {
   let selectedJobs = toArray(jobs);
   let driver;
   let jobList;
+  let byName;
 
   try {
     if (runtime.contract.architecture === 'domains') {
@@ -505,6 +515,7 @@ export async function startCricketWorker(cricketApp, {
       ? (selectedJobs.length > 0 ? selectedJobs : appJobs)
       : [...appJobs, ...selectedJobs];
 
+    byName = jobsByName(jobList);
     driver = await createDriver(queues, jobList);
   } catch (error) {
     await runtime.cleanup();
@@ -524,7 +535,6 @@ export async function startCricketWorker(cricketApp, {
     ledger,
     logger: runtime.logger
   });
-  let byName = jobsByName(jobList);
   let activeClaims = new Set();
   let activeRuns = new Set();
   let clockCanDriveWorker = !clockOptions?.now || Boolean(clockOptions.waitUntil);

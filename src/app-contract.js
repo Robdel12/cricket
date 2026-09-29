@@ -62,7 +62,7 @@ function modelSummaryFor(model) {
 }
 
 function ruleNamesFor(endpoint) {
-  return toArray(endpoint.rules).map(rule =>
+  return [...toArray(endpoint.beforeBodyRules), ...toArray(endpoint.rules)].map(rule =>
     rule.ruleName ?? rule.name ?? 'anonymous'
   );
 }
@@ -178,6 +178,7 @@ function appContractFromResolvedApp(resolvedApp) {
     database: resolvedApp.database,
     observability: resolvedApp.observability,
     domains: resolvedApp.domains ?? [],
+    plugins: resolvedApp.plugins ?? [],
     endpoints: resolvedApp.endpoints ?? [],
     jobs: resolvedApp.jobs ?? [],
     models: resolvedApp.models ?? []
@@ -235,6 +236,7 @@ export function createAppMap(contract) {
   let jobs = toArray(contract.jobs);
   let models = toArray(contract.models);
   let routes = toArray(contract.endpoints);
+  let plugins = toArray(contract.plugins);
   let apiVersions = collectApiVersionFamilies(routes);
 
   return {
@@ -262,6 +264,14 @@ export function createAppMap(contract) {
       endpoints: toArray(domain.endpoints ?? domain.endpoint).length,
       jobs: jobCountFor(domain),
       services: serviceKeysFor(domain)
+    })),
+    plugins: plugins.map(plugin => ({
+      name: plugin.name,
+      domains: toArray(plugin.domains).map((domain, index) => domainNameFor(domain, index)),
+      schemaServices: Object.entries(plugin.schema?.services ?? {}).map(([name, methods]) => ({
+        name,
+        methods: Object.keys(methods)
+      }))
     })),
     jobs: jobs.map(jobSummaryFor),
     models: models.map(model => ({
@@ -316,6 +326,19 @@ export function formatAppMap(appMap) {
       lines.push(`    current: ${family.current}`);
       lines.push(`    default: ${family.default}`);
       lines.push(`    supported: ${family.versions.join(', ')}`);
+    }
+  }
+
+  if (appMap.plugins?.length) {
+    lines.push('', 'Plugins');
+    for (let plugin of appMap.plugins) {
+      lines.push(`  ${plugin.name}`);
+      lines.push(`    domains: ${plugin.domains.join(', ') || 'none'}`);
+      if (plugin.schemaServices.length) {
+        lines.push('    schema services:');
+        for (let service of plugin.schemaServices)
+          lines.push(`      ${service.name}: ${service.methods.join(', ')}`);
+      }
     }
   }
 

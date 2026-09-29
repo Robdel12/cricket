@@ -320,14 +320,29 @@ export function collectJobs(domains) {
  * @returns {object} Service registry keyed by service name.
  */
 export function createServices(domains, dependencies = {}) {
+  let domainServices = domains.map(domain => ({
+    domain,
+    factories: Object.entries(serviceFactoriesFor(domain))
+  }));
+  let names = new Map();
+
+  for (let { domain, factories } of domainServices) {
+    for (let [name] of factories) {
+      if (names.has(name))
+        throw new Error(`Cricket service ${name} is provided by both domains ${names.get(name)} and ${domain.name || 'unnamed'}.`);
+
+      names.set(name, domain.name || 'unnamed');
+    }
+  }
+
   let services = {};
 
-  for (let domain of domains) {
+  for (let { domain, factories } of domainServices) {
     let domainDependencies = typeof dependencies === 'function'
       ? dependencies(domain)
       : dependencies;
 
-    for (let [name, createService] of Object.entries(serviceFactoriesFor(domain)))
+    for (let [name, createService] of factories)
       services[name] = createService(domainDependencies);
   }
 

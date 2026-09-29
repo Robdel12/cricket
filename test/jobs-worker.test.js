@@ -5,6 +5,7 @@ import {
   createCricketJobs,
   cronSchedule,
   defineCricketApp,
+  defineCricketPlugin,
   defineJob,
   redisQueue,
   startCricketWorker,
@@ -13,6 +14,7 @@ import {
 import { defineManualTestApp } from '../test-support/app.js';
 import { createTestQueueDriver } from '../src/jobs/test-driver.js';
 import { createTestState } from '../src/test/index.js';
+import { app as pluginCompositionApp } from '../examples/plugin-composition/app.js';
 import {
   createManualClock,
   createTestApp,
@@ -21,6 +23,132 @@ import {
 } from '../test-support/jobs.js';
 
 describe('Cricket jobs: worker', () => {
+  it('discovers filesystem and plugin jobs in one worker with their service contexts', async () => {
+    let worker = await startCricketWorker(pluginCompositionApp, {
+      baseUrl: new URL('../examples/plugin-composition/app.js', import.meta.url),
+      queues: {
+        test: true
+      }
+    });
+
+    try {
+      let projectJob = worker.runtime.contract.jobs.find(job => job.name === 'projects.reindex');
+      let adminJob = worker.runtime.contract.jobs.find(job => job.name === 'admin.support.record-action');
+
+      assert.deepEqual(worker.runtime.contract.jobs.map(job => job.name), [
+        'projects.reindex',
+        'admin.support.record-action'
+      ]);
+      assert.ok(projectJob);
+      assert.ok(adminJob);
+
+      await worker.jobs.enqueue(projectJob, { projectId: 'project-1' });
+      await worker.jobs.enqueue(adminJob, { userId: 'user-7', action: 'suspend' });
+
+      assert.deepEqual(await worker.drain(), [
+        { indexed: true },
+        { recorded: true }
+      ]);
+    } finally {
+      await worker.cleanup();
+    }
+  });
+
+  it('discovers and runs jobs contributed by plugin domains with app services', async () => {
+    let processed = [];
+    let job = defineJob({
+      name: 'admin.support.user-action',
+      input: z.object({
+        userId: z.string(),
+        action: z.enum(['suspend', 'restore'])
+      }),
+      result: z.object({ recorded: z.boolean() }),
+      queue: redisQueue({ name: 'admin-support' }),
+      async run({ input, services }) {
+        await services.support.recordUserAction(input);
+        return { recorded: true };
+      }
+    });
+    let plugin = defineCricketPlugin({
+      name: 'super-admin',
+      domains: [{
+        name: 'support',
+        jobs: [job],
+        services: {
+          support() {
+            return {
+              async recordUserAction(input) {
+                processed.push(input);
+              }
+            };
+          }
+        }
+      }]
+    });
+    let app = defineCricketApp({
+      domains: [],
+      plugins: [plugin]
+    });
+    let worker = await startCricketWorker(app, {
+      queues: {
+        test: true
+      }
+    });
+
+    try {
+      let queued = await worker.jobs.enqueue(job, {
+        userId: 'user-7',
+        action: 'suspend'
+      });
+      let results = await worker.drain();
+
+      assert.equal(queued.enqueued, true);
+      assert.deepEqual(results, [{ recorded: true }]);
+      assert.deepEqual(processed, [{ userId: 'user-7', action: 'suspend' }]);
+      assert.deepEqual(worker.runtime.contract.jobs, [job]);
+    } finally {
+      await worker.cleanup();
+    }
+  });
+
+  it('rejects duplicate plugin job names before requesting a queue driver', async () => {
+    let duplicateJobs = [
+      defineJob({
+        name: 'admin.refresh',
+        input: z.object({}),
+        run() {}
+      }),
+      defineJob({
+        name: 'admin.refresh',
+        input: z.object({}),
+        run() {}
+      })
+    ];
+    let plugin = defineCricketPlugin({
+      name: 'super-admin',
+      domains: duplicateJobs.map((job, index) => ({
+        name: `admin${index + 1}`,
+        jobs: [job]
+      }))
+    });
+    let app = defineCricketApp({
+      domains: [],
+      plugins: [plugin]
+    });
+    let driverRequested = false;
+    let queues = {
+      get driver() {
+        driverRequested = true;
+        return {};
+      }
+    };
+
+    await assert.rejects(startCricketWorker(app, {
+      queues
+    }), /duplicate job name admin\.refresh/);
+    assert.equal(driverRequested, false);
+  });
+
   it('requires an explicit queue driver for producers and workers', async () => {
     let job = reportJob();
 

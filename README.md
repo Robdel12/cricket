@@ -191,6 +191,130 @@ logger, and trace because it returns a pure decision rather than doing product
 work. Shutdown hooks receive the assembled runtime, including dependencies,
 services, lifecycle, and logger.
 
+## Add package domains with plugins
+
+A package can export named Cricket domains for an app to compose with its own
+domain folder. Keep Cricket as a peer dependency so the package and app use the
+same Cricket contracts:
+
+```js
+// In the package, such as @acme/super-admin:
+import {
+  defineCricketPlugin,
+  definePluginSchema,
+  z
+} from '@robdel12/cricket';
+
+let UserPage = z.object({
+  items: z.array(z.object({
+    id: z.string(),
+    email: z.email(),
+    name: z.string().nullable(),
+    state: z.enum(['active', 'suspended'])
+  })),
+  nextCursor: z.string().nullable()
+});
+
+let superAdminSchema = definePluginSchema({
+  services: {
+    adminAccess: {
+      requireAdmin: {
+        input: z.unknown(),
+        output: z.boolean()
+      }
+    },
+    userSupport: {
+      listUsers: {
+        input: z.object({ search: z.string().optional() }),
+        output: UserPage
+      }
+    }
+  }
+});
+
+export let superAdminPlugin = defineCricketPlugin({
+  name: 'super-admin',
+  schema: superAdminSchema,
+  domains: [userSupportDomain]
+});
+```
+
+The app composes that descriptor beside its filesystem domains and maps its
+own data into the shape declared by the plugin:
+
+```js
+import { defineCricketApp } from '@robdel12/cricket';
+import { superAdminPlugin } from '@acme/super-admin';
+
+export let app = defineCricketApp({
+  domains: './domains',
+  plugins: [superAdminPlugin],
+  services({ services }) {
+    return {
+      ...services,
+      adminAccess: {
+        requireAdmin(request) {
+          return request.headers['x-admin'] === 'true';
+        }
+      },
+      userSupport: {
+        async listUsers({ search }) {
+          let rows = await services.productUsers.searchUsers({ search });
+
+          return {
+            items: rows.map(row => ({
+              id: row.userId,
+              email: row.primaryEmail,
+              name: row.displayName,
+              state: row.suspendedAt ? 'suspended' : 'active'
+            })),
+            nextCursor: null
+          };
+        }
+      }
+    };
+  }
+});
+```
+
+`defineCricketPlugin` copies the domain containers and freezes their structure.
+Built contracts, schemas, and functions keep their identity. Cricket loads the
+app's domain folder first, then adds plugin domains in the order listed. They
+use the same HTTP, worker, inspect, and OpenAPI paths as app domains.
+
+`definePluginSchema` describes the app service methods a plugin needs. Each method
+declares one Zod input and output schema. The app provides those functions in
+its service registry; Cricket checks that they exist when it builds the
+runtime and validates each call. Plugin routes can use the same schemas for
+their request and response contracts when those shapes match. The app maps its
+own rows into the plugin's shared shape. If an app rule returns an authenticated
+actor or trusted scope, pass those facts as explicit adapter input; do not take
+trusted scope from request filters.
+
+Plugins contribute domains only. They do not discover files or package paths,
+register middleware or lifecycle hooks, or load migrations. A plugin model's
+table still needs an app-owned migration. The app owns authentication and
+product policy. It can connect plugin endpoints to app services for product
+data and actions, so the package does not need a shared user, moderation, or
+resource table.
+
+Cricket plugins are backend packages; they do not serve CSS or frontend files.
+If a plugin includes React UI, export its components and stylesheet from a
+frontend package and import them through the app's normal build:
+
+```js
+import { SuperAdminRoutes } from '@acme/super-admin-ui';
+import '@acme/super-admin-ui/styles.css';
+```
+
+The app chooses where the UI appears and connects it to its auth and API
+client. Keep CSS file paths out of `defineCricketPlugin`; Cricket does not own
+the frontend build.
+
+See [`examples/plugin-composition/`](examples/plugin-composition/) for a
+filesystem domain combined with a package-style plugin, including user support
+actions and a separately paged moderation adapter.
+
 ## Domain Contracts
 
 Models describe durable rows and default visibility:
@@ -695,8 +819,9 @@ try {
 ```
 
 In domain architecture, a worker may execute all app jobs or select a subset,
-but every selected job must already belong to one of the app's domains. Manual
-apps may register jobs at the worker boundary while they migrate that ownership.
+but every selected job must belong to one of the app's resolved domains,
+including plugin domains. Manual apps may register jobs at the worker boundary
+while they migrate that ownership.
 
 Choose the queue deliberately. Production producers and workers use
 `queues.redis` or an app-provided `queues.driver`; tests opt into the in-memory

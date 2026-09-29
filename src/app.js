@@ -12,6 +12,7 @@ import { collectApiVersionFamilies } from './api-version.js';
 import { frozenPlain } from './immutable.js';
 import { assertKnownOptions } from './options.js';
 import { normalizeDatabaseConfig } from './persistence/database.js';
+import { isCricketPlugin } from './plugin.js';
 
 let appOptionKeys = new Set([
   'allowedHosts',
@@ -31,6 +32,7 @@ let appOptionKeys = new Set([
   'observability',
   'onError',
   'onShutdown',
+  'plugins',
   'prefix',
   'authMethods',
   'services',
@@ -62,6 +64,9 @@ function architectureFor(options) {
     throw new Error(`defineCricketApp architecture must be one of: ${[...appArchitectures].join(', ')}`);
 
   if (architecture === 'manual') {
+    if (Object.hasOwn(options, 'plugins'))
+      throw new Error('defineCricketApp manual architecture cannot configure plugins. Plugins contribute domains, so use architecture: \'domains\'.');
+
     if (Object.hasOwn(options, 'domains'))
       throw new Error('defineCricketApp manual architecture cannot configure domains. Remove architecture: \'manual\' after the app has migrated to domains.');
 
@@ -96,7 +101,8 @@ function freezeAppContract(contract) {
     'endpoints',
     'jobs',
     'middleware',
-    'models'
+    'models',
+    'plugins'
   ]) {
     if (Object.hasOwn(stable, key))
       stable[key] = stableList(stable[key]);
@@ -110,7 +116,8 @@ function freezeAppContract(contract) {
     domains: stable.domains,
     endpoints: stable.endpoints,
     jobs: stable.jobs,
-    models: stable.models
+    models: stable.models,
+    plugins: stable.plugins
   });
 
   return Object.freeze(stable);
@@ -127,7 +134,8 @@ function definedAppFor(app) {
     'domains',
     'endpoints',
     'jobs',
-    'models'
+    'models',
+    'plugins'
   ].filter(key => app[key] !== definition[key]);
 
   if (replacedContracts.length > 0)
@@ -142,6 +150,51 @@ function hasLoadedDomains(domains) {
   );
 }
 
+function validatePlugins(plugins) {
+  if (!Array.isArray(plugins))
+    throw new Error('defineCricketApp plugins must be an array of defineCricketPlugin descriptors.');
+
+  let names = new Set();
+  let serviceMethods = new Map();
+
+  for (let plugin of plugins) {
+    if (!isCricketPlugin(plugin))
+      throw new Error('defineCricketApp plugins must contain defineCricketPlugin descriptors.');
+
+    if (names.has(plugin.name))
+      throw new Error(`defineCricketApp has duplicate plugin name ${plugin.name}.`);
+
+    names.add(plugin.name);
+
+    for (let [serviceName, methods] of Object.entries(plugin.schema?.services ?? {})) {
+      let methodsForService = serviceMethods.get(serviceName) ?? new Map();
+
+      for (let methodName of Object.keys(methods)) {
+        if (methodsForService.has(methodName))
+          throw new Error(`Cricket plugins ${methodsForService.get(methodName)} and ${plugin.name} both define a schema for services.${serviceName}.${methodName}.`);
+
+        methodsForService.set(methodName, plugin.name);
+      }
+
+      serviceMethods.set(serviceName, methodsForService);
+    }
+  }
+}
+
+function validateResolvedDomains(domains) {
+  let names = new Set();
+
+  for (let domain of domains) {
+    if (!domain?.name)
+      continue;
+
+    if (names.has(domain.name))
+      throw new Error(`Cricket app has duplicate resolved domain name ${domain.name}.`);
+
+    names.add(domain.name);
+  }
+}
+
 /**
  * Define the Cricket app contract that CLIs, docs generation, and runtimes all
  * consume. This is intentionally plain data plus setup/context functions.
@@ -149,6 +202,7 @@ function hasLoadedDomains(domains) {
  * @param {object} options - App contract options.
  * @param {'domains'|'manual'} [options.architecture='domains'] - Manual is a migration escape hatch.
  * @param {string|URL|object[]} [options.domains] - Domain root or inline domains. Required unless architecture is manual.
+ * @param {object[]} [options.plugins=[]] - Explicit `defineCricketPlugin` descriptors contributing domains.
  * @returns {object} Normalized Cricket app contract.
  */
 export function defineCricketApp(options = {}) {
@@ -156,14 +210,19 @@ export function defineCricketApp(options = {}) {
 
   let architecture = architectureFor(options);
   let domains = options.domains ?? [];
+  let plugins = options.plugins ?? [];
+  validatePlugins(plugins);
   let loadedDomains = hasLoadedDomains(domains);
   let hasExplicitEndpoints = Object.hasOwn(options, 'endpoints');
   let hasExplicitJobs = Object.hasOwn(options, 'jobs');
   let hasExplicitModels = Object.hasOwn(options, 'models');
-  let collectedDomains = loadedDomains ? {
-    endpoints: collectEndpoints(domains),
-    jobs: collectJobs(domains),
-    models: collectModels(domains)
+  let compositionDomains = loadedDomains
+    ? [...domains, ...plugins.flatMap(plugin => plugin.domains)]
+    : undefined;
+  let collectedDomains = compositionDomains ? {
+    endpoints: collectEndpoints(compositionDomains),
+    jobs: collectJobs(compositionDomains),
+    models: collectModels(compositionDomains)
   } : {};
   let endpoints = hasExplicitEndpoints ? options.endpoints : collectedDomains.endpoints;
   let jobs = hasExplicitJobs ? options.jobs : collectedDomains.jobs;
@@ -181,6 +240,7 @@ export function defineCricketApp(options = {}) {
     ...options,
     architecture,
     domains,
+    plugins,
     allowedHosts,
     ...(database === undefined ? {} : { database }),
     prefix,
@@ -209,6 +269,8 @@ export async function resolveCricketApp(app, {
   let domains = await loadDomains(definedApp.domains, {
     baseUrl: definedApp.baseUrl ?? baseUrl
   });
+  domains = [...domains, ...definedApp.plugins.flatMap(plugin => plugin.domains)];
+  validateResolvedDomains(domains);
   let hasExplicitEndpoints = Object.hasOwn(definedApp, 'endpoints');
   let hasExplicitJobs = Object.hasOwn(definedApp, 'jobs');
   let hasExplicitModels = Object.hasOwn(definedApp, 'models');

@@ -9,10 +9,15 @@ import request from 'supertest';
 
 import {
   created,
+  defineCricketApp,
+  defineCricketPlugin,
+  definePluginSchema,
   createCricketRuntime,
+  defineRule,
   deprecateEndpoint,
   defineEndpoint,
   generateOpenApi,
+  forbidden,
   ok,
   startCricketApp,
   withCookies,
@@ -21,12 +26,299 @@ import {
   z
 } from '../src/index.js';
 import { defineManualTestApp } from '../test-support/app.js';
+import { app as pluginCompositionApp } from '../examples/plugin-composition/app.js';
 import {
   createHttpApp,
   rawHttpResponse
 } from './fixtures/http.js';
 
 describe('Cricket HTTP runtime', () => {
+  it('runs filesystem and plugin domains in the same runtime and service registry', async () => {
+    let runtime = await createCricketRuntime(pluginCompositionApp, {
+      baseUrl: new URL('../examples/plugin-composition/app.js', import.meta.url)
+    });
+
+    try {
+      let projects = await request(runtime.app).get('/projects');
+      let supportUsers = await request(runtime.app)
+        .get('/admin/support/users?search=robert')
+        .set('x-admin', 'true');
+
+      assert.deepEqual(runtime.contract.domains.map(domain => domain.name), ['projects', 'adminActions']);
+      assert.equal(typeof runtime.services.projects.listProjects, 'function');
+      assert.equal(typeof runtime.services.userSupport.performAction, 'function');
+      assert.equal(projects.status, 200);
+      assert.deepEqual(projects.body, [{ id: 'project-1', name: 'Launch plan' }]);
+      assert.equal(supportUsers.status, 200);
+      assert.deepEqual(supportUsers.body, {
+        items: [{
+          id: 'user-7',
+          email: 'robert@example.com',
+          name: 'Robert',
+          state: 'active'
+        }],
+        nextCursor: null
+      });
+    } finally {
+      await runtime.cleanup();
+    }
+  });
+
+  it('runs a plugin domain through validation, rules, app services, and response contracts', async () => {
+    let calls = [];
+    let pluginEndpoint = defineEndpoint({
+      method: 'post',
+      path: '/support/users/:userId/actions',
+      params: z.object({ userId: z.string() }),
+      body: z.object({ action: z.enum(['suspend', 'restore']) }),
+      beforeBodyRules: [defineRule('requireAdmin', ({ request, services }) =>
+        services.adminAccess.requireAdmin({ request })
+      )],
+      response: {
+        schema: z.object({ result: z.string() })
+      },
+      async handler({ input, services }) {
+        return ok(await services.userSupport.performAction({
+          userId: input.params.userId,
+          action: input.body.action
+        }));
+      }
+    });
+    let plugin = defineCricketPlugin({
+      name: 'super-admin',
+      domains: [{
+        name: 'support',
+        endpoints: [pluginEndpoint]
+      }]
+    });
+    let app = defineCricketApp({
+      domains: [],
+      plugins: [plugin],
+      services({ services }) {
+        return {
+          ...services,
+          adminAccess: {
+            requireAdmin({ request }) {
+              if (request.headers['x-admin'] !== 'true')
+                return forbidden('Admin access required');
+            }
+          },
+          userSupport: {
+            async performAction(input) {
+              calls.push(input);
+              return { result: `${input.action}:${input.userId}` };
+            }
+          }
+        };
+      }
+    });
+    let runtime = await createCricketRuntime(app);
+
+    try {
+      let invalid = await request(runtime.app)
+        .post('/support/users/user-1/actions')
+        .set('x-admin', 'true')
+        .send({ action: 'delete' });
+      let denied = await request(runtime.app)
+        .post('/support/users/user-1/actions')
+        .send({ action: 'suspend' });
+      let allowed = await request(runtime.app)
+        .post('/support/users/user-1/actions')
+        .set('x-admin', 'true')
+        .send({ action: 'suspend' });
+
+      assert.equal(invalid.status, 422);
+      assert.equal(denied.status, 403);
+      assert.equal(allowed.status, 200);
+      assert.deepEqual(allowed.body, { result: 'suspend:user-1' });
+      assert.deepEqual(calls, [{ userId: 'user-1', action: 'suspend' }]);
+    } finally {
+      await runtime.cleanup();
+    }
+  });
+
+  it('validates plugin service adapter input and output through HTTP', async () => {
+    let calls = [];
+    let outputSchema = z.object({
+      id: z.string(),
+      label: z.string()
+    });
+    let pluginSchema = definePluginSchema({
+      services: {
+        catalog: {
+          findItem: {
+            input: z.object({
+              itemId: z.string().min(3),
+              includeHistory: z.boolean().default(false)
+            }),
+            output: outputSchema
+          }
+        }
+      }
+    });
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/catalog/:itemId',
+      params: z.object({ itemId: z.string() }),
+      response: { schema: outputSchema },
+      async handler({ input, services }) {
+        return ok(await services.catalog.findItem(input.params));
+      }
+    });
+    let plugin = defineCricketPlugin({
+      name: 'catalog',
+      schema: pluginSchema,
+      domains: [{ name: 'catalog', endpoints: [endpoint] }]
+    });
+    let app = defineCricketApp({
+      domains: [],
+      plugins: [plugin],
+      services({ services }) {
+        return {
+          ...services,
+          catalog: {
+            async findItem(input) {
+              calls.push(input);
+              return {
+                id: input.itemId,
+                label: 'Launch plan',
+                internalNote: 'not part of the plugin contract'
+              };
+            }
+          }
+        };
+      }
+    });
+    let runtime = await createCricketRuntime(app);
+
+    try {
+      let response = await request(runtime.app).get('/catalog/item-1');
+
+      assert.equal(response.status, 200);
+      assert.deepEqual(response.body, {
+        id: 'item-1',
+        label: 'Launch plan'
+      });
+      assert.deepEqual(calls, [{
+        itemId: 'item-1',
+        includeHistory: false
+      }]);
+
+      let invalidInput = await request(runtime.app).get('/catalog/x');
+
+      assert.equal(invalidInput.status, 500);
+      assert.equal(invalidInput.body.error.code, 'PLUGIN_SCHEMA_FAILED');
+      assert.equal(calls.length, 1);
+    } finally {
+      await runtime.cleanup();
+    }
+  });
+
+  it('fails app startup when a required plugin service adapter is missing', async () => {
+    let plugin = defineCricketPlugin({
+      name: 'catalog',
+      schema: definePluginSchema({
+        services: {
+          catalog: {
+            findItem: {
+              input: z.object({ itemId: z.string() }),
+              output: z.object({ id: z.string() })
+            }
+          }
+        }
+      }),
+      domains: [{ name: 'catalog' }]
+    });
+    let app = defineCricketApp({
+      domains: [],
+      plugins: [plugin],
+      services() {
+        return {
+          catalog: {}
+        };
+      }
+    });
+
+    await assert.rejects(createCricketRuntime(app), /requires services\.catalog\.findItem to be a function/);
+  });
+
+  it('returns an internal server error when a plugin service returns the wrong shape', async () => {
+    let pluginSchema = definePluginSchema({
+      services: {
+        catalog: {
+          findItem: {
+            input: z.object({ itemId: z.string() }),
+            output: z.object({ id: z.string() })
+          }
+        }
+      }
+    });
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/catalog/:itemId',
+      params: z.object({ itemId: z.string() }),
+      async handler({ input, services }) {
+        return ok(await services.catalog.findItem(input.params));
+      }
+    });
+    let plugin = defineCricketPlugin({
+      name: 'catalog',
+      schema: pluginSchema,
+      domains: [{ name: 'catalog', endpoints: [endpoint] }]
+    });
+    let app = defineCricketApp({
+      domains: [],
+      plugins: [plugin],
+      services() {
+        return {
+          catalog: {
+            async findItem() {
+              return { id: 42 };
+            }
+          }
+        };
+      }
+    });
+    let runtime = await createCricketRuntime(app);
+
+    try {
+      let response = await request(runtime.app).get('/catalog/item-1');
+
+      assert.equal(response.status, 500);
+      assert.equal(response.body.error.code, 'PLUGIN_SCHEMA_FAILED');
+      assert.equal(response.body.error.message, 'Internal server error');
+      assert.equal(Object.hasOwn(response.body.error, 'issues'), false);
+    } finally {
+      await runtime.cleanup();
+    }
+  });
+
+  it('rejects duplicate app and plugin routes during runtime creation', async () => {
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/platform/status',
+      handler() {
+        return ok({ status: 'ready' });
+      }
+    });
+    let plugin = defineCricketPlugin({
+      name: 'super-admin',
+      domains: [{
+        name: 'platform',
+        endpoints: [endpoint]
+      }]
+    });
+    let app = defineCricketApp({
+      domains: [{
+        name: 'health',
+        endpoints: [endpoint]
+      }],
+      plugins: [plugin]
+    });
+
+    await assert.rejects(createCricketRuntime(app), /Duplicate route GET \/platform\/status/);
+  });
+
   it('emits immutable events without freezing caller-owned values', async () => {
     let observed;
     let app = defineManualTestApp({

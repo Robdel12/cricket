@@ -4,6 +4,11 @@ export {
 } from './app.js';
 
 export {
+  defineCricketPlugin,
+  definePluginSchema
+} from './plugin.js';
+
+export {
   badRequest,
   cricketError,
   forbidden,
