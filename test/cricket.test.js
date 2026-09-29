@@ -18,6 +18,7 @@ import {
   createCricketLogger,
   createServices,
   defineCricketApp,
+  defineCricketPlugin,
   defineEndpoint,
   defineJob,
   defineModel,
@@ -36,6 +37,7 @@ import {
   renameFields,
   redisQueue,
   resolveLogger,
+  resolveCricketApp,
   z
 } from '../src/index.js';
 import {
@@ -91,6 +93,191 @@ describe('Cricket core', () => {
     assert.equal(manual.architecture, 'manual');
     assert.ok(Object.isFrozen(structured));
     assert.ok(Object.isFrozen(manual));
+  });
+
+  it('defines plugin snapshots without freezing caller-owned domain data', () => {
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/support/users',
+      handler() {
+        return ok([]);
+      }
+    });
+    let service = () => ({
+      findUsers() {
+        return [];
+      }
+    });
+    let endpointList = [endpoint];
+    let serviceMap = {
+      support: service
+    };
+    let inputSchema = z.object({ userId: z.string() });
+    let validationMap = {
+      supportUser: inputSchema
+    };
+    let domain = {
+      name: 'support',
+      endpoints: endpointList,
+      services: serviceMap,
+      validations: validationMap
+    };
+    let sourceDomains = [domain];
+    let plugin = defineCricketPlugin({
+      name: 'super-admin',
+      domains: sourceDomains
+    });
+    let [snapshot] = plugin.domains;
+
+    assert.ok(Object.isFrozen(plugin));
+    assert.ok(Object.isFrozen(plugin.domains));
+    assert.ok(Object.isFrozen(snapshot));
+    assert.ok(Object.isFrozen(snapshot.endpoints));
+    assert.ok(Object.isFrozen(snapshot.services));
+    assert.equal(snapshot.endpoints[0], endpoint);
+    assert.equal(snapshot.services.support, service);
+    assert.equal(snapshot.validations.supportUser, inputSchema);
+    assert.equal(Object.isFrozen(sourceDomains), false);
+    assert.equal(Object.isFrozen(domain), false);
+    assert.equal(Object.isFrozen(endpointList), false);
+    assert.equal(Object.isFrozen(serviceMap), false);
+    assert.equal(Object.isFrozen(validationMap), false);
+
+    endpointList.push(endpoint);
+    serviceMap.support = () => 'changed';
+    validationMap.supportUser = z.string();
+    domain.name = 'changed';
+    sourceDomains.push({ name: 'later' });
+
+    assert.equal(plugin.domains.length, 1);
+    assert.equal(snapshot.name, 'support');
+    assert.deepEqual(snapshot.endpoints, [endpoint]);
+    assert.equal(snapshot.services.support, service);
+    assert.equal(snapshot.validations.supportUser, inputSchema);
+  });
+
+  it('validates plugin names and domain records', () => {
+    let domain = {
+      name: 'support'
+    };
+
+    assert.throws(() => defineCricketPlugin({
+      name: '  ',
+      domains: [domain]
+    }), /non-empty name/);
+    assert.throws(() => defineCricketPlugin({
+      name: 'empty',
+      domains: []
+    }), /non-empty domains array/);
+    assert.throws(() => defineCricketPlugin({
+      name: 'unknown',
+      domains: [domain],
+      migrations: []
+    }), /unknown option migrations/);
+    assert.throws(() => defineCricketPlugin({
+      name: 'unnamed',
+      domains: [{}]
+    }), /needs a non-empty name/);
+    assert.throws(() => defineCricketPlugin({
+      name: 'duplicate',
+      domains: [domain, domain]
+    }), /duplicate domain name support/);
+    assert.throws(() => defineCricketPlugin({
+      name: 'class-instance',
+      domains: [new Date()]
+    }), /must be a plain object/);
+  });
+
+  it('validates and snapshots explicit app plugin composition', async () => {
+    let plugin = defineCricketPlugin({
+      name: 'super-admin',
+      domains: [{ name: 'support' }]
+    });
+
+    assert.throws(() => defineCricketApp({
+      domains: [],
+      plugins: [{ name: 'forged', domains: [] }]
+    }), /defineCricketPlugin descriptors/);
+    assert.throws(() => defineCricketApp({
+      domains: [],
+      plugins: [plugin, plugin]
+    }), /duplicate plugin name super-admin/);
+    assert.throws(() => defineCricketApp({
+      architecture: 'manual',
+      plugins: [plugin]
+    }), /manual architecture cannot configure plugins/);
+
+    let plugins = [plugin];
+    let app = defineCricketApp({
+      domains: [],
+      plugins
+    });
+
+    plugins.length = 0;
+    assert.ok(Object.isFrozen(app.plugins));
+    assert.deepEqual(app.plugins, [plugin]);
+    await assert.rejects(createCricketRuntime({
+      ...app,
+      plugins: []
+    }), /cannot replace plugins/);
+  });
+
+  it('resolves filesystem domains before plugin domains and rejects name collisions', async () => {
+    let root = await tempRoot();
+    let productPath = path.join(root, 'projects');
+    let cricketUrl = pathToFileURL(path.resolve('src/index.js')).href;
+    let pluginEndpoint = defineEndpoint({
+      method: 'get',
+      path: '/support/users',
+      handler() {
+        return ok([]);
+      }
+    });
+    let plugin = defineCricketPlugin({
+      name: 'super-admin',
+      domains: [{
+        name: 'support',
+        endpoints: [pluginEndpoint]
+      }]
+    });
+
+    await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({ type: 'module' }));
+    await fs.mkdir(productPath);
+    await fs.writeFile(path.join(productPath, 'project.routes.js'), `
+      export let listProjects = {
+        method: 'GET',
+        path: '/projects',
+        async handle() { return []; }
+      };
+    `);
+
+    let app = defineCricketApp({
+      domains: root,
+      plugins: [plugin]
+    });
+    let resolved = await resolveCricketApp(app);
+
+    assert.deepEqual(resolved.domains.map(domain => domain.name), ['projects', 'support']);
+    assert.deepEqual(resolved.endpoints.map(route => route.path), ['/projects', '/support/users']);
+    assert.equal(resolved.endpoints[1], pluginEndpoint);
+
+    let supportPath = path.join(root, 'support');
+
+    await fs.mkdir(supportPath);
+    await fs.writeFile(path.join(supportPath, 'http.routes.js'), `
+      export let supportRoute = {
+        method: 'GET',
+        path: '/support',
+        async handle() { return []; }
+      };
+    `);
+
+    let colliding = defineCricketApp({
+      domains: root,
+      plugins: [plugin]
+    });
+
+    await assert.rejects(resolveCricketApp(colliding), /duplicate resolved domain name support/);
   });
 
   it('rejects raw flat objects at the runtime boundary', async () => {
@@ -590,6 +777,31 @@ describe('Cricket core', () => {
     });
   });
 
+  it('rejects service name collisions before constructing domain services', () => {
+    let created = [];
+    let first = {
+      name: 'support',
+      services: {
+        admin() {
+          created.push('support');
+          return {};
+        }
+      }
+    };
+    let second = {
+      name: 'moderation',
+      services: {
+        admin() {
+          created.push('moderation');
+          return {};
+        }
+      }
+    };
+
+    assert.throws(() => createServices([first, second]), /service admin is provided by both domains support and moderation/);
+    assert.deepEqual(created, []);
+  });
+
 
   it('loads domains that only need boundary schemas in model files', async () => {
     let root = await tempRoot();
@@ -885,6 +1097,20 @@ describe('Cricket core', () => {
                 id: 'project-1',
                 name: input.name
               };
+            }
+          };
+        },
+        mailer() {
+          return {
+            async sendProjectCreated() {
+              throw new Error('domain mailer should be overridden by setup.services');
+            }
+          };
+        },
+        audit() {
+          return {
+            async recordProjectCreated() {
+              throw new Error('domain audit should be overridden by app.services');
             }
           };
         }

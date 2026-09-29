@@ -191,6 +191,50 @@ logger, and trace because it returns a pure decision rather than doing product
 work. Shutdown hooks receive the assembled runtime, including dependencies,
 services, lifecycle, and logger.
 
+## Add package domains with plugins
+
+A package can export named Cricket domains for an app to compose with its own
+domain folder. Keep Cricket as a peer dependency so the package and app use the
+same Cricket contracts:
+
+```js
+// In the package, such as @acme/super-admin:
+import { defineCricketPlugin } from '@robdel12/cricket';
+
+export let superAdminPlugin = defineCricketPlugin({
+  name: 'super-admin',
+  domains: [supportDomain, moderationDomain]
+});
+```
+
+The app composes that descriptor beside its filesystem domains:
+
+```js
+import { defineCricketApp } from '@robdel12/cricket';
+import { superAdminPlugin } from '@acme/super-admin';
+
+export let app = defineCricketApp({
+  domains: './domains',
+  plugins: [superAdminPlugin]
+});
+```
+
+`defineCricketPlugin` copies the domain containers and freezes their structure.
+Built contracts, schemas, and functions keep their identity. Cricket loads the
+app's domain folder first, then adds plugin domains in the order listed. They
+use the same HTTP, worker, inspect, and OpenAPI paths as app domains.
+
+Plugins contribute domains only. They do not discover files or package paths,
+register middleware or lifecycle hooks, or load migrations. A plugin model's
+table still needs an app-owned migration. The app owns authentication and
+product policy. It can connect plugin endpoints to app services for product
+data and actions, so the package does not need a shared user, moderation, or
+resource table.
+
+See [`examples/plugin-composition/`](examples/plugin-composition/) for a
+filesystem domain combined with a package-style plugin, including user support
+actions and a separately paged moderation adapter.
+
 ## Domain Contracts
 
 Models describe durable rows and default visibility:
@@ -695,8 +739,9 @@ try {
 ```
 
 In domain architecture, a worker may execute all app jobs or select a subset,
-but every selected job must already belong to one of the app's domains. Manual
-apps may register jobs at the worker boundary while they migrate that ownership.
+but every selected job must belong to one of the app's resolved domains,
+including plugin domains. Manual apps may register jobs at the worker boundary
+while they migrate that ownership.
 
 Choose the queue deliberately. Production producers and workers use
 `queues.redis` or an app-provided `queues.driver`; tests opt into the in-memory

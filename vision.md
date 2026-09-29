@@ -98,6 +98,23 @@ Domains can use only the files they earn. Optional files stay optional, and
 domain-local filenames can describe the slice they contain as long as they keep
 Cricket's standard suffixes.
 
+### Plugins compose domains
+
+Packages may export a `defineCricketPlugin({ name, domains })` descriptor made
+from already-built, named Cricket domains. Apps register descriptors explicitly
+with `defineCricketApp({ domains: './domains', plugins: [...] })`. Cricket
+resolves the app's domain root first, then appends plugin domains in declaration
+order. Contributions use the same route, service, model, job, inspect, and docs
+paths as app domains. Descriptor containers are copied and frozen while built
+contracts keep their identities.
+
+The plugin boundary stays domain-only. Cricket does not discover package paths,
+load plugin migrations, or let a package control app auth or product data. The
+app supplies rules and services that adapt its own users, support,
+moderation, and actions to the plugin's endpoint contracts. Models contributed
+by a plugin still need app-owned migrations. This keeps shared tools useful
+across products with different tables and policies.
+
 API compatibility belongs at the endpoint boundary. Apps may share an
 immutable `defineApiVersions` family across routes, but each endpoint opts in
 explicitly and declares only its historical normalizer and serializer deltas.

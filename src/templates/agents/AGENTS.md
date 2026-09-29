@@ -22,6 +22,12 @@ for existing or embedded applications. Treat manual mode as visible tech debt,
 do not introduce it in a fresh app, and remove it when the migration reaches a
 deliberate domain cutover.
 
+Packages can export named domains through
+`defineCricketPlugin({ name, domains })`. Apps add them with the explicit
+`plugins` list. Plugin endpoints use normal domain contracts; apps own auth,
+product data access, and migrations. Connect endpoints to app services and
+protect them with app rules.
+
 Cricket definition builders return stable contracts and reject unknown app or
 endpoint options. Compose new definitions instead of mutating existing apps,
 endpoints, rules, models, serializers, normalizers, or jobs after construction.

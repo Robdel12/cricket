@@ -27,6 +27,7 @@ Start with `pnpm cricket check api/index.js`, then inspect the app, read
 - Cricket provides the architecture, HTTP runtime, job runtime, logger, trace, and read-only runtime lifecycle. The app defines product behavior, auth policy, data work, worker entrypoints, product health, and deployment.
 - Domains are required by default. Do not register product endpoints, jobs, or models directly on `defineCricketApp`.
 - `architecture: 'manual'` is a migration escape hatch and visible tech debt. Never introduce it in a fresh app; move existing manual contracts into domains and remove the mode at a deliberate cutover.
+- Packages can export named domains with `defineCricketPlugin`; apps add them through `plugins`. They use normal domain contracts. The app owns auth, product data access, and migrations.
 - `api/middleware/` is for request middleware, not domain authorization.
 - `api/services/` is for narrow app-wide capabilities not owned by one domain.
 - `api/workers/` is for background worker entrypoints that start Cricket workers.
