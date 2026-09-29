@@ -267,7 +267,11 @@ export function createAppMap(contract) {
     })),
     plugins: plugins.map(plugin => ({
       name: plugin.name,
-      domains: toArray(plugin.domains).map((domain, index) => domainNameFor(domain, index))
+      domains: toArray(plugin.domains).map((domain, index) => domainNameFor(domain, index)),
+      schemaServices: Object.entries(plugin.schema?.services ?? {}).map(([name, methods]) => ({
+        name,
+        methods: Object.keys(methods)
+      }))
     })),
     jobs: jobs.map(jobSummaryFor),
     models: models.map(model => ({
@@ -330,6 +334,11 @@ export function formatAppMap(appMap) {
     for (let plugin of appMap.plugins) {
       lines.push(`  ${plugin.name}`);
       lines.push(`    domains: ${plugin.domains.join(', ') || 'none'}`);
+      if (plugin.schemaServices.length) {
+        lines.push('    schema services:');
+        for (let service of plugin.schemaServices)
+          lines.push(`      ${service.name}: ${service.methods.join(', ')}`);
+      }
     }
   }
 

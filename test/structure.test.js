@@ -319,7 +319,8 @@ describe('Cricket CLI', () => {
     assert.match(agents, /Domains are Cricket's required default architecture/);
     assert.match(agents, /manual mode as visible tech debt/);
     assert.match(agents, /defineCricketPlugin/);
-    assert.match(agents, /apps own auth/);
+    assert.match(agents, /definePluginSchema/);
+    assert.match(agents, /Apps own auth/);
     assert.match(agents, /pnpm cricket check api\/index\.js/);
     assert.match(agents, /App Shape/);
     assert.match(agents, /Domain Shape/);
@@ -335,6 +336,7 @@ describe('Cricket CLI', () => {
     assert.match(agents, /\{ dependencies, services, cleanup \}/);
     assert.match(agents, /Recovery receives evidence, time, logger, and trace/);
     assert.match(cricketSkill, /defineCricketPlugin/);
+    assert.match(cricketSkill, /definePluginSchema/);
     assert.match(cricketSkill, /The app owns auth, product data access, and migrations/);
     assert.match(agents, /defineJob/);
     assert.match(agents, /cronSchedule/);
@@ -587,6 +589,7 @@ describe('Cricket CLI', () => {
     let document = JSON.parse(await fs.readFile(outputPath, 'utf8'));
 
     assert.match(inspected.stdout, /Plugins\n  super-admin\n    domains: adminActions/);
+    assert.match(inspected.stdout, /schema services:\n      adminAccess: requireAdmin\n      userSupport: listUsers/);
     assert.match(inspected.stdout, /projects/);
     assert.match(inspected.stdout, /adminActions/);
     assert.match(inspected.stdout, /GET\s+\/admin\/support\/users/);

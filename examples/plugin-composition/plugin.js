@@ -3,12 +3,84 @@ import {
   defineEndpoint,
   defineJob,
   defineModel,
+  definePluginSchema,
   defineRule,
   field,
   ok,
   redisQueue,
   z
 } from '@robdel12/cricket';
+
+let AdminUser = z.object({
+  id: z.string(),
+  email: z.email(),
+  name: z.string().nullable(),
+  state: z.enum(['active', 'suspended'])
+});
+let AdminUserPage = z.object({
+  items: z.array(AdminUser),
+  nextCursor: z.string().nullable()
+});
+let UserActionInput = z.object({
+  userId: z.string(),
+  action: z.enum(['suspend', 'restore'])
+});
+let UserActionResult = z.object({
+  userId: z.string(),
+  action: z.enum(['suspend', 'restore'])
+});
+let ModerationReport = z.object({
+  id: z.string(),
+  summary: z.string(),
+  state: z.enum(['pending', 'approved', 'rejected'])
+});
+let ModerationReportPage = z.object({
+  items: z.array(ModerationReport),
+  nextCursor: z.string().nullable()
+});
+let ApproveReportResult = z.object({
+  reportId: z.string(),
+  state: z.literal('approved')
+});
+
+export let superAdminSchema = definePluginSchema({
+  services: {
+    adminAccess: {
+      requireAdmin: {
+        input: z.unknown(),
+        output: z.boolean()
+      }
+    },
+    userSupport: {
+      listUsers: {
+        input: z.object({
+          search: z.string().optional()
+        }),
+        output: AdminUserPage
+      },
+      performAction: {
+        input: UserActionInput,
+        output: UserActionResult
+      },
+      recordAction: {
+        input: UserActionInput,
+        output: UserActionResult
+      }
+    },
+    moderation: {
+      listReports: {
+        input: z.object({
+          cursor: z.string().optional()
+        }),
+        output: ModerationReportPage
+      },
+      approveReport: {
+        input: z.object({ reportId: z.string() }),
+        output: ApproveReportResult
+      }
+    }
+  }
+});
 
 let AdminAction = defineModel({
   name: 'AdminAction',
@@ -21,9 +93,12 @@ let AdminAction = defineModel({
   }
 });
 
-let requireAdmin = defineRule('requireAdmin', ({ request, services }) =>
-  services.adminAccess.requireAdmin({ request })
-);
+let requireAdmin = defineRule('requireAdmin', async ({ request, services }) => {
+  let allowed = await services.adminAccess.requireAdmin(request);
+
+  if (!allowed)
+    return forbidden('Admin access required');
+});
 
 let listSupportUsers = defineEndpoint({
   method: 'get',
@@ -31,6 +106,7 @@ let listSupportUsers = defineEndpoint({
   query: z.object({
     search: z.string().optional()
   }),
+  response: { schema: AdminUserPage },
   beforeBodyRules: [requireAdmin],
   async handler({ input, services }) {
     return ok(await services.userSupport.listUsers(input.query));
@@ -44,6 +120,7 @@ let performUserAction = defineEndpoint({
   body: z.object({
     action: z.enum(['suspend', 'restore'])
   }),
+  response: { schema: UserActionResult },
   beforeBodyRules: [requireAdmin],
   async handler({ input, services }) {
     return ok(await services.userSupport.performAction({
@@ -59,6 +136,7 @@ let listModerationReports = defineEndpoint({
   query: z.object({
     cursor: z.string().optional()
   }),
+  response: { schema: ModerationReportPage },
   beforeBodyRules: [requireAdmin],
   async handler({ input, services }) {
     return ok(await services.moderation.listReports(input.query));
@@ -69,6 +147,7 @@ let approveModerationReport = defineEndpoint({
   method: 'post',
   path: '/admin/moderation/reports/:reportId/approve',
   params: z.object({ reportId: z.string() }),
+  response: { schema: ApproveReportResult },
   beforeBodyRules: [requireAdmin],
   async handler({ input, services }) {
     return ok(await services.moderation.approveReport({
@@ -97,6 +176,7 @@ let recordSupportAction = defineJob({
 
 export let superAdminPlugin = defineCricketPlugin({
   name: 'super-admin',
+  schema: superAdminSchema,
   domains: [{
     name: 'adminActions',
     models: [AdminAction],

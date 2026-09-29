@@ -155,6 +155,7 @@ function validatePlugins(plugins) {
     throw new Error('defineCricketApp plugins must be an array of defineCricketPlugin descriptors.');
 
   let names = new Set();
+  let serviceMethods = new Map();
 
   for (let plugin of plugins) {
     if (!isCricketPlugin(plugin))
@@ -164,6 +165,19 @@ function validatePlugins(plugins) {
       throw new Error(`defineCricketApp has duplicate plugin name ${plugin.name}.`);
 
     names.add(plugin.name);
+
+    for (let [serviceName, methods] of Object.entries(plugin.schema?.services ?? {})) {
+      let methodsForService = serviceMethods.get(serviceName) ?? new Map();
+
+      for (let methodName of Object.keys(methods)) {
+        if (methodsForService.has(methodName))
+          throw new Error(`Cricket plugins ${methodsForService.get(methodName)} and ${plugin.name} both define a schema for services.${serviceName}.${methodName}.`);
+
+        methodsForService.set(methodName, plugin.name);
+      }
+
+      serviceMethods.set(serviceName, methodsForService);
+    }
   }
 }
 

@@ -23,6 +23,7 @@ import {
   defineJob,
   defineModel,
   defineNormalizer,
+  definePluginSchema,
   defineRule,
   defineSerializer,
   field,
@@ -156,6 +157,52 @@ describe('Cricket core', () => {
     assert.equal(snapshot.validations.supportUser, inputSchema);
   });
 
+  it('defines immutable plugin service schemas with Zod input and output contracts', () => {
+    let inputSchema = z.object({ itemId: z.string() });
+    let outputSchema = z.object({ item: z.string() });
+    let method = {
+      input: inputSchema,
+      output: outputSchema
+    };
+    let service = {
+      findItem: method
+    };
+    let services = {
+      catalog: service
+    };
+    let schema = definePluginSchema({ services });
+
+    assert.ok(Object.isFrozen(schema));
+    assert.ok(Object.isFrozen(schema.services));
+    assert.ok(Object.isFrozen(schema.services.catalog));
+    assert.ok(Object.isFrozen(schema.services.catalog.findItem));
+    assert.equal(schema.services.catalog.findItem.input, inputSchema);
+    assert.equal(schema.services.catalog.findItem.output, outputSchema);
+    assert.equal(Object.isFrozen(services), false);
+    assert.equal(Object.isFrozen(service), false);
+    assert.equal(Object.isFrozen(method), false);
+
+    method.input = z.string();
+    service.findItem = { input: z.string(), output: outputSchema };
+    services.catalog = {};
+
+    assert.equal(schema.services.catalog.findItem.input, inputSchema);
+    assert.equal(schema.services.catalog.findItem.output, outputSchema);
+    assert.throws(() => definePluginSchema({}), /services must be a non-empty object/);
+    assert.throws(() => definePluginSchema({
+      services: {
+        catalog: {
+          findItem: { input: inputSchema }
+        }
+      }
+    }), /needs an output Zod schema/);
+    assert.throws(() => defineCricketPlugin({
+      name: 'invalid-schema',
+      schema: { services: {} },
+      domains: [{ name: 'catalog' }]
+    }), /definePluginSchema contract/);
+  });
+
   it('validates plugin names and domain records', () => {
     let domain = {
       name: 'support'
@@ -193,6 +240,28 @@ describe('Cricket core', () => {
       name: 'super-admin',
       domains: [{ name: 'support' }]
     });
+    let schema = definePluginSchema({
+      services: {
+        catalog: {
+          findItem: {
+            input: z.object({ itemId: z.string() }),
+            output: z.object({ id: z.string() })
+          }
+        }
+      }
+    });
+    let conflictingPlugins = [
+      defineCricketPlugin({
+        name: 'catalog-one',
+        schema,
+        domains: [{ name: 'catalogOne' }]
+      }),
+      defineCricketPlugin({
+        name: 'catalog-two',
+        schema,
+        domains: [{ name: 'catalogTwo' }]
+      })
+    ];
 
     assert.throws(() => defineCricketApp({
       domains: [],
@@ -206,6 +275,10 @@ describe('Cricket core', () => {
       architecture: 'manual',
       plugins: [plugin]
     }), /manual architecture cannot configure plugins/);
+    assert.throws(() => defineCricketApp({
+      domains: [],
+      plugins: conflictingPlugins
+    }), /both define a schema for services.catalog.findItem/);
 
     let plugins = [plugin];
     let app = defineCricketApp({

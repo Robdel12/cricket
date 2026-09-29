@@ -1,6 +1,5 @@
 import {
-  defineCricketApp,
-  forbidden
+  defineCricketApp
 } from '@robdel12/cricket';
 
 import { superAdminPlugin } from './plugin.js';
@@ -13,16 +12,20 @@ export let app = defineCricketApp({
     return {
       ...services,
       adminAccess: {
-        requireAdmin({ request }) {
-          if (request.headers['x-admin'] !== 'true')
-            return forbidden('Admin access required');
+        requireAdmin(request) {
+          return request.headers['x-admin'] === 'true';
         }
       },
       userSupport: {
         async listUsers({ search }) {
           return {
-            data: [],
-            search: search ?? null
+            items: search ? [{
+              id: 'user-7',
+              email: 'robert@example.com',
+              name: 'Robert',
+              state: 'active'
+            }] : [],
+            nextCursor: null
           };
         },
         async performAction({ userId, action }) {

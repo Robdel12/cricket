@@ -24,9 +24,10 @@ deliberate domain cutover.
 
 Packages can export named domains through
 `defineCricketPlugin({ name, domains })`. Apps add them with the explicit
-`plugins` list. Plugin endpoints use normal domain contracts; apps own auth,
-product data access, and migrations. Connect endpoints to app services and
-protect them with app rules.
+`plugins` list. A plugin can use `definePluginSchema` to declare the Zod input
+and output shapes for required app service methods. Cricket checks those methods
+at runtime setup and validates their calls. Apps own auth, product data access,
+and migrations; map product rows into the plugin's public data shapes.
 
 Cricket definition builders return stable contracts and reject unknown app or
 endpoint options. Compose new definitions instead of mutating existing apps,

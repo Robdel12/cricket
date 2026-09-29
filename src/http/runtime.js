@@ -24,6 +24,7 @@ import { resolveLogger } from '../logger.js';
 import { normalizeObservability } from '../observability.js';
 import { assertKnownOptions } from '../options.js';
 import { createDatabaseConnection } from '../persistence/database.js';
+import { bindPluginServices } from '../plugin.js';
 import { applyRules } from '../rule.js';
 import {
   createNoopTrace,
@@ -1093,6 +1094,8 @@ export async function createCricketRuntime(cricketApp, {
     } else if (appContract.services) {
       services = appContract.services;
     }
+
+    services = bindPluginServices(appContract.plugins, services);
 
     let runtimeBag = {
       app: appContract,

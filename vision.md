@@ -108,6 +108,13 @@ order. Contributions use the same route, service, model, job, inspect, and docs
 paths as app domains. Descriptor containers are copied and frozen while built
 contracts keep their identities.
 
+A plugin can also export a `definePluginSchema` with Zod input and output
+schemas for the app service methods it needs. The app supplies those methods;
+Cricket checks that each one exists at runtime setup and validates its inputs
+and results. The plugin owns the shared data shape, while the app maps its own
+tables and services into that shape. Trusted actor and scope facts come from
+app rules, then pass to adapters as explicit input.
+
 The plugin boundary stays domain-only. Cricket does not discover package paths,
 load plugin migrations, or let a package control app auth or product data. The
 app supplies rules and services that adapt its own users, support,

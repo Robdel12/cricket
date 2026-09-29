@@ -10,6 +10,7 @@ let statusByCode = {
   EXPECTATION_FAILED: 417,
   TOO_MANY_REQUESTS: 429,
   NORMALIZER_CONTRACT_FAILED: 500,
+  PLUGIN_SCHEMA_FAILED: 500,
   RESPONSE_CONTRACT_FAILED: 500,
   SERIALIZER_CONTRACT_FAILED: 500,
   VALIDATION_FAILED: 422
@@ -155,6 +156,26 @@ export function normalizerContractFailed(error) {
   let contractError = cricketError('NORMALIZER_CONTRACT_FAILED', 'Normalizer contract failed', {
     issues: error.issues ?? []
   });
+  contractError.expose = false;
+  return contractError;
+}
+
+/**
+ * Normalize failures between a plugin schema and an app service adapter.
+ *
+ * @param {string} pluginName
+ * @param {string} serviceName
+ * @param {string} methodName
+ * @param {'input'|'output'} direction
+ * @param {{ issues?: Array<any> }} error
+ * @returns {Error & { code: string, details: { issues: Array<any> } }}
+ */
+export function pluginSchemaFailed(pluginName, serviceName, methodName, direction, error) {
+  let contractError = cricketError(
+    'PLUGIN_SCHEMA_FAILED',
+    `Plugin ${pluginName} service ${serviceName}.${methodName} ${direction} schema failed`,
+    { issues: error.issues ?? [] }
+  );
   contractError.expose = false;
   return contractError;
 }

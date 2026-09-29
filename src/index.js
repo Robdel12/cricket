@@ -4,7 +4,8 @@ export {
 } from './app.js';
 
 export {
-  defineCricketPlugin
+  defineCricketPlugin,
+  definePluginSchema
 } from './plugin.js';
 
 export {

@@ -11,6 +11,7 @@ import {
   created,
   defineCricketApp,
   defineCricketPlugin,
+  definePluginSchema,
   createCricketRuntime,
   defineRule,
   deprecateEndpoint,
@@ -49,7 +50,15 @@ describe('Cricket HTTP runtime', () => {
       assert.equal(projects.status, 200);
       assert.deepEqual(projects.body, [{ id: 'project-1', name: 'Launch plan' }]);
       assert.equal(supportUsers.status, 200);
-      assert.deepEqual(supportUsers.body, { data: [], search: 'robert' });
+      assert.deepEqual(supportUsers.body, {
+        items: [{
+          id: 'user-7',
+          email: 'robert@example.com',
+          name: 'Robert',
+          state: 'active'
+        }],
+        nextCursor: null
+      });
     } finally {
       await runtime.cleanup();
     }
@@ -123,6 +132,162 @@ describe('Cricket HTTP runtime', () => {
       assert.equal(allowed.status, 200);
       assert.deepEqual(allowed.body, { result: 'suspend:user-1' });
       assert.deepEqual(calls, [{ userId: 'user-1', action: 'suspend' }]);
+    } finally {
+      await runtime.cleanup();
+    }
+  });
+
+  it('validates plugin service adapter input and output through HTTP', async () => {
+    let calls = [];
+    let outputSchema = z.object({
+      id: z.string(),
+      label: z.string()
+    });
+    let pluginSchema = definePluginSchema({
+      services: {
+        catalog: {
+          findItem: {
+            input: z.object({
+              itemId: z.string().min(3),
+              includeHistory: z.boolean().default(false)
+            }),
+            output: outputSchema
+          }
+        }
+      }
+    });
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/catalog/:itemId',
+      params: z.object({ itemId: z.string() }),
+      response: { schema: outputSchema },
+      async handler({ input, services }) {
+        return ok(await services.catalog.findItem(input.params));
+      }
+    });
+    let plugin = defineCricketPlugin({
+      name: 'catalog',
+      schema: pluginSchema,
+      domains: [{ name: 'catalog', endpoints: [endpoint] }]
+    });
+    let app = defineCricketApp({
+      domains: [],
+      plugins: [plugin],
+      services({ services }) {
+        return {
+          ...services,
+          catalog: {
+            async findItem(input) {
+              calls.push(input);
+              return {
+                id: input.itemId,
+                label: 'Launch plan',
+                internalNote: 'not part of the plugin contract'
+              };
+            }
+          }
+        };
+      }
+    });
+    let runtime = await createCricketRuntime(app);
+
+    try {
+      let response = await request(runtime.app).get('/catalog/item-1');
+
+      assert.equal(response.status, 200);
+      assert.deepEqual(response.body, {
+        id: 'item-1',
+        label: 'Launch plan'
+      });
+      assert.deepEqual(calls, [{
+        itemId: 'item-1',
+        includeHistory: false
+      }]);
+
+      let invalidInput = await request(runtime.app).get('/catalog/x');
+
+      assert.equal(invalidInput.status, 500);
+      assert.equal(invalidInput.body.error.code, 'PLUGIN_SCHEMA_FAILED');
+      assert.equal(calls.length, 1);
+    } finally {
+      await runtime.cleanup();
+    }
+  });
+
+  it('fails app startup when a required plugin service adapter is missing', async () => {
+    let plugin = defineCricketPlugin({
+      name: 'catalog',
+      schema: definePluginSchema({
+        services: {
+          catalog: {
+            findItem: {
+              input: z.object({ itemId: z.string() }),
+              output: z.object({ id: z.string() })
+            }
+          }
+        }
+      }),
+      domains: [{ name: 'catalog' }]
+    });
+    let app = defineCricketApp({
+      domains: [],
+      plugins: [plugin],
+      services() {
+        return {
+          catalog: {}
+        };
+      }
+    });
+
+    await assert.rejects(createCricketRuntime(app), /requires services\.catalog\.findItem to be a function/);
+  });
+
+  it('returns an internal server error when a plugin service returns the wrong shape', async () => {
+    let pluginSchema = definePluginSchema({
+      services: {
+        catalog: {
+          findItem: {
+            input: z.object({ itemId: z.string() }),
+            output: z.object({ id: z.string() })
+          }
+        }
+      }
+    });
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/catalog/:itemId',
+      params: z.object({ itemId: z.string() }),
+      async handler({ input, services }) {
+        return ok(await services.catalog.findItem(input.params));
+      }
+    });
+    let plugin = defineCricketPlugin({
+      name: 'catalog',
+      schema: pluginSchema,
+      domains: [{ name: 'catalog', endpoints: [endpoint] }]
+    });
+    let app = defineCricketApp({
+      domains: [],
+      plugins: [plugin],
+      services() {
+        return {
+          catalog: {
+            async findItem() {
+              return { id: 42 };
+            }
+          }
+        };
+      }
+    });
+    let runtime = await createCricketRuntime(app);
+
+    try {
+      let response = await request(runtime.app).get('/catalog/item-1');
+
+      assert.equal(response.status, 500);
+      assert.equal(response.body.error.code, 'PLUGIN_SCHEMA_FAILED');
+      assert.equal(response.body.error.message, 'Internal server error');
+      assert.equal(Object.hasOwn(response.body.error, 'issues'), false);
     } finally {
       await runtime.cleanup();
     }
