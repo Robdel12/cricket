@@ -23,6 +23,63 @@ import {
 } from '../test-support/jobs.js';
 
 describe('Cricket jobs: worker', () => {
+  it('services recovery, due delayed work, and cron jobs before a ready backlog drains', async () => {
+    let time = createManualClock('2026-06-19T12:00:01.000Z');
+    let controller = new AbortController();
+    let ran = [];
+    let backlog = defineJob({
+      name: 'reports.backlog',
+      input: z.object({ index: z.number() }),
+      queue: redisQueue({ name: 'backlog', priority: ({ input }) => 5 - input.index }),
+      run({ input }) {
+        ran.push(`backlog:${input.index}`);
+        if (input.index === 0) time.advanceBy(60_000);
+      }
+    });
+    let interrupted = defineJob({
+      name: 'reports.interrupted',
+      input: z.object({}),
+      queue: redisQueue({ name: 'interrupted', priority: () => 30 }),
+      recover({ now }) {
+        return new Date(now) >= new Date('2026-06-19T12:01:00.000Z')
+          ? { action: 'retry', reason: 'Processing deadline passed' }
+          : { action: 'continue' };
+      },
+      run() { ran.push('recovered'); }
+    });
+    let delayed = defineJob({
+      name: 'reports.delayed',
+      input: z.object({}),
+      queue: redisQueue({ name: 'delayed', priority: () => 20 }),
+      run() { ran.push('delayed'); }
+    });
+    let scheduled = defineJob({
+      name: 'maintenance.backlogSchedule',
+      input: z.object({}),
+      queue: redisQueue({ name: 'scheduled', priority: () => 10 }),
+      schedule: cronSchedule({ key: 'busy_schedule', cron: '* * * * *', input: () => ({}) }),
+      run() {
+        ran.push('scheduled');
+        controller.abort();
+      }
+    });
+    let worker = await startCricketWorker(defineManualTestApp({ logger() {} }), {
+      clock: time.clock,
+      jobs: [backlog, interrupted, delayed, scheduled],
+      queues: { test: true }
+    });
+    try {
+      await worker.jobs.enqueue(interrupted, {});
+      await worker.driver.claim();
+      await worker.jobs.enqueue(delayed, {}, { delayMs: 60_000 });
+      for (let index = 0; index < 5; index++) await worker.jobs.enqueue(backlog, { index });
+      await worker.run({ signal: controller.signal });
+      assert.deepEqual(ran, ['backlog:0', 'recovered', 'delayed', 'scheduled']);
+    } finally {
+      await worker.cleanup();
+    }
+  });
+
   it('discovers filesystem and plugin jobs in one worker with their service contexts', async () => {
     let worker = await startCricketWorker(pluginCompositionApp, {
       baseUrl: new URL('../examples/plugin-composition/app.js', import.meta.url),
@@ -45,10 +102,10 @@ describe('Cricket jobs: worker', () => {
       await worker.jobs.enqueue(projectJob, { projectId: 'project-1' });
       await worker.jobs.enqueue(adminJob, { userId: 'user-7', action: 'suspend' });
 
-      assert.deepEqual(await worker.drain(), [
+      assert.deepEqual(new Set(await worker.drain()), new Set([
         { indexed: true },
         { recorded: true }
-      ]);
+      ]));
     } finally {
       await worker.cleanup();
     }

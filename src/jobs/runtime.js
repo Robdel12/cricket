@@ -917,17 +917,14 @@ export async function startCricketWorker(cricketApp, {
     return results;
   }
 
-  async function drain({
-    signal,
-    throwOnError = true
-  } = {}) {
+  async function drainReady({ signal, throwOnError = true }, maxJobs) {
     let results = [];
 
     await driver.promoteDelayed?.({
       now: clock.now()
     });
 
-    while (!shuttingDown && !signal?.aborted) {
+    while (!shuttingDown && !signal?.aborted && results.length < maxJobs) {
       let claim = await driver.claim();
 
       if (!claim)
@@ -946,6 +943,10 @@ export async function startCricketWorker(cricketApp, {
     }
 
     return results;
+  }
+
+  async function drain(options = {}) {
+    return drainReady(options, Infinity);
   }
 
   async function startSchedule(job) {
@@ -1097,10 +1098,10 @@ export async function startCricketWorker(cricketApp, {
         throwOnError
       });
       await tickSchedules();
-      await drain({
-        signal: runSignal,
-        throwOnError
-      });
+      let results = await drainReady({ signal: runSignal, throwOnError }, 1);
+
+      if (results.length)
+        continue;
 
       try {
         let wait = await driver.waitForWork({

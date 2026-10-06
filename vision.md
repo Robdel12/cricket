@@ -198,7 +198,8 @@ Recovery reads execution evidence and returns a pure decision.
 
 Queue ownership should always be explicit. Workers wait for driver wakeups or
 the next known delayed or cron boundary, and shutdown aborts that wait. They do
-not poll on a framework interval.
+not poll on a framework interval. Between jobs, the continuous worker checks
+recovery, due cron slots, and delayed availability even while ready work remains.
 
 Redis coordinates hot execution: queues, wakeups, leases, attempts, idempotency,
 delayed availability, schedule materialization, and attempt evidence. The
