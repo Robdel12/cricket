@@ -839,6 +839,10 @@ driver.
 `worker.run({ signal })` blocks on queue wakeups and the next delayed or cron
 boundary. Enqueuing ready work wakes it immediately. Aborting the signal or
 calling `worker.cleanup()` stops the wait without a polling interval.
+Between jobs, the continuous worker rechecks recovery, due cron slots, and
+delayed availability, so a ready backlog cannot postpone those checks until
+the queue empties. `worker.drain()` still runs all currently ready work for
+explicit workflow tests.
 
 Exponential retries use the job policy as execution behavior. The first retry
 waits `delayMs`, each later retry doubles that delay, and `maxDelayMs` caps it.

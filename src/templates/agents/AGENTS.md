@@ -179,7 +179,9 @@ Use `createCricketJobs` in producers that only enqueue work. Use
 `worker.run({ signal })` for the job loop. Configure `queues.redis` or an
 app-provided `queues.driver` explicitly; only tests should opt into
 `queues.test: true`. Workers wait for queue wakeups and delayed or cron
-boundaries instead of polling. Exponential retries remain unclaimable until
+boundaries instead of polling. Between jobs, the continuous worker checks
+recovery, due cron slots, and delayed availability even while ready work remains.
+Exponential retries remain unclaimable until
 their calculated backoff expires. Deploy checks and product health remain app
 responsibility.
 <!-- /cricket-agent-guidance -->

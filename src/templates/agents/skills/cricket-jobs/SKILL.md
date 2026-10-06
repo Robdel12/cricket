@@ -43,6 +43,8 @@ Use this when work leaves the request path but should keep Cricket's contract sh
   in-memory queue.
 - Worker loops block on queue wakeups and the next delayed or cron boundary.
   Abort the signal or call `worker.cleanup()` to stop that wait.
+- Between jobs, the continuous worker checks recovery, due cron slots, and
+  delayed availability even while ready work remains.
 - Job `run` functions receive `input`, `context`, `services`, `logger`, `trace`, `lifecycle`, `jobs`, and `progress`. They should not receive Redis clients.
 - Enqueue with `runAt` or `delayMs` for one-off delayed work.
 - Run app-owned cleanup in bounded batches. Call `jobs.removeFinished(ids)`
