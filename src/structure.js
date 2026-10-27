@@ -323,7 +323,8 @@ export let app = defineCricketApp({
   version: '1.0.0',
   logger: {
     service: 'cricket-api',
-    level: process.env.LOG_LEVEL ?? 'info'
+    level: process.env.LOG_LEVEL ?? 'info',
+    format: process.env.NODE_ENV === 'production' ? 'json' : 'pretty'
   },
   domains: './domains'
 });

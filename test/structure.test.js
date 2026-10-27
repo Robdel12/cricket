@@ -335,6 +335,10 @@ describe('Cricket CLI', () => {
     assert.match(agents, /lifecycle/);
     assert.match(agents, /\{ dependencies, services, cleanup \}/);
     assert.match(agents, /Recovery receives evidence, time, logger, and trace/);
+    assert.match(agents, /format: 'pretty'/);
+    assert.match(observabilitySkill, /format: 'pretty'/);
+    assert.match(observabilitySkill, /NO_COLOR/);
+    assert.match(observabilitySkill, /may span multiple lines/);
     assert.match(cricketSkill, /defineCricketPlugin/);
     assert.match(cricketSkill, /definePluginSchema/);
     assert.match(cricketSkill, /The app owns auth, product data access, and migrations/);
@@ -447,6 +451,7 @@ describe('Cricket CLI', () => {
 
     assert.match(appEntry, /defineCricketApp/);
     assert.match(appEntry, /logger: \{/);
+    assert.match(appEntry, /format: process\.env\.NODE_ENV === 'production' \? 'json' : 'pretty'/);
     assert.match(appEntry, /service: 'cricket-api'/);
     assert.match(appEntry, /domains: '\.\/domains'/);
     await assertDirectoryExists(path.join(root, 'api', 'domains'));

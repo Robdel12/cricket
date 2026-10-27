@@ -1,3 +1,5 @@
+import { formatPrettyLog } from './pretty-log.js';
+
 let noop = () => {};
 let levels = {
   debug: 10,
@@ -7,6 +9,7 @@ let levels = {
 };
 let sensitiveKeyPattern = /authorization|cookie|password|secret|set-cookie|token/i;
 let loggerConfigKeys = new Set([
+  'color',
   'format',
   'level',
   'service',
@@ -105,16 +108,6 @@ export function logEnvelope({
   };
 }
 
-function routeName(route) {
-  if (!route)
-    return undefined;
-
-  if (typeof route === 'string')
-    return route;
-
-  return route.operationId ?? route.path;
-}
-
 function hasLoggerMethod(logger) {
   return ['debug', 'info', 'warn', 'error', 'log', 'child']
     .some(method => typeof logger?.[method] === 'function');
@@ -129,23 +122,6 @@ function assertKnownLoggerConfig(config) {
 
   if (unknown.length)
     throw new Error(`Unknown logger option ${unknown.join(', ')}`);
-}
-
-function formatLine(envelope, format) {
-  if (format === 'pretty') {
-    let summary = [
-      envelope.time,
-      envelope.level.toUpperCase(),
-      envelope.service,
-      envelope.requestId,
-      routeName(envelope.route),
-      envelope.event
-    ].filter(Boolean).join(' ');
-
-    return `${summary} ${JSON.stringify(envelope.metadata)}`;
-  }
-
-  return JSON.stringify(envelope);
 }
 
 /**
@@ -206,13 +182,15 @@ export function normalizeLogger(logger, context = {}) {
  * @param {string} [options.service] - Stable service name attached to each log.
  * @param {'debug'|'info'|'warn'|'error'} [options.level='info'] - Minimum level.
  * @param {'json'|'pretty'} [options.format='json'] - Output format.
- * @param {Function} [options.write] - Receives each formatted line.
+ * @param {boolean} [options.color] - Pretty colors; defaults to stdout TTY detection and respects NO_COLOR.
+ * @param {Function} [options.write] - Receives each formatted event, which may span lines in pretty mode.
  * @returns {{debug: Function, info: Function, warn: Function, error: Function, child: Function}}
  */
 export function createCricketLogger({
   service,
   level = 'info',
   format = 'json',
+  color = Boolean(process.stdout.isTTY) && process.env.NO_COLOR === undefined,
   write = line => console.log(line)
 } = {}, context = {}) {
   let minimumLevel = levels[level] ?? levels.info;
@@ -230,7 +208,7 @@ export function createCricketLogger({
       service
     });
 
-    write(formatLine(envelope, format));
+    write(format === 'pretty' ? formatPrettyLog(envelope, { color }) : JSON.stringify(envelope));
   }
 
   return {
@@ -260,6 +238,7 @@ export function createCricketLogger({
         service,
         level,
         format,
+        color,
         write
       }, childContext);
     }

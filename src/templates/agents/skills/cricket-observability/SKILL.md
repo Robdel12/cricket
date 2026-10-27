@@ -14,6 +14,13 @@ Use this when a change touches how a Cricket app explains itself.
   logger appropriate to their scope. Worker runtimes expose that logger to
   worker entrypoints.
 - Prefer structured metadata over formatted strings.
+- Use `format: 'pretty'` for local development: short UTC timestamps, event and
+  request/job/span summaries, then indented metadata with full IDs and deduplicated
+  span context. A custom `write` receives one event, which may span multiple lines.
+- Pretty color follows stdout terminal detection and `NO_COLOR`; `color: true`
+  or `color: false` overrides detection. Children inherit the setting.
+- Keep `format: 'json'` for collection and `cricket trace`. JSON is the default
+  and always stays one complete structured envelope per line without color.
 - Do not log secrets. Cricket redacts common secret-shaped keys, but app code should still avoid putting sensitive values in logs.
 - Use child metadata for stable facts such as `requestId`, job identity, route identity, account IDs, or operation names.
 - Endpoint API version families add bounded family, selected version, source,
