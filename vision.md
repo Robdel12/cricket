@@ -248,6 +248,12 @@ Logs are structured and stdout-first. Traces are safe, scalar, and tied to a
 request or job. Timing data explains where time went; it should not become a
 heavy observability product.
 
+Development logs should be easy to scan without making apps build their own
+formatter. Pretty output leads with the event and useful request/job/span facts,
+then puts redacted metadata and full IDs on indented lines. Repeated context
+should appear once. Terminal color is optional. JSON stays the default for
+collection and trace tooling; presentation must not change that envelope.
+
 Cricket should never emit raw auth headers, cookies, query values, request
 bodies, response bodies, `Set-Cookie` values, raw error objects, or open-ended
 trace dumps by default.

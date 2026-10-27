@@ -140,7 +140,8 @@ export let app = defineCricketApp({
   prefix: '/api',
   logger: {
     service: 'one-file-api',
-    level: process.env.LOG_LEVEL ?? 'info'
+    level: process.env.LOG_LEVEL ?? 'info',
+    format: process.env.NODE_ENV === 'production' ? 'json' : 'pretty'
   },
   database: {
     client: 'sqlite3',

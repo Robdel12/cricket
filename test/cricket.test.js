@@ -586,6 +586,7 @@ describe('Cricket core', () => {
       service: 'build-api',
       level: 'warn',
       format: 'pretty',
+      color: false,
       write(line) {
         lines.push(line);
       }
@@ -597,7 +598,7 @@ describe('Cricket core', () => {
     });
 
     assert.equal(lines.length, 1);
-    assert.match(lines[0], /ERROR build-api req_456 server\.failed/);
+    assert.match(lines[0], /ERROR \[build-api\] server\.failed\n  requestId=req_456/);
   });
 
 

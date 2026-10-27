@@ -959,6 +959,27 @@ export let app = defineCricketApp({
 });
 ```
 
+`format: 'pretty'` is for local development. It prints a short UTC timestamp,
+level, service, and event, followed by the job name or HTTP method, path, and
+status. Spans show their name, duration, and result. Metadata uses indented
+`key=value` fields and readable nested objects; full correlation IDs stay in
+the details, and repeated span context appears only once. Each `write` call
+receives one complete event, which can span multiple lines.
+
+```text
+17:54:00.375Z INFO  [Radar Worker] radar.counts · radar.refresh
+  queueName=radar-live  attempt=1  warning_count=0  source_cached=true
+17:54:00.378Z INFO  [Radar Worker] trace.span.finished · radar.refresh · radar.fetch · 367.576ms · ok
+  span: { id: 'd8c9c565-f6ea-4260-8d54-8acf4a58b0b5', startMs: 1.414 }
+  jobRunId=jobrun_1853d626-11ac-45f4-9fad-063a3bcbe4e8
+```
+
+Pretty output uses color when stdout is a terminal and `NO_COLOR` is unset.
+Set `logger.color` to `true` or `false` to override detection, including for a
+custom writer. `format: 'json'` remains the default and keeps the complete
+structured envelope on one line, without color. Use JSON for log collectors
+and `cricket trace`.
+
 Use `trace.span(name, metadata, fn)` around meaningful service calls, external
 calls, and job steps. Use `pnpm cricket trace` when you need to inspect one
 request from newline-delimited JSON logs:

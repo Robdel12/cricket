@@ -174,6 +174,11 @@ the signals recovery reads. Recovery may be evaluated concurrently, so keep it
 pure and idempotent. Cricket fences the resulting attempt transition and
 reports whether it was applied.
 
+Use `logger: { format: 'pretty' }` for readable local logs and `format: 'json'`
+for collection and `cricket trace`. Pretty events may span multiple lines;
+`color` overrides terminal detection, and `NO_COLOR` disables automatic color.
+Keep app logs structured so both formats retain useful metadata and full IDs.
+
 Use `createCricketJobs` in producers that only enqueue work. Use
 `startCricketWorker` in `api/workers/` entrypoints that execute work, then
 `worker.run({ signal })` for the job loop. Configure `queues.redis` or an
