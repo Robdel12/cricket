@@ -122,18 +122,10 @@ moderation, and actions to the plugin's endpoint contracts. Models contributed
 by a plugin still need app-owned migrations. This keeps shared tools useful
 across products with different tables and policies.
 
-Plugin descriptors stay backend-only and never point at browser files or
-styles. Shared UI ships through separate package exports and the app's normal
-build. Product admin packages can compose shared modules and custom pages;
-the app's router owns URLs, navigation and product identity. Custom pages use
-ordinary domains with their own data contracts. A shared table schema must not
-become a requirement for product workflows.
-
-Cricket stays a tiny API framework. Private admin products own their shell,
-components, permissions, audit data and integrations. Cricket's logger and
-traces write structured events to the app's configured sink; it does not retain
-a searchable production log store. The app owns health policy, job operations
-and any impersonation sessions.
+Plugin descriptors stay backend-only. Shared UI and styles use separate package
+exports and the app's frontend build. Apps can combine shared screens with custom
+pages backed by their own domains and schemas. The app owns routing, permissions,
+audit data and sessions; product workflows do not require a shared table schema.
 
 API compatibility belongs at the endpoint boundary. Apps may share an
 immutable `defineApiVersions` family across routes, but each endpoint opts in

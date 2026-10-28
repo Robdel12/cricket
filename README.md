@@ -298,36 +298,25 @@ product policy. It can connect plugin endpoints to app services for product
 data and actions, so the package does not need a shared user, moderation, or
 resource table.
 
-Cricket plugins contribute backend domains; the plugin descriptor does not
-serve CSS or frontend files. A plugin can publish a separate UI export and
-stylesheet, or keep them in a frontend package. The app imports those files
-through its normal build:
+Plugin descriptors do not serve browser files or styles. Export UI and CSS
+separately and import them through the app's frontend build:
 
 ```js
 import { SuperAdminRoutes } from '@acme/super-admin-ui';
 import '@acme/super-admin-ui/styles.css';
 ```
 
-The app chooses where the UI appears and connects it to its auth and API
-client. Keep CSS file paths out of `defineCricketPlugin`; Cricket does not own
-the frontend build.
+The app owns route placement and the API client. Keep CSS paths out of
+`defineCricketPlugin`.
 
 ### Add product pages to a shared admin
 
-A reusable admin package can ship shared screens and accept product-owned pages.
-Keep its backend as ordinary Cricket plugins, with separate exports for browser
-components and styles. The app registers the backend domains and mounts the UI
-through its own router and build.
+A shared admin can combine shared screens with product pages. Plugin schemas
+validate the app service methods used by shared domains. Custom pages can use
+their own domain endpoints and Zod contracts without a shared row schema.
 
-Use plugin schemas for shared screens that need a common data shape. A custom
-product page can call its own domain endpoints with its own Zod contracts; it
-does not need to turn product data into generic rows. Each endpoint still owns
-its validation and authorization. Registering a page in navigation grants no API
-access.
-
-Keep product admin packages, permissions, audit storage, migrations, sessions,
-and observability integrations in the product or its private packages. Cricket
-provides domain composition, not a bundled dashboard or browser plugin runtime.
+The app owns routing, permissions, audit data and sessions. Each endpoint
+validates and authorizes its requests. Navigation does not grant API access.
 See [`examples/plugin-composition/`](examples/plugin-composition/) for shared
 support actions combined with app-owned domains and service adapters.
 
