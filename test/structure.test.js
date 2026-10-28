@@ -320,6 +320,9 @@ describe('Cricket CLI', () => {
     assert.match(agents, /manual mode as visible tech debt/);
     assert.match(agents, /defineCricketPlugin/);
     assert.match(agents, /definePluginSchema/);
+    assert.match(agents, /custom product\s+pages/);
+    assert.match(agents, /Navigation does not grant API access/);
+    assert.doesNotMatch(agents, /@robdel12\/cricket\/super-admin/);
     assert.match(agents, /Apps own auth/);
     assert.match(agents, /pnpm cricket check api\/index\.js/);
     assert.match(agents, /App Shape/);

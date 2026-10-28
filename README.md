@@ -298,9 +298,10 @@ product policy. It can connect plugin endpoints to app services for product
 data and actions, so the package does not need a shared user, moderation, or
 resource table.
 
-Cricket plugins are backend packages; they do not serve CSS or frontend files.
-If a plugin includes React UI, export its components and stylesheet from a
-frontend package and import them through the app's normal build:
+Cricket plugins contribute backend domains; the plugin descriptor does not
+serve CSS or frontend files. A plugin can publish a separate UI export and
+stylesheet, or keep them in a frontend package. The app imports those files
+through its normal build:
 
 ```js
 import { SuperAdminRoutes } from '@acme/super-admin-ui';
@@ -311,9 +312,24 @@ The app chooses where the UI appears and connects it to its auth and API
 client. Keep CSS file paths out of `defineCricketPlugin`; Cricket does not own
 the frontend build.
 
-See [`examples/plugin-composition/`](examples/plugin-composition/) for a
-filesystem domain combined with a package-style plugin, including user support
-actions and a separately paged moderation adapter.
+### Add product pages to a shared admin
+
+A reusable admin package can ship shared screens and accept product-owned pages.
+Keep its backend as ordinary Cricket plugins, with separate exports for browser
+components and styles. The app registers the backend domains and mounts the UI
+through its own router and build.
+
+Use plugin schemas for shared screens that need a common data shape. A custom
+product page can call its own domain endpoints with its own Zod contracts; it
+does not need to turn product data into generic rows. Each endpoint still owns
+its validation and authorization. Registering a page in navigation grants no API
+access.
+
+Keep product admin packages, permissions, audit storage, migrations, sessions,
+and observability integrations in the product or its private packages. Cricket
+provides domain composition, not a bundled dashboard or browser plugin runtime.
+See [`examples/plugin-composition/`](examples/plugin-composition/) for shared
+support actions combined with app-owned domains and service adapters.
 
 ## Domain Contracts
 

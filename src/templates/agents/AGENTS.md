@@ -29,10 +29,12 @@ and output shapes for required app service methods. Cricket checks those methods
 at runtime setup and validates their calls. Apps own auth, product data access,
 and migrations; map product rows into the plugin's public data shapes.
 
-Cricket plugins are backend packages and do not serve browser files or styles.
-Put shared React UI and CSS in a frontend package, import it through the app's
-normal build, and let the app own its routes, auth, and API client. Do not add
-CSS file paths to the Cricket plugin descriptor.
+Plugin descriptors contribute backend domains only; do not add CSS paths to
+them. Shared UI ships through separate package exports and the app's normal
+frontend build. Product packages may compose shared screens and custom product
+pages. Custom pages use ordinary domain endpoints with their own Zod contracts;
+they do not need a shared row schema. The app owns routing, API clients, auth,
+product data, audit storage and migrations. Navigation does not grant API access.
 
 Cricket definition builders return stable contracts and reject unknown app or
 endpoint options. Compose new definitions instead of mutating existing apps,

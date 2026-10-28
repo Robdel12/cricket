@@ -28,7 +28,7 @@ Start with `pnpm cricket check api/index.js`, then inspect the app, read
 - Domains are required by default. Do not register product endpoints, jobs, or models directly on `defineCricketApp`.
 - `architecture: 'manual'` is a migration escape hatch and visible tech debt. Never introduce it in a fresh app; move existing manual contracts into domains and remove the mode at a deliberate cutover.
 - Packages can export named domains with `defineCricketPlugin`; apps add them through `plugins`. Use `definePluginSchema` for Zod input/output contracts on required app service methods. Cricket checks those methods at runtime setup and validates calls. The app owns auth, product data access, and migrations.
-- Cricket plugins compose backend domains; they do not serve browser files or styles. Put shared React UI and CSS in a frontend package and import it through the app's normal build. The app owns route placement, auth, and API wiring. Do not put CSS paths in the Cricket plugin descriptor.
+- Plugin descriptors contribute backend domains only; do not add CSS paths to them. Shared UI ships through separate package exports and the app's normal build. Custom product pages use ordinary domain endpoints and their own Zod contracts, without a required shared row schema. The app owns routing, API clients, auth, product data, audit storage and migrations. Navigation does not grant API access.
 - `api/middleware/` is for request middleware, not domain authorization.
 - `api/services/` is for narrow app-wide capabilities not owned by one domain.
 - `api/workers/` is for background worker entrypoints that start Cricket workers.
