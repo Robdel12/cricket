@@ -298,22 +298,27 @@ product policy. It can connect plugin endpoints to app services for product
 data and actions, so the package does not need a shared user, moderation, or
 resource table.
 
-Cricket plugins are backend packages; they do not serve CSS or frontend files.
-If a plugin includes React UI, export its components and stylesheet from a
-frontend package and import them through the app's normal build:
+Plugin descriptors do not serve browser files or styles. Export UI and CSS
+separately and import them through the app's frontend build:
 
 ```js
 import { SuperAdminRoutes } from '@acme/super-admin-ui';
 import '@acme/super-admin-ui/styles.css';
 ```
 
-The app chooses where the UI appears and connects it to its auth and API
-client. Keep CSS file paths out of `defineCricketPlugin`; Cricket does not own
-the frontend build.
+The app owns route placement and the API client. Keep CSS paths out of
+`defineCricketPlugin`.
 
-See [`examples/plugin-composition/`](examples/plugin-composition/) for a
-filesystem domain combined with a package-style plugin, including user support
-actions and a separately paged moderation adapter.
+### Add product pages to a shared admin
+
+A shared admin can combine shared screens with product pages. Plugin schemas
+validate the app service methods used by shared domains. Custom pages can use
+their own domain endpoints and Zod contracts without a shared row schema.
+
+The app owns routing, permissions, audit data and sessions. Each endpoint
+validates and authorizes its requests. Navigation does not grant API access.
+See [`examples/plugin-composition/`](examples/plugin-composition/) for shared
+support actions combined with app-owned domains and service adapters.
 
 ## Domain Contracts
 
