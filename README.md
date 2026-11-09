@@ -998,6 +998,49 @@ job execution, and shutdown hooks. Worker runtimes expose it for worker
 entrypoints. Product health checks still decide whether the app is ready for
 traffic.
 
+### Pausing requests and stopping servers
+
+`createCricketRuntime(app)` resolves when app assembly is ready.
+`startCricketApp(app, { port: 0, host: '127.0.0.1' })` also waits for its HTTP
+listener and returns the bound `origin`. Use that value instead of waiting for
+another `listening` event or guessing the port.
+
+Pause admission while an owner changes shared app state:
+
+```js
+let hold = runtime.requests.pause();
+await hold.idle({ signal });
+await resetAppState();
+hold.resume();
+```
+
+New requests receive 503 before middleware or handlers run. Every independent
+hold must resume before admission reopens. Aborting `idle` leaves the hold
+closed; the owner can await it again. Only resume after successful work. Keep
+control operations outside the paused runtime so they do not block themselves.
+Paused responses do not run app middleware or acquire its computed headers.
+
+Idle includes awaited middleware, handlers, error hooks, response streams,
+asynchronous `withResponseCleanup` callbacks, and terminal observers. A client
+disconnect does not cancel an in-flight write: Cricket keeps owning that work
+until it settles. Ordinary client stream cancellation does not fail draining
+when cleanup succeeds. Producer and cleanup errors are logged and passed to
+`onError`, then reject the next relevant idle or cleanup boundary. Once that
+boundary reports them, later holds do not repeat the same errors.
+
+`runtime.cleanup()` closes admission, waits for accepted requests, and releases
+setup dependencies once. For a server from `startCricketApp`, use `stop(signal)`:
+it also stops listening and calls `onShutdown({ signal, ...runtime })` before
+waiting for requests. That hook must stop independent producers and end long
+streams; dependency destruction belongs in setup's `cleanup`. Cleanup still
+attempts its remaining steps after failures and preserves their errors. A
+resumed hold cannot reopen a stopped runtime.
+
+Request holds leave `lifecycle` ready; product health and maintenance policy
+remain app decisions. Detached promises, jobs, queues, database reset policy,
+and listeners around Cricket remain explicitly owned by the app. See
+[`examples/request-pause.js`](examples/request-pause.js) for a small complete example.
+
 ## Testing
 
 Test through the boundary users consume. Use HTTP tests for endpoints and the
@@ -1031,6 +1074,12 @@ test('creates a project through the API', async () => {
   }
 });
 ```
+
+The harness and its client expose the same `origin` for browser or HTTP clients.
+`cleanup()` closes the test listener and joins the runtime's accepted work before
+releasing dependencies. It runs once, and it does not call the standalone
+server's `onShutdown` hook. Stop app-owned workers and long-lived streams before
+cleanup; the harness does not reset databases or discover detached jobs.
 
 Drive scheduled jobs without waiting on wall time:
 

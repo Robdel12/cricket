@@ -111,7 +111,11 @@ function appWithTestLogger(app, testState) {
  * @param {object} [options]
  * @param {string|URL} [options.baseUrl] - Module URL for domain loading.
  * @param {object} [options.testState] - Existing test state collector.
- * @returns {Promise<object>} Runtime, HTTP client, test state, and cleanup helper.
+ * Cleanup closes admission and the listener, awaits accepted requests, then
+ * releases dependencies. Apps stop their independent workers/streams first;
+ * this helper does not invoke the standalone server's onShutdown hook.
+ *
+ * @returns {Promise<object>} Bound origin, runtime, HTTP client, test state, and once-only cleanup.
  */
 export async function createTestRuntime(app, {
   baseUrl,
@@ -121,19 +125,33 @@ export async function createTestRuntime(app, {
   let runtime = await createCricketRuntime(testApp, {
     baseUrl
   });
-  let api = await createTestClient(runtime);
-
-  async function cleanup() {
+  let api;
+  try {
+    api = await createTestClient(runtime);
+  } catch (error) {
+    let errors = [error];
     try {
-      await api.cleanup();
-    } finally {
-      if (runtime.cleanup)
-        await runtime.cleanup();
+      await runtime.cleanup();
+    } catch (cleanupError) {
+      errors.push(cleanupError);
     }
+    throw errors.length === 1 ? error : new AggregateError(errors, 'Test runtime startup failed');
+  }
+  let cleaning;
+
+  function cleanup() {
+    cleaning ??= (async () => {
+      let results = await Promise.allSettled([api.cleanup(), runtime.cleanup()]);
+      let errors = results.filter(result => result.status === 'rejected').map(result => result.reason);
+      if (errors.length === 1) throw errors[0];
+      if (errors.length) throw new AggregateError(errors, 'Test runtime cleanup failed');
+    })();
+    return cleaning;
   }
 
   return {
     api,
+    origin: api.origin,
     runtime,
     testState,
     cleanup

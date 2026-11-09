@@ -25,6 +25,7 @@ Start with `pnpm cricket check api/index.js`, then inspect the app, read
 ## App Shape
 
 - Cricket provides the architecture, HTTP runtime, job runtime, logger, trace, and read-only runtime lifecycle. The app defines product behavior, auth policy, data work, worker entrypoints, product health, and deployment.
+- `runtime.requests.pause()` closes application admission and returns an independent `idle({ signal })` / `resume()` hold. Idle joins accepted HTTP work through stream/async cleanup, including disconnected clients. Keep control operations outside the paused runtime and stop app-owned jobs separately. Standalone startup resolves after listening and exposes `origin`; terminal cleanup cannot be resumed.
 - Domains are required by default. Do not register product endpoints, jobs, or models directly on `defineCricketApp`.
 - `architecture: 'manual'` is a migration escape hatch and visible tech debt. Never introduce it in a fresh app; move existing manual contracts into domains and remove the mode at a deliberate cutover.
 - Packages can export named domains with `defineCricketPlugin`; apps add them through `plugins`. Use `definePluginSchema` for Zod input/output contracts on required app service methods. Cricket checks those methods at runtime setup and validates calls. The app owns auth, product data access, and migrations.

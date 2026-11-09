@@ -175,6 +175,30 @@ Apps may read lifecycle state, but product health remains app responsibility. A 
 runtime can say it is starting, ready, shutting down, or stopped. It should not
 decide whether your product is healthy enough to receive traffic.
 
+The HTTP runtime owns an accepted request until its awaited application work,
+response transport, stream pipeline, response cleanup, and terminal observers
+settle. A disconnected socket does not finish a handler or cancel a write.
+Response completion errors stay observable without rewriting a committed
+response. Ordinary client cancellation is not a drain failure when cleanup
+succeeds.
+
+`runtime.requests.pause()` returns an independent immutable admission hold with
+`idle({ signal })` and `resume()`. New app requests receive 503 before middleware
+or handlers run; each owner explicitly resumes its own hold. Aborting an idle
+wait keeps admission closed. These holds support maintenance and reusable app
+setup without changing runtime lifecycle or owning product state reset.
+
+Terminal cleanup closes admission and joins accepted work before destroying
+dependencies. Standalone shutdown first runs app hooks that stop producers and
+end long-lived streams, then drains requests and closes the listener, including
+keep-alive sockets that become idle during shutdown. Startup publishes its
+actual bound origin only after listening succeeds. Test runtimes use the same
+HTTP and cleanup paths without installing standalone shutdown policy.
+
+Control operations must live outside the runtime they pause. Independently
+started jobs, queues, detached promises, and surrounding servers remain app
+resources. Request tracking does not discover or reset them.
+
 ## Data
 
 Cricket is not an ORM.

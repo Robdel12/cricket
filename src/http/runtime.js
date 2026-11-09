@@ -1,8 +1,5 @@
 import http from 'node:http';
 import { performance } from 'node:perf_hooks';
-import {
-  setImmediate as nextTick
-} from 'node:timers/promises';
 
 import { supportedEndpointMethods } from '../endpoint.js';
 import {
@@ -43,6 +40,8 @@ import {
   safeRequestSnapshot
 } from './request.js';
 import { createRuntimeLifecycle } from './lifecycle.js';
+import { createRequestTracker } from './requests.js';
+import { closeServer, listen, serverOrigin } from './server.js';
 import {
   allowedMethodsForPath,
   endpointWithPrefix,
@@ -51,8 +50,8 @@ import {
   prepareRoutes
 } from './router.js';
 import {
-  safeResponseSnapshot,
-  writeHttpResponse
+  createResponseWriter,
+  safeResponseSnapshot
 } from './response.js';
 
 let lifecycleControllerKey = Symbol('cricket.lifecycleController');
@@ -61,6 +60,11 @@ let setupResultKeys = new Set([
   'dependencies',
   'services'
 ]);
+
+function throwFailures(errors, message) {
+  if (errors.length === 1) throw errors[0];
+  if (errors.length) throw new AggregateError(errors, message);
+}
 
 function toArray(value) {
   if (!value)
@@ -102,24 +106,15 @@ function normalizeSetupResult(result) {
 }
 
 async function cleanupRuntime(setupCleanup, db) {
-  let cleanupError;
-
-  try {
-    if (setupCleanup)
-      await setupCleanup();
-  } catch (error) {
-    cleanupError = error;
-  } finally {
+  let errors = [];
+  for (let cleanup of [setupCleanup, db && (() => db.destroy())]) {
     try {
-      if (db)
-        await db.destroy();
+      await cleanup?.();
     } catch (error) {
-      cleanupError ??= error;
+      errors.push(error);
     }
   }
-
-  if (cleanupError)
-    throw cleanupError;
+  throwFailures(errors, 'Runtime cleanup failed');
 }
 
 function setupDependenciesFor(setup, db) {
@@ -139,16 +134,27 @@ function setupDependenciesFor(setup, db) {
   };
 }
 
-function setupWithLifecycleCleanup(setup, lifecycleController) {
+function setupWithLifecycleCleanup(setup, lifecycleController, requests) {
+  let cleaning;
   return {
     ...setup,
-    cleanup: async () => {
-      try {
-        if (setup.cleanup)
-          await setup.cleanup();
-      } finally {
+    cleanup() {
+      if (cleaning) return cleaning;
+      requests.stop();
+      lifecycleController.shuttingDown();
+      cleaning = (async () => {
+        let errors = [];
+        for (let cleanup of [requests.idle, setup.cleanup]) {
+          try {
+            await cleanup?.();
+          } catch (error) {
+            errors.push(error);
+          }
+        }
         lifecycleController.stopped();
-      }
+        throwFailures(errors, 'Runtime cleanup failed');
+      })();
+      return cleaning;
     }
   };
 }
@@ -459,15 +465,23 @@ function closeUnsupportedProtocolSocket(req, socket, logger, event) {
 }
 
 function createNodeServer(handle, logger) {
-  let server = http.createServer(handle);
+  function serve(req, res, options) {
+    // An accepted keep-alive response can become idle after close() starts.
+    res.once('finish', () => {
+      if (!server.listening)
+        queueMicrotask(() => server.closeIdleConnections());
+    });
+    return handle(req, res, options);
+  }
+  let server = http.createServer(serve);
 
   server.on('checkContinue', (req, res) => {
-    void handle(req, res, {
+    void serve(req, res, {
       expectContinue: true
     });
   });
   server.on('checkExpectation', (req, res) => {
-    writeHttpResponse(req, res, toHttpError(expectationFailed()));
+    void serve(req, res, { unsupportedExpectation: true });
   });
   server.on('clientError', (error, socket) => {
     closeClientErrorSocket(error, socket, logger);
@@ -562,28 +576,24 @@ function safeErrorSnapshot(error) {
 }
 
 /**
- * Attach terminal response logging after Cricket has a concrete response.
+ * Start response writing and retain its terminal logging and observer work.
  *
  * Finish and close are observed at the Node response boundary so traces can
  * distinguish completed responses from client disconnects without changing how
  * handlers return response objects.
  *
- * @param {object} options
- * @returns {{onFinish: Function, onClose: Function}}
  */
-function observeResponse({
+function writeObservedResponse(writer, response, {
   logger,
   replay,
   request,
   requestId,
-  response,
   route,
   timing
 }) {
-  let finished = false;
-
-  function eventFor(terminalName) {
-    return {
+  let onTerminal = async kind => {
+    let finished = kind === 'finished';
+    let event = {
       requestId,
       request: safeRequestSnapshot(request),
       response: safeResponseSnapshot(response, {
@@ -591,86 +601,17 @@ function observeResponse({
       }),
       route,
       terminal: true,
-      timings: timing?.snapshot(terminalName)
+      timings: timing?.snapshot(finished ? 'finishMs' : 'closeMs')
     };
-  }
-
-  return {
-    onFinish() {
-      finished = true;
-      let event = eventFor('finishMs');
-
-      logRuntimeEvent(logger, 'info', 'http.response.finished', event);
-
-      if (!replay)
-        return;
-
-      void replay.emit({
-        ...event,
-        type: 'response.finished'
-      });
-    },
-
-    onClose() {
-      if (finished)
-        return;
-
-      let event = eventFor('closeMs');
-
-      logRuntimeEvent(logger, 'warn', 'http.response.closed', event);
-
-      if (!replay)
-        return;
-
-      void replay.emit({
-        ...event,
-        type: 'response.closed'
-      });
-    }
+    logRuntimeEvent(logger, finished ? 'info' : 'warn', `http.response.${kind}`, event);
+    await replay?.emit({ ...event, type: `response.${kind}` });
   };
-}
 
-function writeObservedResponse(req, res, response, {
-  logger,
-  replay,
-  request,
-  requestId,
-  route,
-  timing
-}) {
-  if (!req.complete && !req.destroyed) {
-    res.shouldKeepAlive = false;
-    res.setHeader('connection', 'close');
-    res.once('finish', () => {
-      if (!req.destroyed) req.destroy();
-    });
-  }
-
-  let observer = observeResponse({
-    logger,
-    replay,
-    request,
-    requestId,
-    response,
-    route,
-    timing
-  });
-
-  res.once('finish', observer.onFinish);
-  res.once('close', observer.onClose);
-
-  try {
-    let write = () => writeHttpResponse(req, res, response);
-
-    if (timing)
-      timing.time('responseMs', write);
-    else
-      write();
-  } catch (error) {
-    res.off('finish', observer.onFinish);
-    res.off('close', observer.onClose);
-    throw error;
-  }
+  let write = () => writer.write(response, { onTerminal });
+  if (timing)
+    timing.time('responseMs', write);
+  else
+    write();
 }
 
 async function emitObserved(observability, replay, createEvent) {
@@ -726,11 +667,13 @@ function createRuntimeHandler({
   routes,
   setup,
   services,
-  middleware
+  middleware,
+  requests
 }) {
-  return async function handle(req, res, {
-    expectContinue = false
-  } = {}) {
+  async function execute(req, res, writer, completionContext, {
+    expectContinue = false,
+    unsupportedExpectation = false
+  }) {
     let baseRequest;
     let continued = false;
     let replay = observability.createReplay();
@@ -742,6 +685,11 @@ function createRuntimeHandler({
     let route;
     let routeEndpoint;
     let apiVersionNegotiation;
+
+    function writeResponse(response, observation) {
+      writeObservedResponse(writer, response, observation);
+      completionContext.response = response;
+    }
 
     function writeContinue() {
       if (!expectContinue || continued || res.headersSent)
@@ -767,6 +715,7 @@ function createRuntimeHandler({
       requestLogger = logger.child({
         requestId
       });
+      Object.assign(completionContext, { baseRequest, logger: requestLogger });
       logRuntimeEvent(requestLogger, 'info', 'http.request.started', {
         request: safeRequestSnapshot(baseRequest)
       });
@@ -777,10 +726,15 @@ function createRuntimeHandler({
       }));
       assertAllowedHost(baseRequest, appContract.allowedHosts);
 
+      if (unsupportedExpectation) {
+        writeResponse(toHttpError(expectationFailed()), {
+          logger: requestLogger, replay, request: baseRequest, requestId, timing
+        });
+        return;
+      }
+
       if (!supportedEndpointMethods.includes(baseRequest.method.toUpperCase())) {
-        writeObservedResponse(
-          req,
-          res,
+        writeResponse(
           methodNotAllowed(baseRequest, supportedEndpointMethods),
           {
             replay,
@@ -793,7 +747,7 @@ function createRuntimeHandler({
       }
 
       if (baseRequest.method.toUpperCase() === 'OPTIONS' && baseRequest.path === '*') {
-        writeObservedResponse(req, res, optionsResponse(supportedEndpointMethods), {
+        writeResponse(optionsResponse(supportedEndpointMethods), {
           replay,
           request: baseRequest,
           requestId,
@@ -845,6 +799,7 @@ function createRuntimeHandler({
             ...versionMetadata
           });
           requestLogger = routeLogger;
+          completionContext.logger = routeLogger;
           if (apiVersionNegotiation)
             logRuntimeEvent(routeLogger, 'info', 'http.api_version.resolved', versionMetadata);
           logRuntimeEvent(routeLogger, 'info', 'http.route.matched', {
@@ -941,7 +896,7 @@ function createRuntimeHandler({
       let response = resolveHttpResponse(result);
       response = applyApiVersionHeaders(response, routeEndpoint, apiVersionNegotiation);
 
-      writeObservedResponse(req, res, response, {
+      writeResponse(response, {
         logger: requestLogger,
         replay,
         request: observedRequest,
@@ -971,7 +926,7 @@ function createRuntimeHandler({
         }));
       }
 
-      writeObservedResponse(req, res, response, {
+      writeResponse(response, {
         logger: requestLogger,
         replay,
         request: observedRequest ?? baseRequest ?? {},
@@ -980,25 +935,44 @@ function createRuntimeHandler({
         timing
       });
     }
-  };
-}
+  }
 
-function closeServer(server, {
-  closeConnections = 'idle'
-} = {}) {
-  return new Promise((resolve, reject) => {
-    server.close(error => {
-      if (error)
-        reject(error);
-      else
-        nextTick().then(resolve, reject);
+  return function handle(req, res, options = {}) {
+    let writer = createResponseWriter(req, res);
+    let execution = requests.run(async () => {
+      let errors = [];
+      let completionContext = { logger };
+      try {
+        await execute(req, res, writer, completionContext, options);
+      } catch (error) {
+        errors.push(error);
+        res.destroy();
+      }
+
+      // Once writing starts, async failures can only be reported and drained.
+      try {
+        await writer.complete();
+      } catch (error) {
+        errors.push(error);
+      }
+      if (errors.length) {
+        let error = errors.length === 1 ? errors[0] : new AggregateError(errors, 'Request completion failed');
+        await reportRequestError(appContract, { ...completionContext, error });
+        throw error;
+      }
     });
 
-    if (closeConnections === 'all')
-      server.closeAllConnections?.();
-    else if (closeConnections === 'idle')
-      server.closeIdleConnections?.();
-  });
+    if (execution)
+      return execution;
+
+    // Paused requests never enter middleware, handlers, or the accepted set.
+    writer.write(respond(503, {
+      error: { code: 'SERVICE_UNAVAILABLE', message: 'The app is not accepting requests.' }
+    }));
+    return writer.complete().catch(error => {
+      logRuntimeEvent(logger, 'error', 'http.response.failed', { error: safeErrorSnapshot(error) });
+    });
+  };
 }
 
 /**
@@ -1019,8 +993,9 @@ function closeServer(server, {
  *   lifecycle: object,
  *   logger: object,
  *   observability: object,
+ *   requests: { pause: Function },
  *   services: object,
- *   cleanup: Function|undefined
+ *   cleanup: Function
  * }>} Runtime object with handler and context.
  */
 export async function createCricketRuntime(cricketApp, {
@@ -1028,6 +1003,7 @@ export async function createCricketRuntime(cricketApp, {
   logger: runtimeLogger
 } = {}) {
   let lifecycleController = createRuntimeLifecycle();
+  let requests = createRequestTracker();
   let { lifecycle } = lifecycleController;
   let appContract = await resolveCricketApp(cricketApp, {
     baseUrl
@@ -1058,16 +1034,18 @@ export async function createCricketRuntime(cricketApp, {
       ),
       db
     );
-    setup = setupWithLifecycleCleanup(setup, lifecycleController);
+    setup = setupWithLifecycleCleanup(setup, lifecycleController, requests);
   } catch (error) {
+    let errors = [error];
     try {
       if (db)
         await db.destroy();
+    } catch (cleanupError) {
+      errors.push(cleanupError);
     } finally {
       lifecycleController.stopped();
     }
-
-    throw error;
+    throwFailures(errors, 'Runtime setup failed');
   }
 
   try {
@@ -1118,7 +1096,8 @@ export async function createCricketRuntime(cricketApp, {
       routes,
       setup,
       services,
-      middleware
+      middleware,
+      requests
     });
     let app = Object.assign(handle, {
       handle,
@@ -1135,20 +1114,25 @@ export async function createCricketRuntime(cricketApp, {
       lifecycle,
       logger,
       observability,
+      requests: requests.requests,
       services,
       cleanup: setup.cleanup
     };
 
     Object.defineProperty(runtime, lifecycleControllerKey, {
-      value: lifecycleController
+      value: { ...lifecycleController, requests }
     });
     lifecycleController.ready();
 
     return runtime;
   } catch (error) {
-    await setup.cleanup();
-
-    throw error;
+    let errors = [error];
+    try {
+      await setup.cleanup();
+    } catch (cleanupError) {
+      errors.push(cleanupError);
+    }
+    throwFailures(errors, 'Runtime setup failed');
   }
 }
 
@@ -1157,6 +1141,9 @@ export async function createCricketRuntime(cricketApp, {
  *
  * Creates the runtime and starts listening on the specified port. Only runs when
  * the module is the main entrypoint (checked via `main` parameter).
+ * Resolves after binding succeeds. `origin` uses the bound port, including port 0.
+ * `stop()` closes admission, runs onShutdown, drains accepted requests, then
+ * releases dependencies. Hooks must stop producers and end long-lived streams.
  *
  * @param {object} cricketApp - App contract from defineCricketApp().
  * @param {object} [options]
@@ -1172,8 +1159,10 @@ export async function createCricketRuntime(cricketApp, {
  *   lifecycle: object,
  *   logger: object,
  *   server: object,
+ *   origin: string,
+ *   requests: { pause: Function },
  *   services: object,
- *   cleanup: Function|undefined,
+ *   cleanup: Function,
  *   stop: Function
  * }|undefined>} Running app or undefined if not main module.
  */
@@ -1190,50 +1179,66 @@ export async function startCricketApp(cricketApp, {
     baseUrl: main,
     logger
   });
-  let server = runtime.app.listen(port, host, () => {
-    runtime.logger.info('server.started', {
-      app: runtime.contract.name ?? 'Cricket app',
-      port,
-      url: `http://localhost:${port}`
-    });
+  let server;
+  try {
+    server = await listen(runtime.app, { port, host });
+  } catch (error) {
+    let errors = [error];
+    try {
+      await runtime.cleanup();
+    } catch (cleanupError) {
+      errors.push(cleanupError);
+    }
+    throwFailures(errors, 'Server startup failed');
+  }
+  let origin = serverOrigin(server);
+  logRuntimeEvent(runtime.logger, 'info', 'server.started', {
+    app: runtime.contract.name ?? 'Cricket app',
+    port: server.address().port,
+    url: origin
   });
+  let stopping;
 
-  async function stop(signal, {
+  function stop(signal, {
     closeConnections = 'idle'
   } = {}) {
+    if (stopping) return stopping;
     process.removeListener('SIGINT', onSigint);
     process.removeListener('SIGTERM', onSigterm);
-
-    let shutdownError;
-
-    try {
-      runtime[lifecycleControllerKey].shuttingDown(signal);
-
-      if (signal && runtime.contract.onShutdown)
-        await runtime.contract.onShutdown({
-          signal,
-          ...runtime
-        });
-    } catch (error) {
-      shutdownError = error;
-    } finally {
-      try {
-        await closeServer(server, {
-          closeConnections
-        });
-      } finally {
-        if (runtime.cleanup)
-          await runtime.cleanup();
+    let controller = runtime[lifecycleControllerKey];
+    controller.requests.stop();
+    controller.shuttingDown(signal);
+    let closing = closeServer(server, { closeConnections });
+    stopping = Promise.resolve().then(async () => {
+      let errors = [];
+      for (let cleanup of [
+        () => runtime.contract.onShutdown?.({ signal, ...runtime }),
+        controller.requests.idle,
+        () => {
+          server.closeIdleConnections();
+          return closing;
+        },
+        runtime.cleanup
+      ]) {
+        try {
+          await cleanup();
+        } catch (error) {
+          errors.push(error);
+        }
       }
-    }
-
-    if (shutdownError)
-      throw shutdownError;
+      throwFailures(errors, 'Server shutdown failed');
+    });
+    return stopping;
   }
 
   let shutdown = async signal => {
-    await stop(signal);
-    process.exit(0);
+    try {
+      await stop(signal);
+      process.exit(0);
+    } catch (error) {
+      logRuntimeEvent(runtime.logger, 'error', 'server.shutdown.failed', { error: safeErrorSnapshot(error) });
+      process.exit(1);
+    }
   };
   let onSigint = () => {
     void shutdown('SIGINT');
@@ -1247,6 +1252,7 @@ export async function startCricketApp(cricketApp, {
 
   return {
     ...runtime,
+    origin,
     server,
     stop
   };

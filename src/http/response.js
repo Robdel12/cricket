@@ -1,5 +1,5 @@
 import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { finished, pipeline } from 'node:stream/promises';
 import {
   validateHeaderName,
   validateHeaderValue
@@ -253,35 +253,6 @@ function assertValidSetCookieHeader(value) {
     throw new Error('Invalid response cookie option: expires');
 }
 
-function applyResponseCleanup(req, res, response) {
-  if (typeof response.onClose !== 'function')
-    return () => {};
-
-  let closed = false;
-  let close = () => {
-    if (closed)
-      return;
-
-    closed = true;
-
-    try {
-      let cleanup = response.onClose();
-      cleanup?.catch?.(() => {});
-    } catch {
-      // Cleanup callbacks run after the response path is committed.
-    }
-  };
-
-  req.on('close', close);
-  req.on('error', close);
-  res.on('close', close);
-  res.on('error', close);
-  response.body?.on?.('close', close);
-  response.body?.on?.('error', close);
-
-  return close;
-}
-
 function isReadable(value) {
   return value instanceof Readable || typeof value?.pipe === 'function';
 }
@@ -370,41 +341,6 @@ function assertContentLengthFraming(headers, body) {
 
   if (body.kind === 'empty' && normalizedContentLength(headers['content-length']) !== 0)
     throw new Error('Response Content-Length does not match body size');
-}
-
-function discardBody(body) {
-  if (isReadable(body))
-    body.destroy();
-}
-
-function discardPreparedBody(body) {
-  if (body.kind === 'stream')
-    discardBody(body.body);
-}
-
-function writePreparedBody(res, body) {
-  if (body.kind === 'empty') {
-    res.end();
-    return;
-  }
-
-  if (body.kind === 'stream') {
-    void pipeline(body.body, res).catch(error => {
-      if (!res.destroyed)
-        res.destroy(error);
-    });
-    return;
-  }
-
-  res.end(body.body);
-}
-
-function writeNoBodyResponse(res, body) {
-  discardPreparedBody(body);
-  res.removeHeader('content-length');
-  res.removeHeader('content-type');
-  res.removeHeader('transfer-encoding');
-  res.end();
 }
 
 function statusFor(response) {
@@ -528,55 +464,143 @@ export function safeResponseSnapshot(response = {}, options = {}) {
 }
 
 /**
- * Write a Cricket response object to a Node HTTP response.
- *
- * Handles JSON serialization, streaming responses, cookie serialization, redirects,
- * and cleanup callbacks. Validates headers and status codes before writing.
- *
- * @param {object} req - Node HTTP request for cleanup event handling.
- * @param {object} res - Node HTTP response object.
- * @param {object} [response] - Cricket response object.
- * @param {number} [response.status=200] - HTTP status code.
- * @param {any} [response.body] - Response body (object, string, Buffer, or stream).
- * @param {object} [response.headers] - Response headers.
- * @param {Array<{name: string, value: string, options?: object}>} [response.cookies] - Cookies to set.
- * @param {string} [response.redirect] - Redirect URL for 3xx responses.
- * @param {Function} [response.onClose] - Cleanup callback after response completes.
+ * Observe transport termination at ingress and own every response attempt.
+ * Writing starts synchronously so preparation failures can still produce an
+ * error response. Completion is joined separately after that response path.
  */
-export function writeHttpResponse(req, res, response) {
-  let cleanup = applyResponseCleanup(req, res, response ?? {});
-  let prepared;
+export function createResponseWriter(req, res) {
+  let terminal;
+  let end;
+  let terminated = new Promise(resolve => { end = resolve; });
+  let pending = [];
 
-  try {
-    prepared = prepareResponse(response);
-    assertValidStatus(prepared.status);
-    assertValidHeaders(prepared.headers);
-  } catch (error) {
-    cleanup();
-    discardBody(response?.body);
-    throw error;
+  function terminate(kind) {
+    if (terminal)
+      return;
+
+    terminal = kind;
+    end(kind);
   }
 
-  res.statusCode = prepared.status;
+  let onFinish = () => terminate('finished');
+  let onClose = () => terminate(res.writableFinished ? 'finished' : 'closed');
+  let onAbort = () => terminate('closed');
+  req.once('aborted', onAbort);
+  req.once('error', onAbort);
+  res.once('finish', onFinish);
+  res.once('close', onClose);
+  res.once('error', onAbort);
 
-  for (let [name, value] of Object.entries(prepared.headers))
-    res.setHeader(name, value);
+  if (res.destroyed || req.aborted)
+    terminate('closed');
+  else if (res.writableFinished)
+    terminate('finished');
 
-  if (response?.redirect) {
-    writeNoBodyResponse(res, prepared.body);
-    return;
+  function own(promise) {
+    let owned = Promise.resolve(promise);
+    // A handler may still be running when transport cleanup rejects.
+    void owned.catch(() => {});
+    pending.push(owned);
   }
 
-  if (prepared.status === 204 || prepared.status === 205 || prepared.status === 304) {
-    writeNoBodyResponse(res, prepared.body);
-    return;
+  function discard(body) {
+    if (!isReadable(body))
+      return;
+
+    let completion = finished(body, { cleanup: true }).catch(error => {
+      if (error.code !== 'ERR_STREAM_PREMATURE_CLOSE')
+        throw error;
+    });
+    own(completion);
+    body.destroy();
   }
 
-  if (req.method === 'HEAD') {
-    discardPreparedBody(prepared.body);
-    res.end();
-    return;
+  function cleanup(response, immediately = false) {
+    if (typeof response?.onClose === 'function')
+      own((immediately ? Promise.resolve() : terminated).then(() => response.onClose()));
   }
 
-  writePreparedBody(res, prepared.body);
+  function write(response, { onTerminal } = {}) {
+    let prepared;
+
+    try {
+      prepared = prepareResponse(response);
+      assertValidStatus(prepared.status);
+      assertValidHeaders(prepared.headers);
+    } catch (error) {
+      cleanup(response, true);
+      discard(response?.body);
+      throw error;
+    }
+
+    cleanup(response);
+
+    if (onTerminal)
+      own(terminated.then(onTerminal));
+
+    if (terminal === 'closed') {
+      discard(response?.body);
+      return;
+    }
+
+    if (!req.complete && !req.destroyed) {
+      res.shouldKeepAlive = false;
+      res.setHeader('connection', 'close');
+      res.once('finish', () => {
+        if (!req.destroyed) req.destroy();
+      });
+    }
+
+    res.statusCode = prepared.status;
+    for (let [name, value] of Object.entries(prepared.headers))
+      res.setHeader(name, value);
+
+    let noBody = response?.redirect || [204, 205, 304].includes(prepared.status);
+    if (noBody || req.method === 'HEAD') {
+      discard(response?.body);
+      if (noBody) {
+        res.removeHeader('content-length');
+        res.removeHeader('content-type');
+        res.removeHeader('transfer-encoding');
+      }
+      res.end();
+      return;
+    }
+
+    if (prepared.body.kind !== 'stream') {
+      res.end(prepared.body.body);
+      return;
+    }
+
+    let body = prepared.body.body;
+    let producerError;
+    let onError = error => {
+      if (terminal !== 'closed') producerError = error;
+    };
+    body.on('error', onError);
+    own(pipeline(body, res).catch(error => {
+      if (producerError)
+        throw producerError;
+      if (terminal !== 'closed' || !['ERR_STREAM_PREMATURE_CLOSE', 'ECONNRESET', 'ABORT_ERR'].includes(error.code))
+        throw error;
+    }).finally(() => body.off('error', onError)));
+  }
+
+  async function complete() {
+    try {
+      await terminated;
+      let results = await Promise.allSettled(pending);
+      let errors = results.filter(result => result.status === 'rejected').map(result => result.reason);
+      if (errors.length === 1) throw errors[0];
+      if (errors.length) throw new AggregateError(errors, 'Response completion failed');
+    } finally {
+      req.off('aborted', onAbort);
+      req.off('error', onAbort);
+      res.off('finish', onFinish);
+      res.off('close', onClose);
+      res.off('error', onAbort);
+    }
+  }
+
+  return { write, complete };
 }
