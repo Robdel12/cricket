@@ -335,6 +335,8 @@ describe('Cricket CLI', () => {
     assert.match(agents, /api\/migrations/);
     assert.match(agents, /api\/dev/);
     assert.match(agents, /lifecycle/);
+    assert.match(agents, /runtime\.requests\.pause\(\)/);
+    assert.match(agents, /resolves after listening/);
     assert.match(agents, /\{ dependencies, services, cleanup \}/);
     assert.match(agents, /Recovery receives evidence, time, logger, and trace/);
     assert.match(agents, /format: 'pretty'/);
@@ -399,6 +401,9 @@ describe('Cricket CLI', () => {
     assert.match(observabilitySkill, /Endpoint API version families/);
     assert.match(testingSkill, /name: cricket-testing/);
     assert.match(testingSkill, /createTestRuntime/);
+    assert.match(testingSkill, /harness\/client `origin`/);
+    assert.match(testingSkill, /runtime\.requests\.pause\(\)/);
+    assert.match(testingSkill, /without invoking standalone `onShutdown` hooks/);
     assert.match(testingSkill, /worker boundary/);
     assert.match(testingSkill, /worker\.schedules\.tick/);
   });

@@ -49,6 +49,16 @@ and progress. Recovery receives evidence, time, logger, and trace for a pure
 decision. Shutdown hooks receive the assembled runtime. Product health checks
 may read `lifecycle`, but they still own database, worker, and deploy readiness.
 
+`runtime.requests.pause()` synchronously closes admission and returns an
+independent hold with `idle({ signal })` and `resume()`. Await accepted request,
+stream, async response cleanup, and terminal observer work before changing shared
+state. Abort leaves the hold closed; resume explicitly after success. Control
+operations must live outside the paused runtime. Jobs and detached work remain
+app-owned. Standalone `stop()` calls shutdown hooks to stop producers/end streams
+before draining and destroying setup dependencies. Test cleanup omits those
+standalone hooks. `startCricketApp()` resolves after listening; use its `origin`
+instead of attaching another `listening` listener.
+
 ## Domain Shape
 
 - `*.model.js` owns durable row fields and public/private visibility.

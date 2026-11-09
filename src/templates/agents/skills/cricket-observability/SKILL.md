@@ -44,6 +44,8 @@ Use this when a change touches how a Cricket app explains itself.
   and shutdown hooks. Worker runtimes expose it to worker entrypoints.
 - Use lifecycle state for readiness and shutdown decisions. Product health checks still decide whether the app is ready for traffic.
 - Do not invent separate lifecycle globals.
+- Request holds from `runtime.requests.pause()` leave lifecycle readiness unchanged. Await `hold.idle({ signal })` for accepted middleware/handler, stream, async cleanup, and terminal observer work. Abort keeps admission closed until explicit resume. Detached jobs remain app-owned.
+- Producer and response cleanup errors use request error hooks/logs and the next relevant drain boundary. Do not send a second response after transport commits or turn ordinary client stream cancellation into a cleanup failure.
 
 ## Debugging Flow
 

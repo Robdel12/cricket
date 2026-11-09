@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
+import { closeServer, listen, serverOrigin } from '../http/server.js';
 
 let testRequestIdHeader = 'x-cricket-test-request-id';
 let bodylessMethods = new Set(['GET', 'HEAD']);
@@ -10,21 +11,6 @@ let bodyOptionNames = [
   'text'
 ];
 let testFetch = globalThis.fetch.bind(globalThis);
-
-function listen(app) {
-  return new Promise((resolve, reject) => {
-    let server = app.listen(0, '127.0.0.1');
-
-    server.once('listening', () => resolve(server));
-    server.once('error', reject);
-  });
-}
-
-function close(server) {
-  return new Promise((resolve, reject) => {
-    server.close(error => error ? reject(error) : resolve());
-  });
-}
 
 function runtimeApp(runtimeOrApp) {
   if (typeof runtimeOrApp?.app?.listen === 'function')
@@ -146,12 +132,12 @@ function isJsonContentType(contentType) {
  * response writing, and Node's HTTP boundary.
  *
  * @param {object|Function} runtimeOrApp - Cricket runtime object or app handler.
- * @returns {Promise<object>} HTTP helpers plus `cleanup()`.
+ * @returns {Promise<object>} Bound `origin`, HTTP helpers, and once-only listener `cleanup()`.
  */
 export async function createTestClient(runtimeOrApp) {
-  let server = await listen(runtimeApp(runtimeOrApp));
-  let { port } = server.address();
-  let origin = `http://127.0.0.1:${port}`;
+  let server = await listen(runtimeApp(runtimeOrApp), { port: 0, host: '127.0.0.1' });
+  let origin = serverOrigin(server);
+  let closing;
 
   async function request(method, path, options = {}) {
     method = method.toUpperCase();
@@ -184,6 +170,7 @@ export async function createTestClient(runtimeOrApp) {
   }
 
   return {
+    origin,
     request,
     get(path, options) {
       return request('GET', path, options);
@@ -207,7 +194,8 @@ export async function createTestClient(runtimeOrApp) {
       return request('OPTIONS', path, options);
     },
     cleanup() {
-      return close(server);
+      closing ??= closeServer(server);
+      return closing;
     }
   };
 }

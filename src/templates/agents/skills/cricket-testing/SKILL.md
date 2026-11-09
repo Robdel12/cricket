@@ -21,6 +21,10 @@ Use this when adding or changing Cricket tests.
 - Drive requests with `api.get`, `api.post`, `api.patch`, and related helpers.
 - Inspect `testState.request(requestId)`, `testState.trace(requestId)`, logs, lifecycle events, and timings when they matter to behavior.
 - Keep app database setup explicit. The test runtime does not reset product state for you.
+- Use the harness/client `origin` for other real HTTP or browser clients.
+- Pause with `runtime.requests.pause()` and await its `idle({ signal })` before resetting shared state. Each independent hold resumes explicitly after success. Aborting idle does not reopen admission; keep fixture control outside the paused runtime.
+- Request idle joins awaited handlers, middleware, error hooks, streams, async response cleanup, and terminal observers, including work after client disconnect. App-owned jobs and detached promises need their own drain.
+- Stop independent producers and long streams before test `cleanup()`. Cleanup closes admission/listener and releases dependencies once, without invoking standalone `onShutdown` hooks.
 
 ## Job Tests
 
