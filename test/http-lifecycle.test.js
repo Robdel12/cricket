@@ -12,6 +12,7 @@ import {
   defineCricketApp,
   createCricketRuntime,
   defineEndpoint,
+  defineRule,
   ok,
   startCricketApp,
   withHeaders,
@@ -61,6 +62,64 @@ function streamRequest(origin, { method = 'GET', headers, agent, body } = {}) {
   });
   void completed.catch(() => {});
   return { outgoing, started: started.promise, first: first.promise, completed };
+}
+
+for (let complete of [false, true]) {
+  test(`a disconnected ${complete ? 'complete' : 'partial'} POST settles after its auth rule finishes`, { timeout: 5000 }, async t => {
+    let directory = await fs.mkdtemp(path.join(os.tmpdir(), 'cricket-aborted-body-'));
+    let entered = deferred(), release = deferred(), disconnected = deferred();
+    let incoming;
+    let runtime = await createCricketRuntime(appWith([
+      defineEndpoint({
+        method: 'post', path: '/writes', body: z.object({ value: z.string() }),
+        beforeBodyRules: [defineRule('waitForAuth', async () => {
+          entered.resolve();
+          await release.promise;
+        })],
+        async handler({ db, input }) {
+          await db('writes').insert(input.body);
+          return ok({ saved: true });
+        }
+      }),
+      defineEndpoint({
+        method: 'get', path: '/writes',
+        async handler({ db }) { return ok(await db('writes')); }
+      })
+    ], {
+      database: { client: 'sqlite3', connection: { filename: path.join(directory, 'app.sqlite') }, useNullAsDefault: true },
+      async setup({ db }) { await db.schema.createTable('writes', table => table.text('value')); }
+    }));
+    let server = http.createServer((req, res) => {
+      incoming = req;
+      res.once('close', () => disconnected.resolve());
+      runtime.handle(req, res);
+    });
+    t.after(async () => {
+      release.resolve();
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+      await runtime.cleanup();
+      await fs.rm(directory, { recursive: true, force: true });
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    let origin = `http://127.0.0.1:${server.address().port}`;
+    let outgoing = http.request(`${origin}/writes`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }
+    });
+    outgoing.on('error', () => {});
+    if (complete) outgoing.end('{"value":"must not be saved"}');
+    else outgoing.write('{"value":');
+    await entered.promise;
+    outgoing.destroy();
+    await disconnected.promise;
+    assert.equal(incoming.destroyed, true);
+    let hold = runtime.requests.pause();
+    release.resolve();
+    await hold.idle({ signal: t.signal });
+    hold.resume();
+    assert.deepEqual(await (await fetch(`${origin}/writes`)).json(), []);
+  });
 }
 
 test('independent holds block application work and an aborted idle can be awaited again', async t => {

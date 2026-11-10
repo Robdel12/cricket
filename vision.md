@@ -177,7 +177,8 @@ decide whether your product is healthy enough to receive traffic.
 
 The HTTP runtime owns an accepted request until its awaited application work,
 response transport, stream pipeline, response cleanup, and terminal observers
-settle. A disconnected socket does not finish a handler or cancel a write.
+settle. A disconnected socket does not finish a handler or cancel a write;
+body parsing must also settle if the client left before parsing began.
 Response completion errors stay observable without rewriting a committed
 response. Ordinary client cancellation is not a drain failure when cleanup
 succeeds.

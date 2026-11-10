@@ -645,6 +645,7 @@ endpoint returns, including when parsing or validation fails. Set `maxBodyBytes`
 Use `beforeBodyRules` for authentication and other inexpensive checks that must pass before Cricket
 accepts an upload. These rules receive request headers, route parameters, and app context, but no
 parsed body. Their returned facts are available to the endpoint's remaining rules and handler.
+If the client disconnects while a rule runs, body parsing rejects once the rule finishes.
 
 Use `ok(body)` for 200, `created(body)` for 201, and `respond(status, body)` for
 other statuses. Compose `withHeaders`, `withCookies`, and
