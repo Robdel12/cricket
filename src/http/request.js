@@ -453,6 +453,9 @@ function assertContentLength(request, maxBytes) {
 export function readRequestBody(req, {
   maxBytes = defaultMaxBodyBytes
 } = {}) {
+  if (req.destroyed)
+    return Promise.reject(badRequest('Request aborted'));
+
   return new Promise((resolve, reject) => {
     let chunks = [];
     let totalBytes = 0;
