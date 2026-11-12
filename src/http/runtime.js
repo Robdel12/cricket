@@ -29,6 +29,7 @@ import {
 } from '../trace.js';
 import { routeIdentityFor } from '../route-identity.js';
 import {
+  getResponseError,
   resolveHttpResponse,
   respond,
   withHeaders
@@ -625,11 +626,19 @@ async function reportRequestError(appContract, {
   baseRequest,
   error,
   logger,
-  response
+  response,
+  route,
+  handled = false,
+  phase = 'request',
+  reportedErrors
 }) {
+  if (reportedErrors?.has(error))
+    return;
+  reportedErrors?.add(error);
   try {
     logger.error('request.failed', {
       error: safeErrorSnapshot(error),
+      ...(handled ? { handled: true } : {}),
       method: baseRequest?.method,
       path: baseRequest?.path
     });
@@ -643,7 +652,10 @@ async function reportRequestError(appContract, {
   try {
     await appContract.onError(error, {
       request: baseRequest,
-      response
+      response,
+      route,
+      handled,
+      phase
     });
   } catch (onErrorFailure) {
     try {
@@ -685,6 +697,29 @@ function createRuntimeHandler({
     let route;
     let routeEndpoint;
     let apiVersionNegotiation;
+
+    async function reportFailure(error, response, handled = false) {
+      await reportRequestError(appContract, {
+        baseRequest,
+        error,
+        logger: requestLogger,
+        response,
+        route,
+        handled,
+        reportedErrors: completionContext.reportedErrors
+      });
+
+      if (baseRequest) {
+        await emitObserved(observability, replay, () => ({
+          type: 'request.failed',
+          error: safeErrorSnapshot(error),
+          ...(handled ? { handled: true } : {}),
+          requestId,
+          request: safeRequestSnapshot(observedRequest ?? baseRequest),
+          route
+        }));
+      }
+    }
 
     function writeResponse(response, observation) {
       writeObservedResponse(writer, response, observation);
@@ -799,7 +834,7 @@ function createRuntimeHandler({
             ...versionMetadata
           });
           requestLogger = routeLogger;
-          completionContext.logger = routeLogger;
+          Object.assign(completionContext, { logger: routeLogger, route });
           if (apiVersionNegotiation)
             logRuntimeEvent(routeLogger, 'info', 'http.api_version.resolved', versionMetadata);
           logRuntimeEvent(routeLogger, 'info', 'http.route.matched', {
@@ -896,6 +931,10 @@ function createRuntimeHandler({
       let response = resolveHttpResponse(result);
       response = applyApiVersionHeaders(response, routeEndpoint, apiVersionNegotiation);
 
+      let error = getResponseError(response);
+      if (error !== undefined)
+        await reportFailure(error, response, true);
+
       writeResponse(response, {
         logger: requestLogger,
         replay,
@@ -909,22 +948,7 @@ function createRuntimeHandler({
 
       response = applyApiVersionHeaders(response, routeEndpoint, apiVersionNegotiation);
 
-      await reportRequestError(appContract, {
-        baseRequest,
-        error,
-        logger: requestLogger,
-        response
-      });
-
-      if (baseRequest) {
-        await emitObserved(observability, replay, () => ({
-          type: 'request.failed',
-          error: safeErrorSnapshot(error),
-          requestId,
-          request: safeRequestSnapshot(observedRequest ?? baseRequest),
-          route
-        }));
-      }
+      await reportFailure(error, response);
 
       writeResponse(response, {
         logger: requestLogger,
@@ -941,7 +965,7 @@ function createRuntimeHandler({
     let writer = createResponseWriter(req, res);
     let execution = requests.run(async () => {
       let errors = [];
-      let completionContext = { logger };
+      let completionContext = { logger, reportedErrors: new Set() };
       try {
         await execute(req, res, writer, completionContext, options);
       } catch (error) {
@@ -957,7 +981,7 @@ function createRuntimeHandler({
       }
       if (errors.length) {
         let error = errors.length === 1 ? errors[0] : new AggregateError(errors, 'Request completion failed');
-        await reportRequestError(appContract, { ...completionContext, error });
+        await reportRequestError(appContract, { ...completionContext, error, phase: 'response' });
         throw error;
       }
     });

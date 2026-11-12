@@ -26,6 +26,7 @@
     "./logger": "./src/logger.js",
     "./openapi": "./src/openapi.js",
     "./serializer": "./src/serializer.js",
+    "./sentry": "./src/integrations/sentry.js",
     "./test": "./src/test/index.js"
   },
   "scripts": {

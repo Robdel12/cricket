@@ -207,6 +207,8 @@ function validateResolvedDomains(domains) {
  */
 export function defineCricketApp(options = {}) {
   assertKnownOptions(options, appOptionKeys, 'defineCricketApp');
+  if (options.onError !== undefined && typeof options.onError !== 'function')
+    throw new Error('defineCricketApp onError must be a function');
 
   let architecture = architectureFor(options);
   let domains = options.domains ?? [];

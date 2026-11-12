@@ -102,6 +102,12 @@ status matters, then compose `withHeaders`, `withCookies`, or
 `withResponseCleanup` when needed. Never use a `{ status, body }`-shaped object
 as an implicit HTTP response.
 
+Configure HTTP reporting once through app `onError`. When a catch returns a safe
+error response, use `withError(respond(status, body), error)` so the original
+exception reaches that hook without entering the response body. Use
+`sentryErrorHandler` from `@robdel12/cricket/sentry` with an app-owned SDK; it skips
+ordinary 4xx failures. Flush the SDK in setup cleanup after requests drain.
+
 API versioning is optional and endpoint-owned. Share one immutable
 `defineApiVersions` family across participating routes and declare historical
 body normalizers and response serializers through `apiVersions`. Keep the

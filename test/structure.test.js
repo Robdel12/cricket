@@ -399,6 +399,11 @@ describe('Cricket CLI', () => {
     assert.match(observabilitySkill, /trace\.span/);
     assert.match(observabilitySkill, /no-op startup trace/);
     assert.match(observabilitySkill, /Endpoint API version families/);
+    for (let guidance of [agents, cricketSkill, observabilitySkill]) {
+      assert.match(guidance, /withError/);
+      assert.match(guidance, /onError/);
+    }
+    assert.match(observabilitySkill, /sentryErrorHandler/);
     assert.match(testingSkill, /name: cricket-testing/);
     assert.match(testingSkill, /createTestRuntime/);
     assert.match(testingSkill, /harness\/client `origin`/);
@@ -778,6 +783,7 @@ describe('Cricket CLI', () => {
 
       export let app = defineCricketApp({
         domains: [],
+        onError() {},
         observability: {
           requestId() {
             return 'req_test';
@@ -808,8 +814,8 @@ describe('Cricket CLI', () => {
       disabledAppPath
     ]);
 
-    assert.match(result.stdout, /Observability: request IDs custom, events enabled, replay terminal events/);
-    assert.match(disabled.stdout, /Observability: request IDs default, events disabled, replay disabled/);
+    assert.match(result.stdout, /Observability: request IDs custom, events enabled, replay terminal events, errors onError/);
+    assert.match(disabled.stdout, /Observability: request IDs default, events disabled, replay disabled, errors disabled/);
   });
 
   it('writes OpenAPI docs for a real Cricket app module', async () => {

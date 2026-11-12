@@ -96,6 +96,10 @@ validation intact; generated component names are internal.
 
 ## Change Flow
 
+HTTP reporting uses one app `onError` hook. Use `withError(response, error)` when
+returning a handled error response, and framework errors such as `badRequest` for
+invalid input. See `cricket-observability` for provider integration and privacy.
+
 1. Update the schema at the boundary that changed.
 2. Put request/source input schemas in `*.validations.js` and import them explicitly.
 3. Normalize third-party/source payloads in `*.normalizers.js`.

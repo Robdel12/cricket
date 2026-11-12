@@ -607,6 +607,56 @@ return withResponseCleanup(
 );
 ```
 
+### Error reporting
+
+Configure `onError(error, { request, response, route, handled, phase })` once per
+app. Cricket calls it for thrown HTTP failures and errors attached to responses
+with `withError`. The original error stays private and is preserved through
+headers, cookies, response validation, and serializers. It is never added to the
+response body. Reporter failures are logged without changing the client response.
+
+```js
+import { respond, withError } from '@robdel12/cricket';
+
+try {
+  return await loadImage();
+} catch (error) {
+  return withError(respond(503, { error: 'Image could not be loaded' }), error);
+}
+```
+
+Use framework errors such as `badRequest` for invalid input. An arbitrary error's
+`status` property does not choose its HTTP status. `withError` needs an explicit
+error response (400–599); a plain error body alone carries no exception to report.
+
+The optional Sentry adapter uses your initialized SDK, with no Sentry dependency
+or process handlers added by Cricket:
+
+```js
+import * as Sentry from '@sentry/node';
+import { sentryErrorHandler } from '@robdel12/cricket/sentry';
+
+Sentry.init({ dsn: process.env.SENTRY_DSN, environment: process.env.NODE_ENV });
+
+let app = defineCricketApp({
+  domains: './domains',
+  onError: sentryErrorHandler(Sentry),
+  setup() {
+    return { cleanup: () => Sentry.flush(2000) };
+  }
+});
+```
+
+The adapter skips ordinary 4xx failures and forwards original exceptions with
+request ID, method, matched route template, and status. It adds no raw paths,
+headers, cookies, query values, or bodies. Successful responses with later stream/cleanup failures are
+still reported (`phase: 'response'`). Apps own SDK initialization, environment
+policy, and flushing in setup cleanup after requests drain; `onShutdown` runs
+before draining. Existing setup cleanup should flush after releasing app resources.
+Background jobs and detached work keep their existing failure hooks; this API
+reports errors owned by the HTTP runtime. See
+[`examples/error-reporting.js`](examples/error-reporting.js) for a complete example.
+
 ### Multipart requests
 
 Endpoints that accept uploads can opt into bounded multipart parsing:
@@ -1263,6 +1313,7 @@ import {
   redirect,
   withHeaders,
   withCookies,
+  withError,
   withResponseCleanup,
   defineModel,
   defineRule,
@@ -1296,5 +1347,6 @@ import { createKnexRepository } from '@robdel12/cricket/knex';
 import { createCricketLogger, normalizeLogger } from '@robdel12/cricket/logger';
 import { generateOpenApi } from '@robdel12/cricket/openapi';
 import { defineSerializer } from '@robdel12/cricket/serializer';
+import { sentryErrorHandler } from '@robdel12/cricket/sentry';
 import { createTestRuntime } from '@robdel12/cricket/test';
 ```

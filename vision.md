@@ -283,6 +283,12 @@ Cricket should never emit raw auth headers, cookies, query values, request
 bodies, response bodies, `Set-Cookie` values, raw error objects, or open-ended
 trace dumps by default.
 
+HTTP error reporting belongs at the runtime boundary. One `onError` hook should
+receive original thrown errors and deliberately handled failures marked with
+`withError`, without exposing them in client responses. Optional provider adapters
+should reuse app-owned SDKs; apps own initialization and flushing. Background job
+failure policy stays with the existing job hooks.
+
 Observer events are immutable copies. Emitting an event must never freeze or
 otherwise mutate the app value used to create it.
 

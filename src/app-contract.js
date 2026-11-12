@@ -108,7 +108,8 @@ function observabilitySummaryFor(contract) {
   return {
     events: hasObserver ? 'enabled' : 'disabled',
     replay: hasObserver ? 'terminal events' : 'disabled',
-    requestIds: hasRequestId ? 'custom' : 'default'
+    requestIds: hasRequestId ? 'custom' : 'default',
+    errors: typeof contract.onError === 'function' ? 'onError' : 'disabled'
   };
 }
 
@@ -177,6 +178,7 @@ function appContractFromResolvedApp(resolvedApp) {
     prefix: resolvedApp.prefix,
     database: resolvedApp.database,
     observability: resolvedApp.observability,
+    onError: resolvedApp.onError,
     domains: resolvedApp.domains ?? [],
     plugins: resolvedApp.plugins ?? [],
     endpoints: resolvedApp.endpoints ?? [],
@@ -309,7 +311,7 @@ export function formatAppMap(appMap) {
       : 'Architecture: domains (recommended)'
   ];
 
-  lines.push(`Observability: request IDs ${appMap.observability.requestIds}, events ${appMap.observability.events}, replay ${appMap.observability.replay}`);
+  lines.push(`Observability: request IDs ${appMap.observability.requestIds}, events ${appMap.observability.events}, replay ${appMap.observability.replay}, errors ${appMap.observability.errors}`);
   lines.push(
     appMap.database.status === 'enabled'
       ? `Database: ${appMap.database.client ?? 'configured'}${appMap.database.environment ? ` (${appMap.database.environment})` : ''}`

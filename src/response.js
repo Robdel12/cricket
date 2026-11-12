@@ -1,6 +1,7 @@
 import { frozenPlain } from './immutable.js';
 
 let responseKind = Symbol('cricket.httpResponse');
+let responseErrors = new WeakMap();
 
 function assertResponse(response, helper) {
   if (!isHttpResponse(response))
@@ -13,7 +14,8 @@ function responseValue({
   headers,
   cookies,
   location,
-  cleanup
+  cleanup,
+  error
 }) {
   let response = {
     status,
@@ -27,7 +29,13 @@ function responseValue({
   Object.defineProperty(response, responseKind, {
     value: true
   });
+  if (error !== undefined)
+    responseErrors.set(response, error);
   return Object.freeze(response);
+}
+
+export function getResponseError(response) {
+  return responseErrors.get(response);
 }
 
 /**
@@ -65,6 +73,7 @@ export function withResponseBody(response, body) {
 
   return responseValue({
     ...response,
+    error: getResponseError(response),
     body,
     location: response.redirect,
     cleanup: response.onClose
@@ -142,6 +151,7 @@ export function withHeaders(response, headers) {
 
   return responseValue({
     ...response,
+    error: getResponseError(response),
     headers: {
       ...response.headers,
       ...headers
@@ -169,6 +179,7 @@ export function withResponseHeaders(response, headers) {
 
   return responseValue({
     ...response,
+    error: getResponseError(response),
     headers,
     location: response.redirect,
     cleanup: response.onClose
@@ -190,6 +201,7 @@ export function withCookies(response, cookies) {
 
   return responseValue({
     ...response,
+    error: getResponseError(response),
     cookies: [
       ...(response.cookies ?? []),
       ...cookies
@@ -214,7 +226,24 @@ export function withResponseCleanup(response, cleanup) {
 
   return responseValue({
     ...response,
+    error: getResponseError(response),
     location: response.redirect,
     cleanup
+  });
+}
+
+/** Keep a handled error for onError without adding it to the response body. */
+export function withError(response, error) {
+  assertResponse(response, 'withError');
+  if (response.status < 400)
+    throw new Error('withError needs an error response (status 400 or above)');
+  if (error === undefined || error === null)
+    throw new Error('withError needs an error');
+
+  return responseValue({
+    ...response,
+    location: response.redirect,
+    cleanup: response.onClose,
+    error
   });
 }
