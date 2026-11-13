@@ -153,6 +153,11 @@ headers, cookies, redirects, streaming, and cleanup. This keeps domain objects
 from accidentally becoming transport instructions because they happen to have
 a field named `status` or `redirect`.
 
+Known-length file streams should preserve their byte metadata without loading
+an entire file into memory. The runtime verifies framing, retains backpressure,
+and owns cancellation and cleanup. Applications supply the source and expected
+length; they do not bypass the HTTP runtime to preserve download headers.
+
 The runtime should expose capabilities deliberately at the phase that owns
 them, not imply one universal bag:
 

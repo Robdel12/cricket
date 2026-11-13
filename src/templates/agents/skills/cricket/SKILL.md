@@ -58,6 +58,11 @@ bodies. Use `ok`, `created`, `respond`, or `redirect` for transport intent, then
 compose headers, cookies, or cleanup with Cricket's response helpers. Do not
 return implicit `{ status, body }` transport objects.
 
+For file streams with a known byte length, set `Content-Length` through
+`withHeaders`. Cricket checks the byte count, keeps backpressure, and closes
+mismatched responses. HEAD preserves the length without consuming the stream.
+Use `withResponseCleanup` for app-owned resources; omit length for open-ended streams.
+
 Use framework errors such as `badRequest` for invalid input. Response, serializer,
 and normalizer contract details stay internal. Configure app `onError` once for
 HTTP reporting, and use `withError(response, error)` when a catch returns a safe

@@ -1,4 +1,4 @@
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
 import { finished, pipeline } from 'node:stream/promises';
 import {
   validateHeaderName,
@@ -334,13 +334,56 @@ function assertContentLengthFraming(headers, body) {
   if (headers['content-length'] === undefined)
     return;
 
-  if (body.kind === 'stream') {
-    body.body.destroy?.();
-    throw new Error('Streaming responses cannot set Content-Length');
-  }
-
-  if (body.kind === 'empty' && normalizedContentLength(headers['content-length']) !== 0)
+  let declaredLength = normalizedContentLength(headers['content-length']);
+  if (body.kind === 'empty' && declaredLength !== 0)
     throw new Error('Response Content-Length does not match body size');
+
+  return body.kind === 'stream' ? declaredLength : undefined;
+}
+
+function checkStreamLength(expectedLength) {
+  let bytes = 0;
+  let lastChunk;
+  let mismatch = () => new Error('Response Content-Length does not match stream size');
+
+  return new Transform({
+    transform(chunk, _encoding, callback) {
+      if (chunk.length === 0) {
+        callback();
+        return;
+      }
+
+      bytes += chunk.length;
+      if (bytes > expectedLength) {
+        callback(mismatch());
+        return;
+      }
+
+      // Hold the chunk that reaches the declared length until the source ends.
+      // An overrun must not look like a complete successful response to a client.
+      if (bytes === expectedLength) {
+        lastChunk = chunk;
+        callback();
+        return;
+      }
+
+      callback(null, chunk);
+    },
+    flush(callback) {
+      if (bytes !== expectedLength) {
+        callback(mismatch());
+        return;
+      }
+
+      if (lastChunk) this.push(lastChunk);
+      lastChunk = undefined;
+      callback();
+    },
+    destroy(error, callback) {
+      lastChunk = undefined;
+      callback(error);
+    }
+  });
 }
 
 function statusFor(response) {
@@ -397,12 +440,13 @@ function prepareResponse(response) {
   let body = preparedBody(response?.body, headers);
   let contentLength = contentLengthFor(body);
 
-  assertContentLengthFraming(headers, body);
+  let streamLength = assertContentLengthFraming(headers, body);
   applyContentLength(headers, contentLength);
 
   return {
     body,
     headers,
+    streamLength,
     status: statusFor(response)
   };
 }
@@ -578,7 +622,10 @@ export function createResponseWriter(req, res) {
       if (terminal !== 'closed') producerError = error;
     };
     body.on('error', onError);
-    own(pipeline(body, res).catch(error => {
+    let streams = prepared.streamLength === undefined
+      ? [body, res]
+      : [body, checkStreamLength(prepared.streamLength), res];
+    own(pipeline(streams).catch(error => {
       if (producerError)
         throw producerError;
       if (terminal !== 'closed' || !['ERR_STREAM_PREMATURE_CLOSE', 'ECONNRESET', 'ABORT_ERR'].includes(error.code))
