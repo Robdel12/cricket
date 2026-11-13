@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtemp, readdir, readFile, stat } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -8,13 +9,22 @@ import { describe, it } from 'node:test';
 import request from 'supertest';
 
 import {
+  createCricketRuntime,
   defineEndpoint,
   defineRule,
+  notFound,
   ok,
   unauthenticated
 } from '../src/index.js';
 import { parseMultipartBody } from '../src/http/multipart.js';
+import { defineManualTestApp } from '../test-support/app.js';
 import { createHttpApp, rawHttpResponse } from './fixtures/http.js';
+
+function deferred() {
+  let resolve;
+  let promise = new Promise(next => { resolve = next; });
+  return { promise, resolve };
+}
 
 describe('Cricket multipart requests', () => {
   it('parses repeated fields and files, then removes temporary files', async () => {
@@ -190,6 +200,112 @@ describe('Cricket multipart requests', () => {
 
     assert.match(response, /^HTTP\/1\.1 401/);
     assert.match(response, /Connection: close/i);
+  });
+
+  it('returns an early multipart rejection while the client is still writing', async t => {
+    let tempDir = await mkdtemp(path.join(os.tmpdir(), 'cricket-test-'));
+    let ruleEntered = deferred();
+    let releaseRule = deferred();
+    let serverFinished = deferred();
+    let source = new PassThrough();
+    let responseReceived = deferred();
+    let rejectUpload = defineRule('rejectUpload', async () => {
+      ruleEntered.resolve();
+      await releaseRule.promise;
+      throw notFound('Build not found');
+    });
+    let runtime = await createCricketRuntime(defineManualTestApp({
+      logger() {},
+      endpoints: [defineEndpoint({
+        method: 'post',
+        path: '/uploads',
+        beforeBodyRules: [rejectUpload],
+        maxBodyBytes: 1,
+        multipart: { maxBytes: 1, tempDir },
+        handler: () => ok({ uploaded: true })
+      })]
+    }));
+    let server = http.createServer((incoming, outgoing) => {
+      outgoing.once('finish', () => {
+        // Continue the upload as the early response finishes, before the writer handles finish.
+        source.write(Buffer.from('bcdefgh'));
+        serverFinished.resolve({
+          status: outgoing.statusCode,
+          requestComplete: incoming.complete,
+          contentLength: incoming.headers['content-length']
+        });
+      });
+      runtime.handle(incoming, outgoing);
+    });
+    t.after(async () => {
+      releaseRule.resolve();
+      source.destroy();
+      server.closeAllConnections();
+      if (server.listening)
+        await new Promise(resolve => server.close(resolve));
+      await runtime.cleanup();
+      await rm(tempDir, { recursive: true, force: true });
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+
+    let clientRequest = request(server)
+      .post('/uploads')
+      .attach('file', source, {
+        filename: 'upload.zip',
+        contentType: 'application/zip',
+        knownLength: 8
+      });
+    clientRequest.once('response', response => responseReceived.resolve({
+      kind: 'response',
+      status: response.status,
+      body: response.body
+    }));
+    let clientPromise = (async () => {
+      try {
+        let response = await clientRequest;
+        return {
+          kind: 'response',
+          status: response.status,
+          body: response.body
+        };
+      } catch (error) {
+        return {
+          kind: 'error',
+          code: error.code,
+          responseStatus: error.response?.status
+        };
+      }
+    })();
+    await ruleEntered.promise;
+    source.write(Buffer.from('a'));
+    releaseRule.resolve();
+    let finished = await serverFinished.promise;
+    let responseBeforeBodyComplete = await Promise.race([
+      responseReceived.promise,
+      clientPromise
+    ]);
+    let hold = runtime.requests.pause();
+    await hold.idle();
+    hold.resume();
+    source.end();
+    let clientOutcome = await clientPromise;
+    let tempEntries = await readdir(tempDir);
+
+    assert.equal(finished.status, 404);
+    assert.equal(finished.requestComplete, false);
+    assert.ok(Number(finished.contentLength) > 8);
+    assert.deepEqual(responseBeforeBodyComplete, {
+      kind: 'response',
+      status: 404,
+      body: { error: { code: 'NOT_FOUND', message: 'Build not found' } }
+    });
+    assert.deepEqual(clientOutcome, {
+      kind: 'response',
+      status: 404,
+      body: { error: { code: 'NOT_FOUND', message: 'Build not found' } }
+    });
+    assert.deepEqual(tempEntries, []);
   });
 
   it('stops active file writes and cleans up when a request aborts', async () => {

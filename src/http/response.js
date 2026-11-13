@@ -590,9 +590,6 @@ export function createResponseWriter(req, res) {
     if (!req.complete && !req.destroyed) {
       res.shouldKeepAlive = false;
       res.setHeader('connection', 'close');
-      res.once('finish', () => {
-        if (!req.destroyed) req.destroy();
-      });
     }
 
     res.statusCode = prepared.status;

@@ -158,6 +158,10 @@ an entire file into memory. The runtime verifies framing, retains backpressure,
 and owns cancellation and cleanup. Applications supply the source and expected
 length; they do not bypass the HTTP runtime to preserve download headers.
 
+Early request rejection must deliver the HTTP error even when the client is still uploading.
+The runtime owns response flushing and connection closure, without parsing rejected uploads
+or leaving a background drain waiting for their remaining bytes.
+
 The runtime should expose capabilities deliberately at the phase that owns
 them, not imply one universal bag:
 
