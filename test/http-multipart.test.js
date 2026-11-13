@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import http from 'node:http';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { PassThrough } from 'node:stream';
+import { PassThrough, Readable } from 'node:stream';
 import { describe, it } from 'node:test';
 import request from 'supertest';
 
@@ -14,6 +15,7 @@ import {
   defineRule,
   notFound,
   ok,
+  respond,
   unauthenticated
 } from '../src/index.js';
 import { parseMultipartBody } from '../src/http/multipart.js';
@@ -24,6 +26,22 @@ function deferred() {
   let resolve;
   let promise = new Promise(next => { resolve = next; });
   return { promise, resolve };
+}
+
+function readResponse(outgoing) {
+  return new Promise((resolve, reject) => {
+    outgoing.once('response', response => {
+      let chunks = [];
+      response.on('data', chunk => chunks.push(chunk));
+      response.once('end', () => resolve({
+        status: response.statusCode,
+        headers: response.headers,
+        body: Buffer.concat(chunks).toString()
+      }));
+      response.once('error', reject);
+    });
+    outgoing.once('error', reject);
+  });
 }
 
 describe('Cricket multipart requests', () => {
@@ -190,7 +208,7 @@ describe('Cricket multipart requests', () => {
     let app = await createHttpApp({ endpoints: [endpoint] });
 
     let response = await rawHttpResponse(app, [
-      'POST /uploads HTTP/1.1',
+      'POST /uploads HTTP/1.0',
       'Host: localhost',
       'Content-Type: multipart/form-data; boundary=unused',
       'Content-Length: 1000000',
@@ -220,8 +238,8 @@ describe('Cricket multipart requests', () => {
         method: 'post',
         path: '/uploads',
         beforeBodyRules: [rejectUpload],
-        maxBodyBytes: 1,
-        multipart: { maxBytes: 1, tempDir },
+        maxBodyBytes: 1024,
+        multipart: { maxBytes: 1024, tempDir },
         handler: () => ok({ uploaded: true })
       })]
     }));
@@ -232,7 +250,8 @@ describe('Cricket multipart requests', () => {
         serverFinished.resolve({
           status: outgoing.statusCode,
           requestComplete: incoming.complete,
-          contentLength: incoming.headers['content-length']
+          contentLength: incoming.headers['content-length'],
+          connection: outgoing.getHeader('connection')
         });
       });
       runtime.handle(incoming, outgoing);
@@ -251,6 +270,7 @@ describe('Cricket multipart requests', () => {
 
     let clientRequest = request(server)
       .post('/uploads')
+      .set('Connection', 'keep-alive')
       .attach('file', source, {
         filename: 'upload.zip',
         contentType: 'application/zip',
@@ -286,14 +306,15 @@ describe('Cricket multipart requests', () => {
       clientPromise
     ]);
     let hold = runtime.requests.pause();
-    await hold.idle();
-    hold.resume();
     source.end();
+    await hold.idle({ signal: t.signal });
+    hold.resume();
     let clientOutcome = await clientPromise;
     let tempEntries = await readdir(tempDir);
 
     assert.equal(finished.status, 404);
     assert.equal(finished.requestComplete, false);
+    assert.equal(finished.connection, 'keep-alive');
     assert.ok(Number(finished.contentLength) > 8);
     assert.deepEqual(responseBeforeBodyComplete, {
       kind: 'response',
@@ -306,6 +327,581 @@ describe('Cricket multipart requests', () => {
       body: { error: { code: 'NOT_FOUND', message: 'Build not found' } }
     });
     assert.deepEqual(tempEntries, []);
+  });
+
+  it('returns intact early responses for concurrent file-path uploads', async t => {
+    let tempDir = await mkdtemp(path.join(os.tmpdir(), 'cricket-concurrent-upload-'));
+    let uploadPath = path.join(tempDir, 'large-upload.zip');
+    await writeFile(uploadPath, Buffer.alloc(375_589, 'a'));
+    let rejectUpload = defineRule('rejectUpload', () => {
+      throw notFound('Build not found');
+    });
+    let runtime = await createCricketRuntime(defineManualTestApp({
+      logger() {},
+      endpoints: [defineEndpoint({
+        method: 'post',
+        path: '/uploads',
+        beforeBodyRules: [rejectUpload],
+        maxBodyBytes: 512 * 1024,
+        multipart: { maxBytes: 512 * 1024, tempDir },
+        handler: () => ok({ uploaded: true })
+      })]
+    }));
+    let server = http.createServer((incoming, outgoing) => runtime.handle(incoming, outgoing));
+    t.after(async () => {
+      server.closeAllConnections();
+      if (server.listening)
+        await new Promise(resolve => server.close(resolve));
+      await runtime.cleanup();
+      await rm(tempDir, { recursive: true, force: true });
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+
+    let responses = await Promise.all(Array.from({ length: 8 }, () => request(server)
+      .post('/uploads')
+      .attach('file', uploadPath)));
+
+    assert.deepEqual(responses.map(response => [response.status, response.body]),
+      Array.from({ length: 8 }, () => [404, { error: { code: 'NOT_FOUND', message: 'Build not found' } }]));
+    assert.deepEqual(await readdir(tempDir), ['large-upload.zip']);
+  });
+
+  it('keeps a keep-alive connection usable after draining an early rejection', async t => {
+    let ruleEntered = deferred();
+    let releaseRule = deferred();
+    let writes = 0;
+    let rejectUpload = defineRule('rejectUpload', async () => {
+      ruleEntered.resolve();
+      await releaseRule.promise;
+      throw notFound('Build not found');
+    });
+    let runtime = await createCricketRuntime(defineManualTestApp({
+      logger() {},
+      endpoints: [
+        defineEndpoint({
+          method: 'post',
+          path: '/uploads',
+          beforeBodyRules: [rejectUpload],
+          maxBodyBytes: 1024,
+          handler: () => ok({ uploaded: true })
+        }),
+        defineEndpoint({
+          method: 'get',
+          path: '/next',
+          handler() {
+            writes += 1;
+            return ok({ writes });
+          }
+        })
+      ]
+    }));
+    let server = http.createServer((incoming, outgoing) => runtime.handle(incoming, outgoing));
+    let agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+    t.after(async () => {
+      releaseRule.resolve();
+      agent.destroy();
+      server.closeAllConnections();
+      if (server.listening)
+        await new Promise(resolve => server.close(resolve));
+      await runtime.cleanup();
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    let origin = `http://127.0.0.1:${server.address().port}`;
+    let outgoing = http.request(`${origin}/uploads`, {
+      method: 'POST',
+      agent,
+      headers: {
+        Connection: 'keep-alive',
+        'Content-Length': '8'
+      }
+    });
+    outgoing.on('error', () => {});
+    let earlyResponse = readResponse(outgoing);
+    outgoing.write('a');
+    await ruleEntered.promise;
+    releaseRule.resolve();
+    let rejected = await earlyResponse;
+
+    assert.equal(rejected.status, 404);
+    assert.equal(rejected.headers.connection, 'keep-alive');
+    assert.deepEqual(JSON.parse(rejected.body), {
+      error: { code: 'NOT_FOUND', message: 'Build not found' }
+    });
+
+    let requestFinished = once(outgoing, 'finish');
+    outgoing.end('bcdefgh');
+    await requestFinished;
+    let nextResponse = await new Promise((resolve, reject) => {
+      let next = http.get(`${origin}/next`, { agent }, response => {
+        let chunks = [];
+        response.on('data', chunk => chunks.push(chunk));
+        response.once('end', () => resolve({
+          status: response.statusCode,
+          body: Buffer.concat(chunks).toString(),
+          reusedSocket: next.reusedSocket
+        }));
+        response.once('error', reject);
+      });
+      next.once('error', reject);
+    });
+
+    assert.equal(nextResponse.status, 200);
+    assert.deepEqual(JSON.parse(nextResponse.body), { writes: 1 });
+    assert.equal(nextResponse.reusedSocket, true);
+    assert.equal(writes, 1);
+  });
+
+  it('releases a request hold when a client aborts an early discard', async t => {
+    let tempDir = await mkdtemp(path.join(os.tmpdir(), 'cricket-aborted-discard-'));
+    let ruleEntered = deferred();
+    let releaseRule = deferred();
+    let socketClosed = deferred();
+    let rejectUpload = defineRule('rejectUpload', async () => {
+      ruleEntered.resolve();
+      await releaseRule.promise;
+      throw notFound('Build not found');
+    });
+    let runtime = await createCricketRuntime(defineManualTestApp({
+      logger() {},
+      endpoints: [defineEndpoint({
+        method: 'post',
+        path: '/uploads',
+        beforeBodyRules: [rejectUpload],
+        maxBodyBytes: 1024,
+        multipart: { maxBytes: 1024, tempDir },
+        handler: () => ok({ uploaded: true })
+      })]
+    }));
+    let server = http.createServer((incoming, outgoing) => {
+      incoming.socket.once('close', () => socketClosed.resolve());
+      runtime.handle(incoming, outgoing);
+    });
+    t.after(async () => {
+      releaseRule.resolve();
+      server.closeAllConnections();
+      if (server.listening)
+        await new Promise(resolve => server.close(resolve));
+      await runtime.cleanup();
+      await rm(tempDir, { recursive: true, force: true });
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    let outgoing = http.request(`http://127.0.0.1:${server.address().port}/uploads`, {
+      method: 'POST',
+      headers: {
+        Connection: 'close',
+        'Content-Length': '1000'
+      }
+    });
+    outgoing.on('error', () => {});
+    let earlyResponse = readResponse(outgoing);
+    outgoing.write('a');
+    await ruleEntered.promise;
+    releaseRule.resolve();
+    let response = await earlyResponse;
+    let hold = runtime.requests.pause();
+    let idle = hold.idle({ signal: t.signal });
+
+    assert.equal(response.status, 404);
+    outgoing.destroy();
+    await socketClosed.promise;
+    await idle;
+    hold.resume();
+    assert.deepEqual(await readdir(tempDir), []);
+  });
+
+  it('settles a stalled discard when the Node server request timeout closes it', async t => {
+    let socketClosed = deferred();
+    let rejectUpload = defineRule('rejectUpload', () => {
+      throw notFound('Build not found');
+    });
+    let runtime = await createCricketRuntime(defineManualTestApp({
+      logger() {},
+      endpoints: [defineEndpoint({
+        method: 'post',
+        path: '/uploads',
+        beforeBodyRules: [rejectUpload],
+        maxBodyBytes: 1024,
+        handler: () => ok({ uploaded: true })
+      })]
+    }));
+    let server = http.createServer({
+      connectionsCheckingInterval: 25,
+      requestTimeout: 250
+    }, (incoming, outgoing) => {
+      incoming.socket.once('close', () => socketClosed.resolve());
+      runtime.handle(incoming, outgoing);
+    });
+    t.after(async () => {
+      server.closeAllConnections();
+      if (server.listening)
+        await new Promise(resolve => server.close(resolve));
+      await runtime.cleanup();
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    let outgoing = http.request(`http://127.0.0.1:${server.address().port}/uploads`, {
+      method: 'POST',
+      headers: {
+        Connection: 'keep-alive',
+        'Content-Length': '1000'
+      }
+    });
+    outgoing.on('error', () => {});
+    let response = readResponse(outgoing);
+    outgoing.write('a');
+    let early = await response;
+    let hold = runtime.requests.pause();
+    let idle = hold.idle({ signal: t.signal });
+
+    assert.equal(early.status, 404);
+    await socketClosed.promise;
+    await idle;
+    hold.resume();
+  });
+
+  it('stops an early discard at the endpoint body limit', async t => {
+    let tempDir = await mkdtemp(path.join(os.tmpdir(), 'cricket-limited-discard-'));
+    let ruleEntered = deferred();
+    let releaseRule = deferred();
+    let socketClosed = deferred();
+    let rejectUpload = defineRule('rejectUpload', async () => {
+      ruleEntered.resolve();
+      await releaseRule.promise;
+      throw notFound('Build not found');
+    });
+    let runtime = await createCricketRuntime(defineManualTestApp({
+      logger() {},
+      endpoints: [defineEndpoint({
+        method: 'post',
+        path: '/uploads',
+        beforeBodyRules: [rejectUpload],
+        maxBodyBytes: 64,
+        multipart: { maxBytes: 64, tempDir },
+        handler: () => ok({ uploaded: true })
+      })]
+    }));
+    let server = http.createServer((incoming, outgoing) => {
+      incoming.socket.once('close', () => socketClosed.resolve());
+      runtime.handle(incoming, outgoing);
+    });
+    t.after(async () => {
+      releaseRule.resolve();
+      server.closeAllConnections();
+      if (server.listening)
+        await new Promise(resolve => server.close(resolve));
+      await runtime.cleanup();
+      await rm(tempDir, { recursive: true, force: true });
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    let outgoing = http.request(`http://127.0.0.1:${server.address().port}/uploads`, {
+      method: 'POST',
+      headers: {
+        Connection: 'keep-alive',
+        'Content-Length': '1000'
+      }
+    });
+    outgoing.on('error', () => {});
+    let earlyResponse = readResponse(outgoing);
+    outgoing.write(Buffer.alloc(65, 'a'));
+    await ruleEntered.promise;
+    releaseRule.resolve();
+    let response = await earlyResponse;
+
+    assert.equal(response.status, 404);
+    assert.deepEqual(JSON.parse(response.body), {
+      error: { code: 'NOT_FOUND', message: 'Build not found' }
+    });
+    await socketClosed.promise;
+    let hold = runtime.requests.pause();
+    await hold.idle({ signal: t.signal });
+    hold.resume();
+    assert.deepEqual(await readdir(tempDir), []);
+  });
+
+  it('counts parser-consumed bytes toward the discard limit', async t => {
+    let tempDir = await mkdtemp(path.join(os.tmpdir(), 'cricket-parser-limit-'));
+    let socketClosed = deferred();
+    let runtime = await createCricketRuntime(defineManualTestApp({
+      logger() {},
+      endpoints: [defineEndpoint({
+        method: 'post',
+        path: '/uploads',
+        maxBodyBytes: 128,
+        multipart: { maxBytes: 128, maxFieldBytes: 4, tempDir },
+        handler: () => ok({ uploaded: true })
+      })]
+    }));
+    let server = http.createServer((incoming, outgoing) => {
+      incoming.socket.once('close', () => socketClosed.resolve());
+      runtime.handle(incoming, outgoing);
+    });
+    t.after(async () => {
+      server.closeAllConnections();
+      if (server.listening)
+        await new Promise(resolve => server.close(resolve));
+      await runtime.cleanup();
+      await rm(tempDir, { recursive: true, force: true });
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    let initialBody = Buffer.from([
+      '--unused',
+      'Content-Disposition: form-data; name="field"',
+      '',
+      '0123456789',
+      '--unused--',
+      ''
+    ].join('\r\n'));
+    let outgoing = http.request(`http://127.0.0.1:${server.address().port}/uploads`, {
+      method: 'POST',
+      headers: {
+        Connection: 'close',
+        'Content-Type': 'multipart/form-data; boundary=unused'
+      }
+    });
+    outgoing.on('error', () => {});
+    let responsePromise = readResponse(outgoing);
+    outgoing.write(initialBody);
+    let response = await responsePromise;
+
+    assert.equal(response.status, 413);
+    assert.deepEqual(JSON.parse(response.body), {
+      error: { code: 'PAYLOAD_TOO_LARGE', message: 'Multipart field field exceeds 4 bytes' }
+    });
+    outgoing.write(Buffer.alloc(80, 'x'));
+    await socketClosed.promise;
+    let hold = runtime.requests.pause();
+    await hold.idle({ signal: t.signal });
+    hold.resume();
+    assert.deepEqual(await readdir(tempDir), []);
+  });
+
+  it('keeps an early validation response when the discarded body exceeds its limit', async t => {
+    let ruleEntered = deferred();
+    let releaseRule = deferred();
+    let socketClosed = deferred();
+    let rejectUpload = defineRule('rejectUpload', async () => {
+      ruleEntered.resolve();
+      await releaseRule.promise;
+      throw notFound('Build not found');
+    });
+    let runtime = await createCricketRuntime(defineManualTestApp({
+      logger() {},
+      endpoints: [defineEndpoint({
+        method: 'post',
+        path: '/uploads',
+        beforeBodyRules: [rejectUpload],
+        maxBodyBytes: 1,
+        multipart: { maxBytes: 1 },
+        handler: () => ok({ uploaded: true })
+      })]
+    }));
+    let server = http.createServer((incoming, outgoing) => {
+      incoming.socket.once('close', () => socketClosed.resolve());
+      runtime.handle(incoming, outgoing);
+    });
+    t.after(async () => {
+      releaseRule.resolve();
+      server.closeAllConnections();
+      if (server.listening)
+        await new Promise(resolve => server.close(resolve));
+      await runtime.cleanup();
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    let outgoing = http.request(`http://127.0.0.1:${server.address().port}/uploads`, {
+      method: 'POST',
+      headers: {
+        Connection: 'close',
+        'Content-Length': '1000'
+      }
+    });
+    outgoing.on('error', () => {});
+    let earlyResponse = readResponse(outgoing);
+    outgoing.write('too large');
+    await ruleEntered.promise;
+    releaseRule.resolve();
+    let response = await earlyResponse;
+
+    assert.equal(response.status, 404);
+    assert.deepEqual(JSON.parse(response.body), {
+      error: { code: 'NOT_FOUND', message: 'Build not found' }
+    });
+    await socketClosed.promise;
+  });
+
+  it('lets Node reject pipelined requests after a close-request upload before app side effects', async t => {
+    let parserError = deferred();
+    let ruleEntered = deferred();
+    let releaseRule = deferred();
+    let sideEffects = 0;
+    let rejectUpload = defineRule('rejectUpload', async () => {
+      ruleEntered.resolve();
+      await releaseRule.promise;
+      throw notFound('Build not found');
+    });
+    let runtime = await createCricketRuntime(defineManualTestApp({
+      logger() {},
+      endpoints: [
+        defineEndpoint({
+          method: 'post',
+          path: '/uploads',
+          beforeBodyRules: [rejectUpload],
+          maxBodyBytes: 1024,
+          handler: () => ok({ uploaded: true })
+        }),
+        defineEndpoint({
+          method: 'get',
+          path: '/side-effect',
+          handler() {
+            sideEffects += 1;
+            return ok({ sideEffects });
+          }
+        })
+      ]
+    }));
+    let server = http.createServer((incoming, outgoing) => runtime.handle(incoming, outgoing));
+    server.on('clientError', (error, clientSocket) => {
+      parserError.resolve(error.code);
+      clientSocket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
+    });
+    let socket;
+    t.after(async () => {
+      releaseRule.resolve();
+      socket?.destroy();
+      server.closeAllConnections();
+      if (server.listening)
+        await new Promise(resolve => server.close(resolve));
+      await runtime.cleanup();
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    let responseBytes = new Promise((resolve, reject) => {
+      let chunks = [];
+      socket = net.createConnection({
+        host: '127.0.0.1',
+        port: server.address().port
+      }, () => {
+        socket.write([
+          'POST /uploads HTTP/1.1',
+          'Host: localhost',
+          'Connection: close',
+          'Content-Length: 8',
+          '',
+          'a'
+        ].join('\r\n'));
+      });
+      socket.on('data', chunk => chunks.push(chunk));
+      socket.once('end', () => resolve(Buffer.concat(chunks).toString()));
+      socket.once('error', reject);
+    });
+    await ruleEntered.promise;
+    socket.write([
+      'bcdefghGET /side-effect HTTP/1.1',
+      'Host: localhost',
+      'Connection: close',
+      '',
+      ''
+    ].join('\r\n'));
+    releaseRule.resolve();
+    let response = await responseBytes;
+    let parserErrorCode = await parserError.promise;
+
+    assert.equal(parserErrorCode, 'HPE_CLOSED_CONNECTION');
+    assert.match(response, /^HTTP\/1\.1 404/);
+    assert.match(response, /Build not found/);
+    assert.equal(sideEffects, 0);
+  });
+
+  it('finishes an active streamed response after draining a close-request upload', async t => {
+    let responseReady = deferred();
+    let firstChunkSent = deferred();
+    let requestDrained = deferred();
+    let releaseResponseTail = deferred();
+    let runtime = await createCricketRuntime(defineManualTestApp({
+      logger() {},
+      middleware: [async (context, next) => {
+        if (context.request.path !== '/early')
+          return await next(context);
+
+        responseReady.resolve();
+        let body = Readable.from((async function* () {
+          yield 'streamed ';
+          firstChunkSent.resolve();
+          await releaseResponseTail.promise;
+          yield 'response body';
+        })());
+        return respond(418, body);
+      }]
+    }));
+    let server = http.createServer((incoming, outgoing) => {
+      incoming.once('end', () => requestDrained.resolve());
+      runtime.handle(incoming, outgoing);
+    });
+    let socket;
+    let headersReceived = deferred();
+    let firstResponseChunkReceived = deferred();
+    let responseBytes;
+    t.after(async () => {
+      releaseResponseTail.resolve();
+      socket?.destroy();
+      server.closeAllConnections();
+      if (server.listening)
+        await new Promise(resolve => server.close(resolve));
+      await runtime.cleanup();
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    responseBytes = new Promise((resolve, reject) => {
+      let chunks = [];
+      let receivedHeaders = false;
+      socket = net.createConnection({
+        host: '127.0.0.1',
+        port: server.address().port
+      }, () => {
+        socket.write([
+          'POST /early HTTP/1.1',
+          'Host: localhost',
+          'Connection: close',
+          'Content-Length: 8',
+          '',
+          'a'
+        ].join('\r\n'));
+      });
+      socket.on('data', chunk => {
+        chunks.push(chunk);
+        let text = Buffer.concat(chunks).toString();
+        let headerEnd = text.indexOf('\r\n\r\n');
+        if (headerEnd < 0)
+          return;
+
+        if (!receivedHeaders) {
+          receivedHeaders = true;
+          headersReceived.resolve(text.slice(0, headerEnd));
+        }
+
+        if (text.slice(headerEnd + 4).includes('streamed '))
+          firstResponseChunkReceived.resolve();
+      });
+      socket.once('end', () => resolve(Buffer.concat(chunks).toString()));
+      socket.once('error', reject);
+    });
+    await responseReady.promise;
+    let headers = await headersReceived.promise;
+    await firstChunkSent.promise;
+    await firstResponseChunkReceived.promise;
+    socket.write('bcdefgh');
+    await requestDrained.promise;
+    releaseResponseTail.resolve();
+    let response = await responseBytes;
+
+    assert.match(headers, /^HTTP\/1\.1 418/, response);
+    assert.match(headers, /Connection: keep-alive/i);
+    assert.match(response, /9\r\nstreamed \r\nd\r\nresponse body\r\n0\r\n\r\n$/);
   });
 
   it('stops active file writes and cleans up when a request aborts', async () => {

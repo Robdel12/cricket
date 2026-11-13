@@ -159,8 +159,11 @@ and owns cancellation and cleanup. Applications supply the source and expected
 length; they do not bypass the HTTP runtime to preserve download headers.
 
 Early request rejection must deliver the HTTP error even when the client is still uploading.
-The runtime owns response flushing and connection closure, without parsing rejected uploads
-or leaving a background drain waiting for their remaining bytes.
+The runtime owns response flushing and bounded discard of unread request bytes, without
+parsing rejected uploads or keeping their body in memory. Discard shares the endpoint's
+byte limit and stays in request cleanup until it ends or the connection closes, including
+on the host HTTP server's timeout. Valid keep-alive connections remain reusable; a requested
+close waits for both the response and request body before ending the connection.
 
 The runtime should expose capabilities deliberately at the phase that owns
 them, not imply one universal bag:

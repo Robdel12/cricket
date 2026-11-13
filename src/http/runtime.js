@@ -38,6 +38,7 @@ import {
   assertAllowedHost,
   completeRequestBody,
   createBaseRequest,
+  maxBodyBytesFor,
   safeRequestSnapshot
 } from './request.js';
 import { createRuntimeLifecycle } from './lifecycle.js';
@@ -590,7 +591,8 @@ function writeObservedResponse(writer, response, {
   request,
   requestId,
   route,
-  timing
+  timing,
+  maxBodyBytes
 }) {
   let onTerminal = async kind => {
     let finished = kind === 'finished';
@@ -608,7 +610,7 @@ function writeObservedResponse(writer, response, {
     await replay?.emit({ ...event, type: `response.${kind}` });
   };
 
-  let write = () => writer.write(response, { onTerminal });
+  let write = () => writer.write(response, { onTerminal, maxBodyBytes });
   if (timing)
     timing.time('responseMs', write);
   else
@@ -686,6 +688,20 @@ function createRuntimeHandler({
   middleware,
   requests
 }) {
+  let closingConnections = new WeakMap();
+
+  function markConnectionClosing(req) {
+    if (req.socket)
+      closingConnections.set(req.socket, req);
+  }
+
+  function connectionWillClose(req, res) {
+    let connection = String(req.headers?.connection ?? '')
+      .split(',')
+      .map(value => value.trim().toLowerCase());
+    return !res.shouldKeepAlive || connection.includes('close');
+  }
+
   async function execute(req, res, writer, completionContext, {
     expectContinue = false,
     unsupportedExpectation = false
@@ -726,7 +742,10 @@ function createRuntimeHandler({
     }
 
     function writeResponse(response, observation) {
-      writeObservedResponse(writer, response, observation);
+      writeObservedResponse(writer, response, {
+        ...observation,
+        maxBodyBytes: maxBodyBytesFor(routeEndpoint)
+      });
       completionContext.response = response;
     }
 
@@ -966,7 +985,19 @@ function createRuntimeHandler({
   }
 
   return function handle(req, res, options = {}) {
-    let writer = createResponseWriter(req, res);
+    let socket = req.socket;
+    let closingRequest = socket && closingConnections.get(socket);
+    if (closingRequest && closingRequest !== req) {
+      req.pause();
+      return;
+    }
+
+    if (connectionWillClose(req, res))
+      markConnectionClosing(req);
+
+    let writer = createResponseWriter(req, res, {
+      onCloseAfterCurrent: () => markConnectionClosing(req)
+    });
     let execution = requests.run(async () => {
       let errors = [];
       let completionContext = { logger, reportedErrors: new Map() };
@@ -996,7 +1027,7 @@ function createRuntimeHandler({
     // Paused requests never enter middleware, handlers, or the accepted set.
     writer.write(respond(503, {
       error: { code: 'SERVICE_UNAVAILABLE', message: 'The app is not accepting requests.' }
-    }));
+    }), { maxBodyBytes: maxBodyBytesFor(undefined) });
     return writer.complete().catch(error => {
       logRuntimeEvent(logger, 'error', 'http.response.failed', { error: safeErrorSnapshot(error) });
     });
