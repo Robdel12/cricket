@@ -7,8 +7,8 @@ import { pipeline } from 'node:stream/promises';
 import Busboy from 'busboy';
 
 import { badRequest, payloadTooLarge } from '../errors.js';
+import { defaultMaxBodyBytes, recordRequestBodyBytes } from './body-bytes.js';
 
-let defaultMaxBodyBytes = 10 * 1024 * 1024;
 let defaultMaxFieldBytes = 1024 * 1024;
 let defaultMaxFiles = 100;
 let defaultMaxFields = 1000;
@@ -37,8 +37,8 @@ function normalizeMultipartError(error) {
   return badRequest(error?.message || 'Invalid multipart request body');
 }
 
-function drainRequest(request) {
-  if (!request.destroyed) request.resume();
+function pauseRequest(request) {
+  if (!request.destroyed) request.pause();
 }
 
 /**
@@ -70,7 +70,7 @@ export async function parseMultipartBody(request, {
       }
     });
   } catch (error) {
-    drainRequest(request);
+    pauseRequest(request);
     throw normalizeMultipartError(error);
   }
 
@@ -88,6 +88,17 @@ export async function parseMultipartBody(request, {
   let settled = false;
   let failure = null;
   let failureCleanupPromise = null;
+  let onRequestData;
+  let onRequestAborted;
+  let onRequestClose;
+  let onRequestError;
+
+  function removeRequestListeners() {
+    request.off('data', onRequestData);
+    request.off('aborted', onRequestAborted);
+    request.off('close', onRequestClose);
+    request.off('error', onRequestError);
+  }
 
   let cleanup = async () => {
     await rm(directory, { recursive: true, force: true });
@@ -100,10 +111,11 @@ export async function parseMultipartBody(request, {
 
       settled = true;
       request.unpipe(parser);
+      pauseRequest(request);
       for (let stream of fileStreams)
         stream.destroy(failure);
       parser.destroy();
-      drainRequest(request);
+      removeRequestListeners();
 
       failureCleanupPromise = (async () => {
         await Promise.allSettled(fileWrites);
@@ -120,24 +132,30 @@ export async function parseMultipartBody(request, {
       void rejectAfterCleanup();
     };
 
-    request.on('data', chunk => {
+    onRequestData = chunk => {
+      recordRequestBodyBytes(request, chunk.length);
       if (settled) return;
       totalBytes += chunk.length;
       if (totalBytes > maxBytes) {
         rejectOnce(payloadTooLarge(`Request body exceeds ${maxBytes} bytes`, { maxBytes }));
       }
-    });
-    request.on('aborted', () => {
+    };
+    onRequestAborted = () => {
       rejectOnce(badRequest('Request aborted'));
-    });
-    request.on('close', () => {
+    };
+    onRequestClose = () => {
       if (!request.complete) {
         rejectOnce(badRequest('Request closed before the body was complete'));
       }
-    });
-    request.on('error', error => {
+    };
+    onRequestError = error => {
       rejectOnce(error);
-    });
+    };
+
+    request.on('data', onRequestData);
+    request.on('aborted', onRequestAborted);
+    request.on('close', onRequestClose);
+    request.on('error', onRequestError);
 
     parser.on('field', (name, value, info) => {
       if (info.valueTruncated) {
@@ -220,6 +238,7 @@ export async function parseMultipartBody(request, {
         }
 
         settled = true;
+        removeRequestListeners();
         resolve({ body, files, cleanup });
       } catch (error) {
         rejectOnce(error);

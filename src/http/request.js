@@ -3,8 +3,8 @@ import {
   payloadTooLarge
 } from '../errors.js';
 import { parseMultipartBody } from './multipart.js';
+import { defaultMaxBodyBytes, recordRequestBodyBytes } from './body-bytes.js';
 
-let defaultMaxBodyBytes = 10 * 1024 * 1024;
 let securityHeaderNames = [
   'authorization',
   'cookie'
@@ -375,7 +375,7 @@ export function assertAllowedHost(request, allowedHosts) {
   throw badRequest('Host not allowed');
 }
 
-function maxBodyBytesFor(endpoint) {
+export function maxBodyBytesFor(endpoint) {
   return endpoint?.maxBodyBytes
     ?? endpoint?.rawBody?.maxBytes
     ?? endpoint?.multipart?.maxBytes
@@ -461,41 +461,57 @@ export function readRequestBody(req, {
     let totalBytes = 0;
     let settled = false;
 
+    function cleanup() {
+      req.off('data', onData);
+      req.off('end', onEnd);
+      req.off('aborted', onAborted);
+      req.off('close', onClose);
+      req.off('error', onError);
+    }
+
     function finish(callback, value) {
       if (settled)
         return;
 
       settled = true;
+      cleanup();
       callback(value);
     }
 
-    req.on('data', chunk => {
+    let onData = chunk => {
       let buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       totalBytes += buffer.length;
+      recordRequestBodyBytes(req, buffer.length);
 
       if (totalBytes > maxBytes) {
         finish(reject, payloadTooLarge(`Request body exceeds ${maxBytes} bytes`, {
           maxBytes
         }));
-        req.resume();
+        req.pause();
         return;
       }
 
       chunks.push(buffer);
-    });
+    };
 
-    req.on('end', () => {
+    let onEnd = () => {
       finish(resolve, Buffer.concat(chunks));
-    });
+    };
 
-    req.on('aborted', () => {
+    let onAborted = () => {
       finish(reject, badRequest('Request aborted'));
-    });
-    req.on('close', () => {
+    };
+    let onClose = () => {
       if (!req.complete)
         finish(reject, badRequest('Request closed before the body was complete'));
-    });
-    req.on('error', error => finish(reject, error));
+    };
+    let onError = error => finish(reject, error);
+
+    req.on('data', onData);
+    req.on('end', onEnd);
+    req.on('aborted', onAborted);
+    req.on('close', onClose);
+    req.on('error', onError);
   });
 }
 

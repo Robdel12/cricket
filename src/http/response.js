@@ -1,6 +1,11 @@
 import { Readable, Transform } from 'node:stream';
 import { finished, pipeline } from 'node:stream/promises';
 import {
+  defaultMaxBodyBytes,
+  recordRequestBodyBytes,
+  requestBodyBytes
+} from './body-bytes.js';
+import {
   validateHeaderName,
   validateHeaderValue
 } from 'node:http';
@@ -512,11 +517,23 @@ export function safeResponseSnapshot(response = {}, options = {}) {
  * Writing starts synchronously so preparation failures can still produce an
  * error response. Completion is joined separately after that response path.
  */
-export function createResponseWriter(req, res) {
+function hasConnectionToken(value, token) {
+  let values = Array.isArray(value) ? value : [value];
+  return values.some(value => String(value ?? '')
+    .split(',')
+    .some(part => part.trim().toLowerCase() === token));
+}
+
+export function createResponseWriter(req, res, {
+  onCloseAfterCurrent
+} = {}) {
   let terminal;
   let end;
   let terminated = new Promise(resolve => { end = resolve; });
   let pending = [];
+  let socket = req.socket;
+  let requestWantsClose = !res.shouldKeepAlive ||
+    hasConnectionToken(req.headers?.connection, 'close');
 
   function terminate(kind) {
     if (terminal)
@@ -559,12 +576,89 @@ export function createResponseWriter(req, res) {
     body.destroy();
   }
 
+  function discardRequest(maxBodyBytes) {
+    if (req.complete)
+      return Promise.resolve('end');
+
+    if (req.destroyed || req.aborted)
+      return Promise.resolve('aborted');
+
+    let bytes = requestBodyBytes(req);
+    if (bytes > maxBodyBytes) {
+      req.pause();
+      return Promise.resolve('limit');
+    }
+
+    return new Promise(resolve => {
+      let settled = false;
+
+      function finish(reason) {
+        if (settled)
+          return;
+
+        settled = true;
+        req.off('data', onData);
+        req.off('end', onEnd);
+        req.off('aborted', onAbort);
+        req.off('close', onClose);
+        req.off('error', onError);
+        socket?.off('close', onSocketClose);
+        resolve(reason);
+      }
+
+      let onData = chunk => {
+        recordRequestBodyBytes(req, chunk.length);
+        bytes += chunk.length;
+        if (bytes > maxBodyBytes) {
+          req.pause();
+          finish('limit');
+        }
+      };
+      let onEnd = () => finish('end');
+      let onAbort = () => finish('aborted');
+      let onClose = () => {
+        if (!req.complete)
+          finish('aborted');
+      };
+      let onError = () => finish('aborted');
+      let onSocketClose = () => finish('aborted');
+
+      req.on('data', onData);
+      req.once('end', onEnd);
+      req.once('aborted', onAbort);
+      req.once('close', onClose);
+      req.once('error', onError);
+      socket?.once('close', onSocketClose);
+
+      if (req.complete)
+        finish('end');
+      else if (requestBodyBytes(req) > maxBodyBytes) {
+        req.pause();
+        finish('limit');
+      } else
+        req.resume();
+    });
+  }
+
+  function closeAfterRequest(drain, finishKind) {
+    let cleanup = Promise.all([terminated, drain]).then(([responseKind, bodyKind]) => {
+      if (responseKind !== 'finished' || socket?.destroyed)
+        return;
+
+      if (bodyKind === 'limit')
+        socket.destroy();
+      else if (finishKind)
+        socket.end();
+    });
+    own(cleanup);
+  }
+
   function cleanup(response, immediately = false) {
     if (typeof response?.onClose === 'function')
       own((immediately ? Promise.resolve() : terminated).then(() => response.onClose()));
   }
 
-  function write(response, { onTerminal } = {}) {
+  function write(response, { onTerminal, maxBodyBytes } = {}) {
     let prepared;
 
     try {
@@ -587,14 +681,45 @@ export function createResponseWriter(req, res) {
       return;
     }
 
-    if (!req.complete && !req.destroyed) {
-      res.shouldKeepAlive = false;
-      res.setHeader('connection', 'close');
-    }
+    let responseWantsClose = Object.entries(prepared.headers).some(([name, value]) =>
+      name.toLowerCase() === 'connection' && hasConnectionToken(value, 'close'));
+    let drain;
+    let closeCurrent = requestWantsClose || responseWantsClose;
+    let incompleteRequest = !req.complete && !req.destroyed;
+
+    if (incompleteRequest && closeCurrent)
+      onCloseAfterCurrent?.();
 
     res.statusCode = prepared.status;
     for (let [name, value] of Object.entries(prepared.headers))
       res.setHeader(name, value);
+
+    if (incompleteRequest) {
+      // Keep the response alive until the request body is drained. Node closes
+      // a response marked Connection: close as soon as its response bytes flush.
+      res.shouldKeepAlive = true;
+      res.setHeader('connection', 'keep-alive');
+
+      if (!req.complete && !req.destroyed) {
+        drain = discardRequest(maxBodyBytes ?? defaultMaxBodyBytes);
+        own(drain);
+        own(drain.then(reason => {
+          if (reason === 'limit')
+            return terminated.then(kind => {
+              if (kind === 'finished' && !socket?.destroyed)
+                socket.destroy();
+            });
+        }));
+      } else
+        drain = Promise.resolve('end');
+
+      if (closeCurrent)
+        closeAfterRequest(drain, true);
+    } else if (closeCurrent) {
+      onCloseAfterCurrent?.();
+      res.shouldKeepAlive = false;
+      res.setHeader('connection', 'close');
+    }
 
     let noBody = response?.redirect || [204, 205, 304].includes(prepared.status);
     if (noBody || req.method === 'HEAD') {

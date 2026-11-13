@@ -674,8 +674,13 @@ accepts an upload. These rules receive request headers, route parameters, and ap
 parsed body. Their returned facts are available to the endpoint's remaining rules and handler.
 
 A rejected upload can receive its error response before sending the entire body. Cricket
-flushes that response before closing the unread connection; no multipart files are created.
-If the client disconnects while a rule runs, body parsing rejects once the rule finishes.
+discards the remaining bytes without storing them, within the endpoint's body limit. This
+discard remains part of the accepted request until the body ends, the client disconnects,
+the limit is exceeded, or the host HTTP server closes the connection on timeout. Keep the
+host's request timeout enabled. Reusable connections can serve another request after the
+body ends; connections requested closed finish the response and discard before closing.
+No multipart files are created when a before-body rule rejects the upload. If the client
+disconnects while a rule runs, body parsing rejects once the rule finishes.
 
 ## Database
 
@@ -1099,10 +1104,10 @@ control operations outside the paused runtime so they do not block themselves.
 Paused responses do not run app middleware or acquire its computed headers.
 
 Idle includes awaited middleware, handlers, error hooks, response streams,
-asynchronous `withResponseCleanup` callbacks, and terminal observers. A client
-disconnect does not cancel an in-flight write: Cricket keeps owning that work
-until it settles. Ordinary client stream cancellation does not fail draining
-when cleanup succeeds. Producer and cleanup errors are logged and passed to
+bounded discard of unread request bodies, asynchronous `withResponseCleanup`
+callbacks, and terminal observers. A client disconnect does not cancel an
+in-flight write: Cricket keeps owning that work until it settles. Ordinary client
+stream cancellation does not fail draining when cleanup succeeds. Producer and cleanup errors are logged and passed to
 `onError`, then reject the next relevant idle or cleanup boundary. Once that
 boundary reports them, later holds do not repeat the same errors.
 
