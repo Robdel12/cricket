@@ -368,6 +368,9 @@ describe('Cricket CLI', () => {
     }
     assert.match(testingSkill, /compare generated OpenAPI with actual HTTP/);
     assert.match(cricketSkill, /name: cricket/);
+    assert.match(cricketSkill, /Content-Length/);
+    assert.match(cricketSkill, /checks the byte count/);
+    assert.match(cricketSkill, /HEAD/);
     assert.match(cricketSkill, /Domain Files/);
     assert.match(cricketSkill, /normalizers/);
     assert.match(cricketSkill, /API versioning is endpoint-owned and opt-in/);

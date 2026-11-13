@@ -1,5 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import { get } from 'node:http';
 import { PassThrough, Readable } from 'node:stream';
 import request from 'supertest';
 
@@ -222,16 +224,193 @@ describe('Cricket HTTP responses', () => {
   });
 
   it('destroys stream bodies when response preparation fails', async () => {
-    let stream = new PassThrough();
-    let response = await responseForHandlerResult(withHeaders(
-      ok(stream),
-      {
-        'Content-Length': '12'
-      }
-    ));
+    for (let length of ['invalid', '-1', '1.5', '9007199254740992', ['1', '1']]) {
+      let stream = new PassThrough();
+      let response = await responseForHandlerResult(withHeaders(
+        ok(stream),
+        { 'Content-Length': length }
+      ));
 
-    assertInternalErrorResponse(response);
-    assert.equal(stream.destroyed, true);
+      assertInternalErrorResponse(response);
+      assert.equal(stream.destroyed, true);
+    }
+  });
+
+  it('streams a known byte length and preserves metadata for GET and HEAD', async () => {
+    let sources = [];
+    let cleanups = 0;
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/download',
+      handler() {
+        let source = Readable.from(['ca', 'fé']);
+        sources.push(source);
+        return withResponseCleanup(withHeaders(ok(source), {
+          'Content-Length': String(Buffer.byteLength('café')),
+          'Content-Type': 'text/plain; charset=utf-8'
+        }), () => { cleanups++; });
+      }
+    });
+    let app = await createHttpApp({ endpoints: [endpoint] });
+    let response = await request(app).get('/download');
+    let head = await request(app).head('/download');
+
+    assert.equal(response.status, 200);
+    assert.equal(response.text, 'café');
+    assert.equal(response.headers['content-length'], '5');
+    assert.equal(response.headers['transfer-encoding'], undefined);
+    assert.equal(head.status, 200);
+    assert.equal(head.headers['content-length'], '5');
+    assert.equal(head.text, undefined);
+    assert.equal(cleanups, 2);
+    assert(sources.every(source => source.destroyed));
+  });
+
+  it('closes known-length responses that end early or exceed their declared byte length', async () => {
+    for (let { length, chunks } of [
+      { length: 6, chunks: ['abc'] },
+      { length: 2, chunks: ['abc'] },
+      { length: 4, chunks: ['ab', 'cde'] },
+      { length: 3, chunks: ['abc', 'extra'] }
+    ]) {
+      let source = Readable.from(chunks);
+      let cleaned = Promise.withResolvers();
+      let response = withResponseCleanup(withHeaders(ok(source), {
+        'Content-Length': String(length),
+        'Content-Type': 'text/plain'
+      }), cleaned.resolve);
+      await assert.rejects(responseForHandlerResult(response));
+      await cleaned.promise;
+      assert.equal(source.destroyed, true);
+    }
+  });
+
+  it('delivers partial known-length data before the source finishes', async () => {
+    let source = new PassThrough();
+    let started = Promise.withResolvers();
+    let firstChunk = Promise.withResolvers();
+    let completed = Promise.withResolvers();
+    let chunks = [];
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/progress',
+      handler() {
+        started.resolve();
+        return withHeaders(ok(source), {
+          'Content-Length': '6',
+          'Content-Type': 'text/plain'
+        });
+      }
+    });
+    let app = await createHttpApp({ endpoints: [endpoint] });
+    let server = app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    let client = get(`http://127.0.0.1:${server.address().port}/progress`, response => {
+      response.on('data', chunk => {
+        chunks.push(chunk);
+        firstChunk.resolve(chunk);
+      });
+      response.on('end', completed.resolve);
+      response.on('error', completed.reject);
+    });
+    client.on('error', error => {
+      firstChunk.reject(error);
+      completed.reject(error);
+    });
+    let observersSettled = Promise.allSettled([firstChunk.promise, completed.promise]);
+
+    try {
+      await started.promise;
+      source.write('abc');
+      assert.equal((await firstChunk.promise).toString(), 'abc');
+      source.end('def');
+      await completed.promise;
+      assert.equal(Buffer.concat(chunks).toString(), 'abcdef');
+    } finally {
+      source.destroy();
+      client.destroy();
+      await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      await observersSettled;
+    }
+  });
+
+  it('does not complete a known-length response when its source errors after the declared bytes', async () => {
+    let source = new PassThrough();
+    let handlerStarted = Promise.withResolvers();
+    let responseStarted = Promise.withResolvers();
+    let firstChunk = Promise.withResolvers();
+    let exactByteCount = Promise.withResolvers();
+    let responseClosed = Promise.withResolvers();
+    let chunks = [];
+    let ended = false;
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/failing-download',
+      handler() {
+        handlerStarted.resolve();
+        return withHeaders(ok(source), {
+          'Content-Length': '6',
+          'Content-Type': 'text/plain'
+        });
+      }
+    });
+    let app = await createHttpApp({ endpoints: [endpoint] });
+    let server = app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    let client;
+
+    try {
+      client = get(`http://127.0.0.1:${server.address().port}/failing-download`, response => {
+        responseStarted.resolve(response);
+        response.on('data', chunk => {
+          chunks.push(chunk);
+          firstChunk.resolve();
+        });
+        response.once('end', () => {
+          ended = true;
+          responseClosed.resolve();
+        });
+        response.once('close', responseClosed.resolve);
+        response.once('aborted', responseClosed.resolve);
+        response.once('error', responseClosed.resolve);
+      });
+      client.on('error', responseClosed.resolve);
+
+      await handlerStarted.promise;
+      source.write('abc');
+      let response = await responseStarted.promise;
+      await firstChunk.promise;
+      let sourceBytes = 3;
+      source.on('data', chunk => {
+        sourceBytes += chunk.length;
+        if (sourceBytes === 6) exactByteCount.resolve();
+      });
+      source.write('def');
+      await exactByteCount.promise;
+      source.destroy(new Error('source failed after the declared byte count'));
+      await responseClosed.promise;
+
+      assert.equal(response.headers['content-length'], '6');
+      assert.equal(response.complete, false);
+      assert.equal(ended, false);
+      assert.equal(Buffer.concat(chunks).toString(), 'abc');
+    } finally {
+      source.destroy();
+      client?.destroy();
+      await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('serves an empty known-length stream', async () => {
+    let source = Readable.from([]);
+    let response = await responseForHandlerResult(withHeaders(ok(source), {
+      'Content-Length': '0',
+      'Content-Type': 'text/plain'
+    }));
+    assert.equal(response.status, 200);
+    assert.equal(response.headers['content-length'], '0');
+    assert.equal(response.text, '');
+    assert.equal(source.destroyed, true);
   });
 
   it('threads response-shaped rule facts without treating them as responses', async () => {

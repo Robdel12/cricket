@@ -476,7 +476,7 @@ test('response preparation and discarded HEAD streams still join asynchronous cl
   let endpoints = ['invalid', 'head'].map(name => defineEndpoint({
     method: 'get', path: `/${name}`, handler() {
       let response = ok(Readable.from(['unused']));
-      if (name === 'invalid') response = withHeaders(response, { 'content-length': '7' });
+      if (name === 'invalid') response = withHeaders(response, { 'content-length': 'invalid' });
       return withResponseCleanup(response, async () => {
         entered.resolve();
         await release.promise;
@@ -497,6 +497,69 @@ test('response preparation and discarded HEAD streams still join asynchronous cl
   await idle;
   assert.deepEqual(events, ['invalid', 'head']);
   hold.resume();
+});
+
+test('aborted known-length streams destroy their source and join cleanup before request drain', async t => {
+  let source = new PassThrough();
+  let handlerStarted = deferred();
+  let cleanupEntered = deferred();
+  let releaseCleanup = deferred();
+  let events = [];
+  let endpoint = defineEndpoint({
+    method: 'get',
+    path: '/download',
+    handler() {
+      handlerStarted.resolve();
+      return withResponseCleanup(withHeaders(ok(source), {
+        'Content-Length': String(Buffer.byteLength('partial download')),
+        'Content-Type': 'application/octet-stream'
+      }), async () => {
+        cleanupEntered.resolve();
+        await releaseCleanup.promise;
+        events.push('response cleanup');
+      });
+    }
+  });
+  let harness = await createTestRuntime(appWith([endpoint]));
+  let hold;
+  t.after(async () => {
+    releaseCleanup.resolve();
+    hold?.resume();
+    source.destroy();
+    await harness.cleanup();
+  });
+
+  let pending = streamRequest(new URL('/download', harness.origin).toString());
+  await handlerStarted.promise;
+  source.write('partial');
+  let response = await pending.started;
+  let responseClosed = new Promise(resolve => response.once('close', resolve));
+  await pending.first;
+  pending.outgoing.destroy();
+  await responseClosed;
+  await cleanupEntered.promise;
+
+  assert.equal(response.complete, false);
+  assert.equal(source.destroyed, true);
+  hold = harness.runtime.requests.pause();
+  let idle = hold.idle();
+  assert.deepEqual(events, []);
+  let beforeCleanup = await Promise.race([
+    (async () => {
+      await idle;
+      return 'drained';
+    })(),
+    (async () => {
+      assert.equal((await harness.api.get('/download')).status, 503);
+      return 'admission closed';
+    })()
+  ]);
+  assert.equal(beforeCleanup, 'admission closed');
+  releaseCleanup.resolve();
+  await idle;
+  assert.deepEqual(events, ['response cleanup']);
+  hold.resume();
+  hold = undefined;
 });
 
 test('terminal observers and awaited middleware unwind remain inside a request hold', async t => {

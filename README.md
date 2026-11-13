@@ -611,6 +611,12 @@ return withResponseCleanup(
 );
 ```
 
+For a file with a known byte length, set `Content-Length` alongside the stream.
+Cricket forwards chunks with backpressure and checks the declared size. A short
+or oversized source closes the response and runs its cleanup. HEAD preserves the
+length without reading the source. Leave the header out for open-ended streams.
+See [`examples/known-length-stream.js`](examples/known-length-stream.js).
+
 When a catch returns a friendly error response, retain its exception with
 `withError`:
 
