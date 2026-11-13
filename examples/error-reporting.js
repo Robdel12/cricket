@@ -2,6 +2,7 @@ import {
   defineCricketApp,
   defineEndpoint,
   respond,
+  startCricketApp,
   withError,
   z
 } from '../src/index.js';
@@ -21,14 +22,16 @@ export let app = defineCricketApp({
       }
     })]
   }],
-  onError(error, { request, response, route, handled }) {
+  onError(error, { logger, request, response, route, handled }) {
     // Replace this callback with sentryErrorHandler(Sentry) for Sentry reporting.
-    console.error('provider.failure', {
+    logger.error('provider.failure', {
       name: error.name,
-      requestId: request.id,
+      requestId: request?.id,
       operation: route?.operationId,
-      status: response.status,
+      status: response?.status,
       handled
     });
   }
 });
+
+await startCricketApp(app, { main: import.meta.url, port: process.env.PORT || 3000 });

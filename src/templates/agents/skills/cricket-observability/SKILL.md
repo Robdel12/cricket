@@ -28,23 +28,28 @@ Use this when a change touches how a Cricket app explains itself.
   those fields to measure compatibility usage; never log unsupported raw header
   values.
 
-## Error reporting
+## HTTP error reporting
 
-- Configure app `onError(error, { request, response, route, handled, phase })` once.
-  It receives original thrown HTTP errors and handled failures marked with
-  `withError(respond(status, safeBody), error)`. The original error is private;
-  attaching it does not expose it to the client or freeze it.
-- For Sentry, import `sentryErrorHandler` from `@robdel12/cricket/sentry` and pass
-  the app-owned SDK. The adapter adds request IDs and matched route templates,
-  and skips ordinary 4xx failures. Keep raw paths, credentials, payloads, and
-  query values out of extras.
+- Configure app `onError` once. Its context includes the request, selected response,
+  matched route, request logger, `handled` flag, and `phase` (`request` or `response`).
+  Request/response/route may be absent when a failure precedes their construction.
+- Use `withError(respond(status, safeBody), error)` for deliberately handled errors.
+  It retains the original exception privately without freezing it or bypassing
+  response validation. Declare distinct error schemas in `responses`.
+- `sentryErrorHandler` from `@robdel12/cricket/sentry` uses an app-owned SDK. It
+  skips request-phase 4xx and reports later writing/cleanup failures even after
+  200 or 400. Each error identity is reported once per request phase.
+- The adapter adds request IDs, route templates, method, operation, and status.
+  It adds no raw paths, credentials, query values, or payloads. Original exception
+  messages, properties, and causes still require app/SDK scrubbing.
 - Apps own SDK initialization and environment policy. Flush in setup cleanup
-  after requests drain, not `onShutdown`, which runs before draining.
-- A returned 500 without an attached error carries no original exception. Do not
-  infer errors from response bodies or duplicate capture calls in route wrappers.
-- Later stream/cleanup errors use `phase: 'response'`, including responses already
-  sent with 200. Background jobs keep their existing failure hooks.
-- `cricket inspect` shows whether `onError` is configured.
+  after HTTP work drains and app resources are released, using `finally` when
+  resource cleanup can fail. `onShutdown` runs before draining; Cricket's
+  configured database is destroyed after setup cleanup. Jobs and detached work
+  keep their own failure hooks and shutdown ordering.
+- A plain returned 500 has no exception to report. Use the hook and response
+  helper rather than adding capture calls to each wrapper. `cricket inspect`
+  shows whether reporting is configured.
 
 ## Trace
 

@@ -178,7 +178,9 @@ if (process.env.NODE_ENV !== 'test')
 
 `setup` returns `undefined` or one explicit object with `dependencies`,
 `services`, and `cleanup`. Cricket adds its configured `db` to dependencies;
-apps must not return a second `db`.
+apps must not return a second `db`. Setup runs when the runtime is created, not
+when CLI commands import the app definition. Cleanup runs after accepted HTTP
+work drains and before Cricket destroys its configured database connection.
 
 Capabilities follow the runtime phase that owns them. Setup receives the app,
 database, lifecycle, logger, and a no-op startup trace. Domain services, the
@@ -566,9 +568,10 @@ Only Cricket's response functions control HTTP transport details, so a domain
 object containing fields such as `status`, `headers`, or `redirect` stays a
 normal JSON body.
 
-Request validation failures may include useful issues for API clients. Response,
-serializer, and normalizer contract failures remain detailed in logs and
-`onError`, but their HTTP response is a redacted internal error.
+Throw framework errors such as `badRequest` for invalid input. Cricket maps error
+codes to HTTP statuses; an arbitrary error's `status` property does not choose its
+response. Request validation can explain invalid input to clients. Response,
+serializer, and normalizer failures stay internal and return a redacted 500.
 
 ```js
 import {
@@ -576,6 +579,7 @@ import {
   redirect,
   respond,
   withCookies,
+  withError,
   withHeaders,
   withResponseCleanup
 } from '@robdel12/cricket';
@@ -607,17 +611,10 @@ return withResponseCleanup(
 );
 ```
 
-### Error reporting
-
-Configure `onError(error, { request, response, route, handled, phase })` once per
-app. Cricket calls it for thrown HTTP failures and errors attached to responses
-with `withError`. The original error stays private and is preserved through
-headers, cookies, response validation, and serializers. It is never added to the
-response body. Reporter failures are logged without changing the client response.
+When a catch returns a friendly error response, retain its exception with
+`withError`:
 
 ```js
-import { respond, withError } from '@robdel12/cricket';
-
 try {
   return await loadImage();
 } catch (error) {
@@ -625,37 +622,11 @@ try {
 }
 ```
 
-Use framework errors such as `badRequest` for invalid input. An arbitrary error's
-`status` property does not choose its HTTP status. `withError` needs an explicit
-error response (400–599); a plain error body alone carries no exception to report.
-
-The optional Sentry adapter uses your initialized SDK, with no Sentry dependency
-or process handlers added by Cricket:
-
-```js
-import * as Sentry from '@sentry/node';
-import { sentryErrorHandler } from '@robdel12/cricket/sentry';
-
-Sentry.init({ dsn: process.env.SENTRY_DSN, environment: process.env.NODE_ENV });
-
-let app = defineCricketApp({
-  domains: './domains',
-  onError: sentryErrorHandler(Sentry),
-  setup() {
-    return { cleanup: () => Sentry.flush(2000) };
-  }
-});
-```
-
-The adapter skips ordinary 4xx failures and forwards original exceptions with
-request ID, method, matched route template, and status. It adds no raw paths,
-headers, cookies, query values, or bodies. Successful responses with later stream/cleanup failures are
-still reported (`phase: 'response'`). Apps own SDK initialization, environment
-policy, and flushing in setup cleanup after requests drain; `onShutdown` runs
-before draining. Existing setup cleanup should flush after releasing app resources.
-Background jobs and detached work keep their existing failure hooks; this API
-reports errors owned by the HTTP runtime. See
-[`examples/error-reporting.js`](examples/error-reporting.js) for a complete example.
+`withError` accepts explicit 400–599 responses and keeps the error outside the
+body. It survives headers, cookies, and valid response projections, but never
+bypasses validation. Declare distinct success/error bodies with status-specific
+`responses`; a mismatched body still produces a contract failure and 500.
+[Configure HTTP reporting](#http-error-reporting) once on the app.
 
 ### Multipart requests
 
@@ -696,12 +667,6 @@ Use `beforeBodyRules` for authentication and other inexpensive checks that must 
 accepts an upload. These rules receive request headers, route parameters, and app context, but no
 parsed body. Their returned facts are available to the endpoint's remaining rules and handler.
 If the client disconnects while a rule runs, body parsing rejects once the rule finishes.
-
-Use `ok(body)` for 200, `created(body)` for 201, and `respond(status, body)` for
-other statuses. Compose `withHeaders`, `withCookies`, and
-`withResponseCleanup` around an explicit response. Streams and buffers remain
-ordinary body values; the helpers add transport intent without wrapping them in
-a mutable response builder.
 
 ## Database
 
@@ -1001,8 +966,11 @@ history; recovery does not require it.
 
 ## Observability
 
-Cricket provides one logger shape, request/job events, sparse timings, trace
-spans, and lifecycle state.
+Cricket supplies structured logs, request/job traces, HTTP error reporting, and
+lifecycle state. `cricket inspect` shows which observers and error hook are
+configured.
+
+### Logging and tracing
 
 ```js
 export let app = defineCricketApp({
@@ -1049,6 +1017,56 @@ job execution, and shutdown hooks. Worker runtimes expose it for worker
 entrypoints. Product health checks still decide whether the app is ready for
 traffic.
 
+### HTTP error reporting
+
+Set `onError` on the app to report thrown HTTP failures and errors attached with
+`withError`. The hook receives the original exception and request-scoped context:
+
+| Context | Meaning |
+| --- | --- |
+| `request`, `response` | The request and selected response, when available. |
+| `route` | Matched method, path template, and operation ID; absent before matching. |
+| `handled` | `true` when the error came from `withError`. |
+| `phase` | `request` during execution; `response` for later writing or cleanup failures. |
+| `logger` | Cricket's logger for this request. |
+
+The hook may be async. Cricket awaits it and logs reporter failures without
+changing the response. An error is reported once per request phase: cleanup is a
+separate failure even if it reuses an earlier exception. Attaching an error does
+not serialize or freeze it. A plain 500 body carries no exception to report.
+
+For Sentry, pass your SDK to the optional adapter. This exception-reporting example
+initializes it in setup, keeping CLI inspection free of SDK initialization:
+
+```js
+import { defineCricketApp } from '@robdel12/cricket';
+import { sentryErrorHandler } from '@robdel12/cricket/sentry';
+import * as Sentry from '@sentry/node';
+
+export let app = defineCricketApp({
+  domains: './domains',
+  onError: sentryErrorHandler(Sentry),
+  setup() {
+    Sentry.init({ dsn: process.env.SENTRY_DSN, environment: process.env.NODE_ENV });
+    return { cleanup: () => Sentry.flush(2000) };
+  }
+});
+```
+
+Cricket adds no Sentry dependency or process handlers. Apps own SDK options,
+environment policy, and scrubbing. Initialize automatic instrumentation in your
+startup entrypoint before loading app dependencies if you use it.
+
+The adapter skips request-phase 4xx failures and reports every response-phase
+failure, including cleanup after a 200 or 400. It adds method, status, operation
+ID, request ID, and a matched route template. It adds no raw paths, headers,
+cookies, query values, or bodies. Original exceptions can contain sensitive
+messages, custom properties, or causes; the SDK's filtering policy owns those.
+
+SDK flushing follows the [normal cleanup order](#pausing-requests-and-stopping-servers).
+Background jobs and detached work keep their own failure hooks. See the
+[custom hook example](examples/error-reporting.js).
+
 ### Pausing requests and stopping servers
 
 `createCricketRuntime(app)` resolves when app assembly is ready.
@@ -1083,9 +1101,10 @@ boundary reports them, later holds do not repeat the same errors.
 setup dependencies once. For a server from `startCricketApp`, use `stop(signal)`:
 it also stops listening and calls `onShutdown({ signal, ...runtime })` before
 waiting for requests. That hook must stop independent producers and end long
-streams; dependency destruction belongs in setup's `cleanup`. Cleanup still
-attempts its remaining steps after failures and preserves their errors. A
-resumed hold cannot reopen a stopped runtime.
+streams. Setup cleanup then releases app resources and flushes reporting SDKs;
+use `finally` to flush even if resource cleanup fails. Cricket destroys its
+configured database afterward. Cleanup attempts remaining steps after failures
+and preserves their errors. A resumed hold cannot reopen a stopped runtime.
 
 Request holds leave `lifecycle` ready; product health and maintenance policy
 remain app decisions. Detached promises, jobs, queues, database reset policy,

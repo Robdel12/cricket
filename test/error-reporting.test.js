@@ -16,6 +16,7 @@ import {
 import { createTestRuntime } from '../src/test/index.js';
 import { sentryErrorHandler } from '@robdel12/cricket/sentry';
 import { createHttpApp } from './fixtures/http.js';
+import { app as errorReportingExample } from '../examples/error-reporting.js';
 
 // Sentry is the external boundary; exercise Cricket through real HTTP requests.
 function recordingSentry() {
@@ -71,6 +72,38 @@ test('handled failures retain the original error through response composition an
   assert.equal(calls[0].context.phase, 'request');
   assert.equal(calls[0].context.route.operationId, 'provider.read');
   assert(calls[0].context.request.id);
+});
+
+test('the documented custom hook example reports through the request logger', async t => {
+  let harness = await createTestRuntime(errorReportingExample);
+  t.after(() => harness.cleanup());
+  let response = await harness.api.get('/provider');
+  assert.equal(response.status, 503);
+  assert.deepEqual(response.body, { error: 'Try again later' });
+  let report = harness.testState.logs().find(log => log.event === 'provider.failure');
+  assert(report);
+  assert.equal(report.metadata.operation, 'provider.read');
+  assert.equal(report.metadata.status, 503);
+  assert.equal(report.metadata.handled, true);
+});
+
+test('annotating an error never bypasses the endpoint response contract', async () => {
+  let original = new Error('private provider details');
+  let observed;
+  let app = await createHttpApp({
+    endpoints: [defineEndpoint({
+      method: 'get', path: '/invalid-error-body',
+      response: z.object({ saved: z.boolean() }),
+      handler: () => withError(respond(503, { error: 'Try again later' }), original)
+    })],
+    onError(error) { observed = error; }
+  });
+  let response = await request(app).get('/invalid-error-body');
+  assert.equal(response.status, 500);
+  assert.equal(response.body.error.code, 'RESPONSE_CONTRACT_FAILED');
+  assert.equal(response.body.error.message, 'Internal server error');
+  assert.equal(observed.code, 'RESPONSE_CONTRACT_FAILED');
+  assert.equal(JSON.stringify(response.body).includes(original.message), false);
 });
 
 test('early middleware responses can report failures before a route is matched', async () => {
@@ -150,7 +183,12 @@ test('Sentry receives thrown and handled server errors without request credentia
     assert.equal(event.tags.http_method, 'POST');
     assert(event.extra.requestId);
     assert.equal(event.extra.route, '/provider/:mode');
-    assert(!/private-token|cookie-secret|body-secret|query-secret/.test(JSON.stringify(event)));
+    assert.equal(event.error.message, 'provider offline');
+    let captured = JSON.stringify({
+      message: event.error.message, stack: event.error.stack,
+      tags: event.tags, extra: event.extra
+    });
+    assert(!/private-token|cookie-secret|body-secret|query-secret/.test(captured));
     assert.equal(event.extra.path, undefined);
   }
   assert.equal(sentry.events[0].tags.error_handled, false);
@@ -167,7 +205,9 @@ test('Sentry omits unmatched request paths that may contain credentials', async 
   assert.equal(sentry.events.length, 1);
   assert(sentry.events[0].extra.requestId);
   assert.equal(sentry.events[0].extra.route, undefined);
-  assert(!JSON.stringify(sentry.events[0]).includes('private-reset-token'));
+  let event = sentry.events[0];
+  assert(!JSON.stringify({ ...event, message: event.error.message, stack: event.error.stack })
+    .includes('private-reset-token'));
 });
 
 test('Sentry ignores ordinary client failures, including deliberately handled responses', async () => {
@@ -188,38 +228,46 @@ test('Sentry ignores ordinary client failures, including deliberately handled re
   assert.deepEqual(sentry.events, []);
 });
 
-test('Sentry reports async response cleanup failures even after a successful response', async t => {
-  let sentry = recordingSentry();
-  let original = new Error('response cleanup failed');
-  let cleanupEntered = Promise.withResolvers();
-  let release = Promise.withResolvers();
-  let harness = await createTestRuntime(defineCricketApp({
-    logger() {},
-    domains: [{ name: 'cleanup', endpoints: [defineEndpoint({
-      method: 'get', path: '/saved', operationId: 'saved.read',
-      handler: () => withResponseCleanup(respond(200, { saved: true }), async () => {
-        cleanupEntered.resolve();
-        await release.promise;
-        throw original;
-      })
-    })] }],
-    onError: sentryErrorHandler(sentry)
-  }));
-  t.after(async () => { release.resolve(); await harness.cleanup(); });
-  assert.equal((await harness.api.get('/saved')).status, 200);
-  await cleanupEntered.promise;
-  let hold = harness.runtime.requests.pause();
-  let rejected = assert.rejects(hold.idle(), error => error === original);
-  release.resolve();
-  await rejected;
-  assert.equal(sentry.events.length, 1);
-  assert.equal(sentry.events[0].error, original);
-  assert.equal(sentry.events[0].tags.http_status, 200);
-  assert.equal(sentry.events[0].tags.error_phase, 'response');
-  assert.equal(sentry.events[0].tags.operation, 'saved.read');
-  await hold.idle();
-  hold.resume();
-});
+for (let status of [200, 400, 503]) {
+  test(`Sentry reports later cleanup failures even when a ${status} response reuses the error`, async t => {
+    let sentry = recordingSentry();
+    let original = new Error('response cleanup failed');
+    let cleanupEntered = Promise.withResolvers();
+    let release = Promise.withResolvers();
+    let harness = await createTestRuntime(defineCricketApp({
+      logger() {},
+      domains: [{ name: 'cleanup', endpoints: [defineEndpoint({
+        method: 'get', path: '/saved', operationId: 'saved.read',
+        handler() {
+          let response = respond(status, { saved: true });
+          if (status >= 400)
+            response = withError(response, original);
+          return withResponseCleanup(response, async () => {
+            cleanupEntered.resolve();
+            await release.promise;
+            throw original;
+          });
+        }
+      })] }],
+      onError: sentryErrorHandler(sentry)
+    }));
+    t.after(async () => { release.resolve(); await harness.cleanup(); });
+    assert.equal((await harness.api.get('/saved')).status, status);
+    await cleanupEntered.promise;
+    let hold = harness.runtime.requests.pause();
+    let rejected = assert.rejects(hold.idle(), error => error === original);
+    release.resolve();
+    await rejected;
+    assert.equal(sentry.events.length, status === 503 ? 2 : 1);
+    let event = sentry.events.at(-1);
+    assert.equal(event.error, original);
+    assert.equal(event.tags.http_status, status);
+    assert.equal(event.tags.error_phase, 'response');
+    assert.equal(event.tags.operation, 'saved.read');
+    await hold.idle();
+    hold.resume();
+  });
+}
 
 test('invalid reporting configuration and response annotations fail clearly', () => {
   assert.throws(() => defineCricketApp({ domains: [], onError: true }), /onError must be a function/);

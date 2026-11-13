@@ -632,9 +632,12 @@ async function reportRequestError(appContract, {
   phase = 'request',
   reportedErrors
 }) {
-  if (reportedErrors?.has(error))
+  let phases = reportedErrors?.get(error);
+  if (phases?.has(phase))
     return;
-  reportedErrors?.add(error);
+  phases ??= new Set();
+  phases.add(phase);
+  reportedErrors?.set(error, phases);
   try {
     logger.error('request.failed', {
       error: safeErrorSnapshot(error),
@@ -653,6 +656,7 @@ async function reportRequestError(appContract, {
     await appContract.onError(error, {
       request: baseRequest,
       response,
+      logger,
       route,
       handled,
       phase
@@ -965,7 +969,7 @@ function createRuntimeHandler({
     let writer = createResponseWriter(req, res);
     let execution = requests.run(async () => {
       let errors = [];
-      let completionContext = { logger, reportedErrors: new Set() };
+      let completionContext = { logger, reportedErrors: new Map() };
       try {
         await execute(req, res, writer, completionContext, options);
       } catch (error) {

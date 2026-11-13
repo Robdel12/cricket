@@ -58,9 +58,12 @@ bodies. Use `ok`, `created`, `respond`, or `redirect` for transport intent, then
 compose headers, cookies, or cleanup with Cricket's response helpers. Do not
 return implicit `{ status, body }` transport objects.
 
-Request validation errors may be descriptive to clients. Response, serializer,
-and normalizer contract details belong in logs, `onError`, and test state rather
-than public HTTP responses.
+Use framework errors such as `badRequest` for invalid input. Response, serializer,
+and normalizer contract details stay internal. Configure app `onError` once for
+HTTP reporting, and use `withError(response, error)` when a catch returns a safe
+error body. It retains the exception without bypassing validation; declare
+status-specific error responses. See `cricket-observability` for SDK integration,
+privacy, and cleanup ordering.
 
 API versioning is endpoint-owned and opt-in. Reuse one `defineApiVersions`
 family across participating routes, keep current schemas as the base endpoint
@@ -95,10 +98,6 @@ Recursive Zod schemas and `z.json()` work in generated OpenAPI. Keep their
 validation intact; generated component names are internal.
 
 ## Change Flow
-
-HTTP reporting uses one app `onError` hook. Use `withError(response, error)` when
-returning a handled error response, and framework errors such as `badRequest` for
-invalid input. See `cricket-observability` for provider integration and privacy.
 
 1. Update the schema at the boundary that changed.
 2. Put request/source input schemas in `*.validations.js` and import them explicitly.
