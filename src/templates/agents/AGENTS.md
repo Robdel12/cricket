@@ -55,8 +55,9 @@ stream, async response cleanup, and terminal observer work before changing share
 state. Abort leaves the hold closed; resume explicitly after success. Control
 operations must live outside the paused runtime. Jobs and detached work remain
 app-owned. Standalone `stop()` calls shutdown hooks to stop producers/end streams
-before draining and destroying setup dependencies. Test cleanup omits those
-standalone hooks. `startCricketApp()` resolves after listening; use its `origin`
+before draining and destroying setup dependencies. Release resources and flush
+reporting SDKs in setup cleanup after HTTP work drains, before Cricket destroys
+its configured database. Test cleanup omits standalone hooks. `startCricketApp()` resolves after listening; use its `origin`
 instead of attaching another `listening` listener.
 
 ## Domain Shape
@@ -94,13 +95,16 @@ Routes explicitly compose request schemas, rules, handlers, serializers, and
 response schemas. Request validation errors may be descriptive to clients.
 Response, serializer, and normalizer contract details are internal: inspect
 them through logs, `onError`, or test state rather than exposing their schema
-issues over HTTP.
+issues over HTTP. Configure app `onError` once for HTTP reporting.
 
 Bare handler, middleware, and fallback return values are response bodies. Use
 Cricket's `ok`, `created`, `respond`, and `redirect` functions when transport
 status matters, then compose `withHeaders`, `withCookies`, or
 `withResponseCleanup` when needed. Never use a `{ status, body }`-shaped object
-as an implicit HTTP response.
+as an implicit HTTP response. For a friendly error body, use
+`withError(respond(status, body), error)`; it retains the exception for `onError`
+without bypassing response validation. Use status-specific error schemas.
+The `cricket-observability` skill owns provider integration and privacy guidance.
 
 API versioning is optional and endpoint-owned. Share one immutable
 `defineApiVersions` family across participating routes and declare historical

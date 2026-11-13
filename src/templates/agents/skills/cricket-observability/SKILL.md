@@ -28,6 +28,29 @@ Use this when a change touches how a Cricket app explains itself.
   those fields to measure compatibility usage; never log unsupported raw header
   values.
 
+## HTTP error reporting
+
+- Configure app `onError` once. Its context includes the request, selected response,
+  matched route, request logger, `handled` flag, and `phase` (`request` or `response`).
+  Request/response/route may be absent when a failure precedes their construction.
+- Use `withError(respond(status, safeBody), error)` for deliberately handled errors.
+  It retains the original exception privately without freezing it or bypassing
+  response validation. Declare distinct error schemas in `responses`.
+- `sentryErrorHandler` from `@robdel12/cricket/sentry` uses an app-owned SDK. It
+  skips request-phase 4xx and reports later writing/cleanup failures even after
+  200 or 400. Each error identity is reported once per request phase.
+- The adapter adds request IDs, route templates, method, operation, and status.
+  It adds no raw paths, credentials, query values, or payloads. Original exception
+  messages, properties, and causes still require app/SDK scrubbing.
+- Apps own SDK initialization and environment policy. Flush in setup cleanup
+  after HTTP work drains and app resources are released, using `finally` when
+  resource cleanup can fail. `onShutdown` runs before draining; Cricket's
+  configured database is destroyed after setup cleanup. Jobs and detached work
+  keep their own failure hooks and shutdown ordering.
+- A plain returned 500 has no exception to report. Use the hook and response
+  helper rather than adding capture calls to each wrapper. `cricket inspect`
+  shows whether reporting is configured.
+
 ## Trace
 
 - Use `trace.span(name, metadata, fn)` around meaningful work, especially service calls, external calls, and job steps.

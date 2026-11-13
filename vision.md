@@ -267,26 +267,30 @@ that decision without knowing Redis internals.
 
 ## Observability
 
-Cricket should provide one conservative observability story.
+Cricket provides structured logs, sparse scalar traces, HTTP error reporting, and
+runtime lifecycle state. Each explains work using stable request or job identity; none
+should become a storage backend or observability product.
 
-Logs are structured and stdout-first. Traces are safe, scalar, and tied to a
-request or job. Timing data explains where time went; it should not become a
-heavy observability product.
+Development logs should be easy to scan without an app-owned formatter. Pretty
+output leads with the event and useful request/job/span facts, followed by
+redacted metadata and full IDs. JSON remains the collection format; presentation
+must not change the envelope. `cricket trace` renders those logs.
 
-Development logs should be easy to scan without making apps build their own
-formatter. Pretty output leads with the event and useful request/job/span facts,
-then puts redacted metadata and full IDs on indented lines. Repeated context
-should appear once. Terminal color is optional. JSON stays the default for
-collection and trace tooling; presentation must not change that envelope.
+HTTP reporting belongs at the runtime boundary. One `onError` hook receives
+original thrown errors and handled failures marked with `withError`. Responses
+still obey their contracts. Request execution and later response cleanup are
+separate reporting phases, while retries and product failure policy remain with
+background jobs.
 
-Cricket should never emit raw auth headers, cookies, query values, request
-bodies, response bodies, `Set-Cookie` values, raw error objects, or open-ended
-trace dumps by default.
+Default logs and observer events exclude raw auth headers, cookies, query values,
+request/response bodies, `Set-Cookie` values, raw error objects, and open-ended
+trace dumps. Optional reporting adapters add only bounded metadata and reuse
+app-owned SDKs. Apps own initialization,
+exception scrubbing, and flushing after HTTP work drains; shutdown hooks stop
+producers before that drain, and setup cleanup releases resources afterward.
 
 Observer events are immutable copies. Emitting an event must never freeze or
 otherwise mutate the app value used to create it.
-
-`cricket trace` is a log renderer, not a storage backend or dashboard.
 
 ## Testing
 
