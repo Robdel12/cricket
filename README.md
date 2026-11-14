@@ -706,6 +706,9 @@ The endpoint's `body`, `response`, and `responses` define the base contract.
 Historical entries contain only the compatibility work that endpoint needs.
 Body normalizers must reuse the endpoint's `body` schema as their `output`;
 Cricket parses it once and rejects skipped (null/undefined) results.
+OpenAPI includes the shorthand default `response` alongside the status-specific
+`responses`. A status-specific entry takes precedence when both declare the
+same status.
 
 By default, the response schema validates both canonical data and current public
 output. When those shapes differ, pair a canonical schema with a current serializer:
