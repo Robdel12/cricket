@@ -177,7 +177,7 @@ if (process.env.NODE_ENV !== 'test')
 ```
 
 `setup` returns `undefined` or one explicit object with `dependencies`,
-`services`, and `cleanup`. Cricket adds its configured `db` to dependencies;
+`services`, `protocolHosts`, and `cleanup`. Cricket adds its configured `db` to dependencies;
 apps must not return a second `db`. Setup runs when the runtime is created, not
 when CLI commands import the app definition. Cleanup runs after accepted HTTP
 work drains and before Cricket destroys its configured database connection.
@@ -192,6 +192,105 @@ logger, trace, jobs, and progress. Recovery receives execution evidence, time,
 logger, and trace because it returns a pure decision rather than doing product
 work. Shutdown hooks receive the assembled runtime, including dependencies,
 services, lifecycle, and logger.
+
+
+## Host OIDC inside Cricket
+
+When an app needs OAuth or OpenID Connect, it can keep the protocol engine inside
+Cricket and keep account, consent, and persistence policy inside its own domains.
+Install the optional provider packages with `pnpm add oidc-provider koa koa-mount`
+and import the first-party integration from `@robdel12/cricket/oidc-provider`.
+
+`createOidcProviderHost()` creates the provider and its private Koa mount. It
+returns a Cricket-owned HTTP descriptor, a narrow authorization capability for
+domain services, and a `bind()` method for the app's policy hooks. Return the
+descriptor from setup; bind hooks from the app service composer, after domain
+services exist and before the runtime accepts requests:
+
+```js
+import { createOidcProviderHost } from '@robdel12/cricket/oidc-provider';
+
+async setup({ db }) {
+  let oidc = await createOidcProviderHost({
+    origin: process.env.PUBLIC_ORIGIN,
+    issuer: `${process.env.PUBLIC_ORIGIN}/oauth`,
+    resource: `${process.env.PUBLIC_ORIGIN}/mcp`,
+    csrfKey: process.env.OAUTH_CSRF_KEY,
+    adapter: createOAuthAdapter({ db }),
+    clients: readOAuthClients(),
+    jwks: readOAuthJwks(),
+    cookieKeys: readOAuthCookieKeys(),
+    cookieNames: {
+      session: 'app_oauth_session',
+      interaction: 'app_oauth_interaction',
+      resume: 'app_oauth_resume'
+    },
+    paths: {
+      providerMount: '/oauth',
+      resourceMetadata: '/.well-known/oauth-protected-resource/mcp',
+      authorizationMetadata: '/.well-known/oauth-authorization-server/oauth',
+      interaction: '/api/oauth-interactions',
+      interactionLanding: '/mcp/authorize'
+    },
+    resourceScopes: ['read'],
+    scopesSupported: ['read'],
+    bearerMethodsSupported: ['header'],
+    browserCredentialCookie: 'access_token',
+    fetch: fetchOAuthMetadata
+  });
+
+  return {
+    protocolHosts: [oidc.protocolHost],
+    dependencies: { oidc }
+  };
+},
+services({ dependencies, services }) {
+  dependencies.oidc.bind({
+    authorizeRequest: facts => services.oauth.authorizeRequest(facts),
+    authorizeRevocation: facts => services.oauth.authorizeRevocation(facts),
+    withRequest: (facts, run) => services.oauth.withProtocolRequest(facts, run),
+    resolveAccount: facts => services.oauth.resolveAccount(facts),
+    deleteGrantArtifacts: facts => services.oauth.deleteGrantArtifacts(facts),
+    prepareInteraction: facts => services.oauth.prepareInteraction(facts),
+    consentDetails: facts => services.oauth.consentDetails(facts),
+    decideConsent: facts => services.oauth.decideConsent(facts),
+    allowClientMetadata: facts => services.oauth.allowClientMetadata(facts),
+    allowClient: facts => services.oauth.allowClient(facts)
+  });
+  return services;
+}
+```
+
+The hook inputs and outputs are validated plain JSON facts. The one
+`withRequest(facts, run)` hook is the app's transaction boundary: it must await
+`run()` so Provider reads, consent writes, and revocation cleanup stay inside
+that transaction. Hooks never receive Provider instances, Koa contexts, Node
+requests, or Node responses. `authorizeRequest` can reject or rate-limit a route
+before Provider work; `authorizeRevocation` decides whether the authenticated
+client may revoke a token. Consent hooks own browser-session checks, origin and
+CSRF checks, current account policy, and durable app grants. `resolveAccount`
+rechecks account and grant state for token use. Remote metadata fetches should
+use an app-owned safe fetch function; Provider response bodies have finite
+limits by default.
+
+Apps may also bind `revokeGrant` when they need to approve a grant-wide
+revocation or coordinate app-specific cleanup. Without that hook, Cricket keeps
+the Provider's normal access-token revocation behavior; grant-wide revocations
+still remove the app's grant artifacts through `deleteGrantArtifacts`.
+
+Cricket checks that protocol host paths do not overlap. Shared HTTP checks run
+first, then protocol hosts run before app bearer-auth middleware so OAuth
+client authentication remains Provider-owned. Cricket waits for accepted HTTP
+requests before closing the host; observer hooks such as `onGrantRevoked` are
+tracked and drained rather than left as detached promises. The MCP Fetch
+transport remains an ordinary app endpoint and uses the same runtime admission
+and shutdown lifecycle.
+
+The host includes protocol mechanics and route ownership, not a consent UI or
+product-specific grant model. Apps own client registration, durable Provider
+storage, account/session policy, scopes, browser UI, and operational readiness.
+See [`examples/oidc-provider-host.js`](./examples/oidc-provider-host.js) for the
+setup and binding split.
 
 ## Add package domains with plugins
 
@@ -1135,6 +1234,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createTestRuntime } from '@robdel12/cricket/test';
+import { createOidcProviderHost } from '@robdel12/cricket/oidc-provider';
 import { app } from '../api/index.js';
 
 test('creates a project through the API', async () => {
@@ -1382,4 +1482,5 @@ import { generateOpenApi } from '@robdel12/cricket/openapi';
 import { defineSerializer } from '@robdel12/cricket/serializer';
 import { sentryErrorHandler } from '@robdel12/cricket/sentry';
 import { createTestRuntime } from '@robdel12/cricket/test';
+import { createOidcProviderHost } from '@robdel12/cricket/oidc-provider';
 ```

@@ -25,6 +25,7 @@ Start with `pnpm cricket check api/index.js`, then inspect the app, read
 ## App Shape
 
 - Cricket provides the architecture, HTTP runtime, job runtime, logger, trace, and read-only runtime lifecycle. The app defines product behavior, auth policy, data work, worker entrypoints, product health, and deployment.
+- First-party protocol integrations such as `@robdel12/cricket/oidc-provider` return an opaque `protocolHost` from setup. Bind plain policy hooks in the app service composer after domains exist. Cricket owns the protocol engine and HTTP routing; the app owns clients, account/session rules, consent, persistence, and UI. Do not pass raw requests/responses or Koa contexts into app code, or start a second server.
 - `runtime.requests.pause()` closes application admission and returns an independent `idle({ signal })` / `resume()` hold. Idle joins accepted HTTP work through stream/async cleanup, including disconnected clients. Keep control operations outside the paused runtime and stop app-owned jobs separately. Standalone startup resolves after listening and exposes `origin`; terminal cleanup cannot be resumed.
 - Domains are required by default. Do not register product endpoints, jobs, or models directly on `defineCricketApp`.
 - `architecture: 'manual'` is a migration escape hatch and visible tech debt. Never introduce it in a fresh app; move existing manual contracts into domains and remove the mode at a deliberate cutover.

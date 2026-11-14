@@ -43,6 +43,11 @@ import {
 } from './request.js';
 import { createRuntimeLifecycle } from './lifecycle.js';
 import { createRequestTracker } from './requests.js';
+import {
+  protocolHostDefinition,
+  protocolHostsOverlap,
+  protocolHostOverlapsEndpoint
+} from '../protocol-host.js';
 import { closeServer, listen, serverOrigin } from './server.js';
 import {
   allowedMethodsForPath,
@@ -60,7 +65,8 @@ let lifecycleControllerKey = Symbol('cricket.lifecycleController');
 let setupResultKeys = new Set([
   'cleanup',
   'dependencies',
-  'services'
+  'services',
+  'protocolHosts'
 ]);
 
 function throwFailures(errors, message) {
@@ -80,11 +86,12 @@ function normalizeSetupResult(result) {
     return {
       dependencies: {},
       services: {},
+      protocolHosts: [],
       cleanup: undefined
     };
 
   if (!isPlainObject(result))
-    throw new Error('setup must return { dependencies, services, cleanup } or undefined');
+    throw new Error('setup must return { dependencies, services, protocolHosts, cleanup } or undefined');
 
   assertKnownOptions(result, setupResultKeys, 'setup');
 
@@ -97,19 +104,41 @@ function normalizeSetupResult(result) {
   if (!isPlainObject(services))
     throw new Error('setup services must be a plain object');
 
+  let protocolHosts = result.protocolHosts ?? [];
+  if (!Array.isArray(protocolHosts) || protocolHosts.some(host => !protocolHostDefinition(host)))
+    throw new Error('setup protocolHosts must contain Cricket protocol host descriptors');
+  let protocolHostNames = new Set();
+  for (let host of protocolHosts) {
+    let name = protocolHostDefinition(host).name;
+    if (protocolHostNames.has(name))
+      throw new Error(`setup protocolHosts has duplicate host name ${name}`);
+    protocolHostNames.add(name);
+  }
+  for (let [index, host] of protocolHosts.entries()) {
+    for (let other of protocolHosts.slice(index + 1)) {
+      if (protocolHostsOverlap(host, other))
+        throw new Error(`setup protocolHosts ${protocolHostDefinition(host).name} and ${protocolHostDefinition(other).name} own overlapping HTTP paths`);
+    }
+  }
+
   if (result.cleanup !== undefined && typeof result.cleanup !== 'function')
     throw new Error('setup cleanup must be a function');
 
   return {
     dependencies,
     services,
+    protocolHosts: Object.freeze([...protocolHosts]),
     cleanup: result.cleanup
   };
 }
 
-async function cleanupRuntime(setupCleanup, db) {
+async function cleanupRuntime(setupCleanup, db, protocolHosts = []) {
   let errors = [];
-  for (let cleanup of [setupCleanup, db && (() => db.destroy())]) {
+  for (let cleanup of [
+    ...protocolHosts.map(host => protocolHostDefinition(host)?.close),
+    setupCleanup,
+    db && (() => db.destroy())
+  ]) {
     try {
       await cleanup?.();
     } catch (error) {
@@ -120,19 +149,16 @@ async function cleanupRuntime(setupCleanup, db) {
 }
 
 function setupDependenciesFor(setup, db) {
-  if (!db)
-    return setup;
-
-  if (Object.hasOwn(setup.dependencies, 'db'))
+  if (db && Object.hasOwn(setup.dependencies, 'db'))
     throw new Error('setup dependencies must not include db when database is configured');
 
   return {
     ...setup,
     dependencies: {
-      db,
+      ...(db ? { db } : {}),
       ...setup.dependencies
     },
-    cleanup: () => cleanupRuntime(setup.cleanup, db)
+    cleanup: () => cleanupRuntime(setup.cleanup, db, setup.protocolHosts)
   };
 }
 
@@ -686,6 +712,7 @@ function createRuntimeHandler({
   setup,
   services,
   middleware,
+  protocolHosts,
   requests
 }) {
   let closingConnections = new WeakMap();
@@ -757,6 +784,16 @@ function createRuntimeHandler({
       res.writeContinue();
     }
 
+    let continuedDeclined = false;
+    function declineContinue() {
+      if (!expectContinue || continued)
+        return;
+
+      continuedDeclined = true;
+      if (!res.headersSent)
+        res.setHeader('Connection', 'close');
+    }
+
     try {
       baseRequest = createBaseRequest(req, {
         trustProxy: appContract.trustProxy
@@ -811,6 +848,46 @@ function createRuntimeHandler({
           requestId,
           timing
         });
+        return;
+      }
+
+      let protocolHost = protocolHosts.find(({ definition }) =>
+        definition.matches(baseRequest)
+      );
+      if (protocolHost) {
+        route = `protocol:${protocolHost.name}`;
+        requestLogger = requestLogger.child({ route });
+        Object.assign(completionContext, { logger: requestLogger, route });
+        try {
+          await protocolHost.definition.handle({
+            req, res, request: baseRequest, logger: requestLogger,
+            continueRequest: writeContinue,
+            declineRequestBody: declineContinue
+          });
+        } catch (error) {
+          if (!res.headersSent && !res.writableEnded) throw error;
+          completionContext.response = respond(
+            Number.isInteger(res.statusCode) && res.statusCode >= 200 ? res.statusCode : 500
+          );
+          await reportRequestError(appContract, {
+            baseRequest,
+            error,
+            logger: requestLogger,
+            response: completionContext.response,
+            route,
+            handled: Number(error.status) < 500,
+            phase: 'protocol',
+            reportedErrors: completionContext.reportedErrors
+          });
+        }
+        if (expectContinue && !continued) {
+          if (!continuedDeclined) declineContinue();
+        } else if (!req.complete && !req.destroyed) {
+          await writer.drainRequest(maxBodyBytesFor(undefined));
+        }
+        completionContext.response = respond(
+          Number.isInteger(res.statusCode) && res.statusCode >= 200 ? res.statusCode : 200
+        );
         return;
       }
 
@@ -1079,26 +1156,29 @@ export async function createCricketRuntime(cricketApp, {
     })
     : undefined;
   let setup;
+  let setupResult;
 
   try {
-    setup = setupDependenciesFor(
-      normalizeSetupResult(
-        appContract.setup ? await appContract.setup({
+    setupResult = appContract.setup ? await appContract.setup({
           app: appContract,
           db,
           lifecycle,
           logger,
           trace: createNoopTrace()
-        }) : undefined
-      ),
-      db
-    );
+        }) : undefined;
+    setup = setupDependenciesFor(normalizeSetupResult(setupResult), db);
     setup = setupWithLifecycleCleanup(setup, lifecycleController, requests);
   } catch (error) {
     let errors = [error];
     try {
-      if (db)
-        await db.destroy();
+      let protocolHosts = Array.isArray(setupResult?.protocolHosts)
+        ? [...new Set(setupResult.protocolHosts.filter(host => protocolHostDefinition(host)))]
+        : [];
+      await cleanupRuntime(
+        typeof setupResult?.cleanup === 'function' ? setupResult.cleanup : undefined,
+        db,
+        protocolHosts
+      );
     } catch (cleanupError) {
       errors.push(cleanupError);
     } finally {
@@ -1142,11 +1222,21 @@ export async function createCricketRuntime(cricketApp, {
       logger,
       services
     };
+    let protocolHosts = setup.protocolHosts.map(host => ({
+      definition: protocolHostDefinition(host),
+      name: protocolHostDefinition(host).name
+    }));
     let middleware = await resolveMiddleware(appContract.middleware, runtimeBag);
     let prefixedEndpoints = appContract.endpoints.map(endpoint =>
       endpointWithPrefix(endpoint, appContract.prefix)
     );
     let routes = prepareRoutes(prefixedEndpoints);
+    for (let host of setup.protocolHosts) {
+      for (let route of routes) {
+        if (protocolHostOverlapsEndpoint(host, route.endpoint.path))
+          throw new Error(`Protocol host ${protocolHostDefinition(host).name} overlaps endpoint route ${route.method} ${route.endpoint.path}`);
+      }
+    }
     let handle = createRuntimeHandler({
       appContract,
       lifecycle,
@@ -1156,6 +1246,7 @@ export async function createCricketRuntime(cricketApp, {
       setup,
       services,
       middleware,
+      protocolHosts,
       requests
     });
     let app = Object.assign(handle, {
