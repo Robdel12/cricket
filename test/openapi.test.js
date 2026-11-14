@@ -53,6 +53,98 @@ describe('Cricket OpenAPI', () => {
     assert.deepEqual(Object.keys(docs.paths['/imports'].post.responses), ['202']);
   });
 
+  it('documents shorthand success responses alongside explicit error responses', () => {
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/integrations/status',
+      response: z.object({ connected: z.boolean() }),
+      responses: {
+        403: z.object({ error: z.string() }),
+        500: { description: 'Status lookup failed' }
+      },
+      handler() {
+        return { connected: true };
+      }
+    });
+    let operation = generateOpenApi({ endpoints: [endpoint] }).paths['/integrations/status'].get;
+
+    assert.deepEqual(Object.keys(operation.responses), ['200', '403', '500']);
+    assert.deepEqual(operation.responses[200].content['application/json'].schema.required, [
+      'connected'
+    ]);
+    assert.deepEqual(operation.responses[403].content['application/json'].schema.required, [
+      'error'
+    ]);
+    assert.equal(operation.responses[500].description, 'Status lookup failed');
+  });
+
+  it('preserves versioned shorthand response projections', () => {
+    let versions = defineApiVersions({
+      name: 'integration',
+      header: 'Integration-Version',
+      current: 'current',
+      default: 'legacy',
+      versions: { legacy: {}, current: {} }
+    });
+    let legacyResponse = defineSerializer({
+      name: 'integration.status.legacy',
+      output: z.object({ active: z.boolean() }),
+      serialize(value) {
+        return { active: value.connected };
+      }
+    });
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/versioned-status',
+      response: z.object({ connected: z.boolean() }),
+      apiVersions: versions({ legacy: { response: legacyResponse } }),
+      handler() {
+        return { connected: true };
+      }
+    });
+    let legacy = generateOpenApi({ endpoints: [endpoint] }).paths['/versioned-status'].get;
+    let current = generateOpenApi({
+      endpoints: [endpoint],
+      apiVersions: { integration: 'current' }
+    }).paths['/versioned-status'].get;
+
+    assert.deepEqual(Object.keys(legacy.responses), ['200']);
+    assert.deepEqual(legacy.responses[200].content['application/json'].schema.required, [
+      'active'
+    ]);
+    assert.deepEqual(current.responses[200].content['application/json'].schema.required, [
+      'connected'
+    ]);
+  });
+
+  it('lets an explicit response definition override shorthand at the same status', () => {
+    let endpoint = defineEndpoint({
+      method: 'post',
+      path: '/imports/complete',
+      response: z.object({ fallback: z.literal(true) }),
+      responses: {
+        201: {
+          description: 'Import completed',
+          schema: z.object({ importId: z.string() })
+        },
+        400: z.object({ error: z.string() })
+      },
+      handler() {
+        return { importId: 'import-1' };
+      }
+    });
+    let operation = generateOpenApi({ endpoints: [endpoint] }).paths['/imports/complete'].post;
+
+    assert.deepEqual(Object.keys(operation.responses), ['201', '400']);
+    assert.equal(operation.responses[201].description, 'Import completed');
+    assert.deepEqual(operation.responses[201].content['application/json'].schema.required, [
+      'importId'
+    ]);
+    assert.deepEqual(operation.responses[400].content['application/json'].schema.required, [
+      'error'
+    ]);
+  });
+
   it('generates OpenAPI docs from endpoint and model contracts', () => {
     let Build = defineModel({
       name: 'Build',

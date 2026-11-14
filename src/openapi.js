@@ -221,22 +221,19 @@ function responsesForEndpoint(endpoint, convert) {
     }));
   }
 
-  if (endpoint.responses) {
-    return Object.fromEntries(
-      Object.entries(endpoint.responses).map(([status, response]) => [
-        status,
-        normalizeResponse(status, response, endpoint.method, convert)
-      ])
-    );
-  }
-
+  let responses = {};
   if (endpoint.response) {
     let status = String(defaultStatusForMethod(endpoint.method));
-
-    return {
-      [status]: normalizeResponse(status, endpoint.response, endpoint.method, convert)
-    };
+    responses[status] = normalizeResponse(status, endpoint.response, endpoint.method, convert);
   }
+
+  if (endpoint.responses) {
+    for (let [status, response] of Object.entries(endpoint.responses)) {
+      responses[status] = normalizeResponse(status, response, endpoint.method, convert);
+    }
+  }
+
+  if (endpoint.response || endpoint.responses) return responses;
 
   return {
     [defaultStatusForMethod(endpoint.method)]: {
