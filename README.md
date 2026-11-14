@@ -803,6 +803,9 @@ Bare values returned by handlers, middleware, and fallbacks are response bodies.
 Only Cricket's response functions control HTTP transport details, so a domain
 object containing fields such as `status`, `headers`, or `redirect` stays a
 normal JSON body.
+When `response` and `responses` are both declared, `response` validates and
+serializes the method's default success status unless an exact status-specific
+entry overrides it. Other statuses use only their matching `responses` entry.
 
 Throw framework errors such as `badRequest` for invalid input. Cricket maps error
 codes to HTTP statuses; an arbitrary error's `status` property does not choose its
