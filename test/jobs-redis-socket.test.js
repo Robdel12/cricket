@@ -98,7 +98,8 @@ async function createRespRedisServer(handleCommand, {
 
         let command = parsed.parts.map(part => part.toString('utf8'));
         let response = handleCommand(command, {
-          connectionId
+          connectionId,
+          socket
         });
 
         if (response !== undefined)
@@ -274,6 +275,21 @@ describe('Cricket jobs: Redis socket', () => {
     try {
       await assert.rejects(client.command('FAIL'), /expected failure/);
       assert.equal(await client.command('PING'), 'PONG');
+    } finally {
+      await client.quit();
+      await redis.close();
+    }
+  });
+
+  it('rejects a new command after peer END without waiting for the socket close event', async () => {
+    let redis = await createRespRedisServer(([command], { socket }) => {
+      assert.equal(command, 'PING');
+      socket.end();
+    });
+    let client = await createRedisSocketClient(redis.url);
+    try {
+      await assert.rejects(client.command('PING'), /Redis connection closed/);
+      await assert.rejects(client.command('PING'), /Redis connection closed/);
     } finally {
       await client.quit();
       await redis.close();
