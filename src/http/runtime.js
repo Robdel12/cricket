@@ -643,21 +643,17 @@ function writeObservedResponse(writer, response, {
   declineRequestBody,
   skipRequestDrain
 }) {
-  let onTerminal = async kind => {
-    let finished = kind === 'finished';
-    let event = {
-      requestId,
-      request: safeRequestSnapshot(request),
-      response: safeResponseSnapshot(response, {
-        method: request.method
-      }),
-      route,
-      terminal: true,
-      timings: timing?.snapshot(finished ? 'finishMs' : 'closeMs')
-    };
-    logRuntimeEvent(logger, finished ? 'info' : 'warn', `http.response.${kind}`, event);
-    await replay?.emit({ ...event, type: `response.${kind}` });
-  };
+  let onTerminal = createResponseTerminalObserver({
+    logger,
+    replay,
+    request,
+    requestId,
+    route,
+    timing,
+    response: () => safeResponseSnapshot(response, {
+      method: request.method
+    })
+  });
 
   let write = () => writer.write(response, {
     onTerminal, maxBodyBytes, declineRequestBody, skipRequestDrain
@@ -668,8 +664,53 @@ function writeObservedResponse(writer, response, {
     write();
 }
 
+function safeProtocolResponseSnapshot(req, res) {
+  let status = res.headersSent ? res.statusCode : null;
+  let headers = res.headersSent ? res.getHeaders() : {};
+  let setCookie = headers['set-cookie'];
+  let cookies = (Array.isArray(setCookie) ? setCookie : setCookie ? [setCookie] : [])
+    .map(value => String(value).split(';', 1)[0])
+    .map(pair => pair.slice(0, pair.indexOf('=')))
+    .filter(Boolean)
+    .sort();
+  let noBody = status === null || req.method.toUpperCase() === 'HEAD' ||
+    [204, 205, 304].includes(status);
+
+  return {
+    status,
+    headers: Object.keys(headers).map(name => name.toLowerCase()).sort(),
+    cookies,
+    redirected: Boolean(headers.location) && status >= 300 && status < 400,
+    body: noBody ? 'empty' : 'opaque'
+  };
+}
+
+function createResponseTerminalObserver({
+  logger,
+  replay,
+  request,
+  requestId,
+  route,
+  timing,
+  response
+}) {
+  return async kind => {
+    let finished = kind === 'finished';
+    let event = {
+      requestId,
+      request: safeRequestSnapshot(request),
+      response: response(),
+      route,
+      terminal: true,
+      timings: timing?.snapshot(finished ? 'finishMs' : 'closeMs')
+    };
+    logRuntimeEvent(logger, finished ? 'info' : 'warn', `http.response.${kind}`, event);
+    await replay?.emit({ ...event, type: `response.${kind}` });
+  };
+}
+
 async function emitObserved(observability, replay, createEvent) {
-  if (!observability.enabled)
+  if (!observability.enabled || !replay)
     return;
 
   await replay.emit(createEvent());
@@ -787,7 +828,7 @@ function createRuntimeHandler({
   }) {
     let baseRequest;
     let continued = false;
-    let replay = observability.createReplay();
+    let replay;
     let timing = createTimingRecorder();
     let requestId;
     let requestLogger = logger;
@@ -811,7 +852,7 @@ function createRuntimeHandler({
         reportedErrors: completionContext.reportedErrors
       });
 
-      if (baseRequest) {
+      if (baseRequest && replay) {
         await emitObserved(observability, replay, () => ({
           type: 'request.failed',
           error: safeErrorSnapshot(error),
@@ -871,6 +912,7 @@ function createRuntimeHandler({
       requestLogger = logger.child({
         requestId
       });
+      replay = observability.createReplay({ logger: requestLogger, services });
       Object.assign(completionContext, { baseRequest, logger: requestLogger });
       logRuntimeEvent(requestLogger, 'info', 'http.request.started', {
         request: safeRequestSnapshot(baseRequest)
@@ -947,6 +989,19 @@ function createRuntimeHandler({
         route = `protocol:${protocolHost.name}`;
         requestLogger = requestLogger.child({ route });
         Object.assign(completionContext, { logger: requestLogger, route });
+        let observeProtocolResponse = true;
+        let observeProtocolTerminal = createResponseTerminalObserver({
+          logger: requestLogger,
+          replay,
+          request: baseRequest,
+          requestId,
+          route,
+          timing,
+          response: () => safeProtocolResponseSnapshot(req, res)
+        });
+        writer.observeTerminal(kind => observeProtocolResponse
+          ? observeProtocolTerminal(kind)
+          : undefined);
         try {
           await protocolHost.definition.handle({
             req, res, request: baseRequest, logger: requestLogger,
@@ -955,7 +1010,10 @@ function createRuntimeHandler({
             declineRequestBody: declineContinue
           });
         } catch (error) {
-          if (!res.headersSent && !res.writableEnded) throw error;
+          if (!res.headersSent && !res.writableEnded) {
+            observeProtocolResponse = false;
+            throw error;
+          }
           completionContext.response = respond(
             Number.isInteger(res.statusCode) && res.statusCode >= 200 ? res.statusCode : 500
           );

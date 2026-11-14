@@ -49,7 +49,7 @@ and progress. Recovery receives evidence, time, logger, and trace for a pure
 decision. Shutdown hooks receive the assembled runtime. Product health checks
 may read `lifecycle`, but they still own database, worker, and deploy readiness.
 
-A first-party protocol host is declared in setup through `protocolHosts` and shares Cricket's HTTP admission, error reporting, and drain lifecycle. Use the dedicated integration export rather than creating an app-owned server or passing Node requests, responses, or foreign framework contexts to app code. Apps keep the protocol policy, account checks, consent, persistence, and product UI.
+A first-party protocol host is declared in setup through `protocolHosts` and shares Cricket's HTTP admission, error reporting, response finish/close observation, and drain lifecycle. Use the dedicated integration export rather than creating an app-owned server or passing Node requests, responses, or foreign framework contexts to app code. Apps keep the protocol policy, account checks, consent, persistence, and product UI.
 
 `runtime.requests.pause()` synchronously closes admission and returns an
 independent hold with `idle({ signal })` and `resume()`. Await accepted request,

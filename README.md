@@ -1249,6 +1249,13 @@ Cricket supplies structured logs, request/job traces, HTTP error reporting, and
 lifecycle state. `cricket inspect` shows which observers and error hook are
 configured.
 
+Observability callbacks receive the frozen event as their first argument and,
+for HTTP request replay, a second shallow-frozen `{ logger, services }` context.
+The context is request-scoped and never contains Node request, response, or
+socket objects. Native protocol hosts emit the same single
+`response.finished`/`response.closed` terminal event as ordinary routes; their
+body summary is `opaque` because the host owns the response writes.
+
 ### Logging and tracing
 
 ```js

@@ -7,6 +7,12 @@ description: Work with Cricket logging, tracing, lifecycle state, test state, in
 
 Use this when a change touches how a Cricket app explains itself.
 
+HTTP observability callbacks receive the frozen event first and a shallow-frozen
+`{ logger, services }` request context second. This context never contains native
+request, response, or socket objects. Native protocol responses use the same
+single `response.finished`/`response.closed` event path as ordinary HTTP routes;
+their response body summary is `opaque` because Cricket does not inspect it.
+
 ## Logger
 
 - Use the Cricket logger shape supplied at each runtime phase. Setup, services,
