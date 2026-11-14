@@ -18,7 +18,7 @@ let paths = {
   interactionLanding: '/authorize'
 };
 
-async function startHost(overrides = {}, hookOverrides = {}, { cricketServer = false, afterCreate } = {}) {
+async function startHost(overrides = {}, hookOverrides = {}, { cricketServer = false, afterCreate, trustProxy = false } = {}) {
   let runtime;
   let oidcHost;
   let seenInteractions = [];
@@ -44,6 +44,7 @@ async function startHost(overrides = {}, hookOverrides = {}, { cricketServer = f
     origin = `http://127.0.0.1:${port}`;
   }
   let app = defineManualTestApp({
+    trustProxy,
     async setup() {
       let clients = overrides.clients ?? [{
         client_id: 'test-client',
@@ -141,6 +142,69 @@ function updateCookies(cookie, response) {
 }
 
 describe('Cricket OIDC provider host', () => {
+  it('uses validated HTTPS and client IP through a trusted HTTP proxy, including secure provider cookies', async () => {
+    let seen = [];
+    let publicOrigin = 'https://auth.example.test';
+    let host = await startHost({
+      origin: publicOrigin, issuer: `${publicOrigin}/oauth`, resource: `${publicOrigin}/mcp`,
+      clients: [{ client_id: 'proxy-client', client_secret: 'secret',
+        grant_types: ['authorization_code'], response_types: ['code'],
+        redirect_uris: [`${publicOrigin}/callback`], token_endpoint_auth_method: 'client_secret_basic' }]
+    }, {
+      authorizeRequest({ request }) { seen.push(request); }
+    }, { trustProxy: { peers: ['127.0.0.0/8', '10.0.0.0/8'] } });
+    let headers = { 'x-forwarded-host': 'auth.example.test', 'x-forwarded-proto': 'https',
+      'x-forwarded-for': '203.0.113.99, 198.51.100.7, 10.1.2.3',
+      'x-real-ip': '192.0.2.99' };
+    try {
+      let metadata = await request(host.origin, paths.authorizationMetadata, { headers });
+      assert.equal(metadata.status, 200);
+      assert.equal((await metadata.json()).issuer, `${publicOrigin}/oauth`);
+      let params = new URLSearchParams({ client_id: 'proxy-client', response_type: 'code',
+        redirect_uri: `${publicOrigin}/callback`, scope: 'openid read', resource: `${publicOrigin}/mcp`,
+        code_challenge: 'a'.repeat(43), code_challenge_method: 'S256' });
+      let response = await request(host.origin, `/oauth/authorize?${params}`, { headers });
+      assert.equal(response.status, 303, await response.text());
+      assert.equal(new URL(response.headers.get('location')).origin, publicOrigin);
+      let cookies = response.headers.getSetCookie();
+      assert.ok(cookies.some(cookie => cookie.startsWith('oidc_interaction=')));
+      assert.ok(cookies.every(cookie => /; secure(?:;|$)/i.test(cookie)), cookies.join('\n'));
+      assert.equal(seen.length, 2);
+      assert.ok(seen.every(facts => facts.host === 'auth.example.test' && facts.ip === '198.51.100.7'));
+      assert.ok(seen.every(facts => facts.clientIp === facts.ip && facts.peerIp === '127.0.0.1' &&
+        facts.proxyTrusted === true && facts.protocol === 'https' && facts.secure === true));
+    } finally {
+      await host.close();
+    }
+  });
+
+  it('ignores untrusted OIDC authority and IP spoofing before protocol admission', async () => {
+    let seen;
+    let host = await startHost({}, {
+      authorizeRequest({ request }) { seen = request; }
+    }, { trustProxy: { peers: ['192.0.2.0/24'] } });
+    try {
+      let response = await request(host.origin, paths.authorizationMetadata, { headers: {
+        'x-forwarded-host': 'attacker.test', 'x-forwarded-proto': 'https',
+        'x-forwarded-for': 'invalid', 'x-real-ip': '192.0.2.1'
+      } });
+      assert.equal(response.status, 200);
+      assert.equal((await response.json()).issuer, `${host.origin}/oauth`);
+      assert.equal(seen.host, new URL(host.origin).host);
+      assert.equal(seen.ip, '127.0.0.1');
+      assert.equal(seen.clientIp, seen.peerIp);
+      assert.equal(seen.proxyTrusted, false);
+      assert.equal(seen.protocol, 'http');
+      assert.equal(seen.secure, false);
+    } finally {
+      await host.close();
+    }
+  });
+
+  it('rejects the removed OIDC-local blanket proxy option', async () => {
+    await assert.rejects(startHost({ trustProxy: true }), /Configure trustProxy peers on the Cricket app/);
+  });
+
   it('serves resource and authorization metadata through Cricket HTTP admission', async () => {
     let host = await startHost();
     try {

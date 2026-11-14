@@ -93,6 +93,17 @@ Before changing a Cricket app, run `pnpm cricket check api/index.js` and
 
 ## HTTP Contracts
 
+Configure proxy trust only on `defineCricketApp`: `trustProxy: false` (default)
+or `trustProxy: { peers: ['127.0.0.1', '::1'] }` with verified deployment peers or
+CIDRs. Blanket `true` and hop counts are rejected. The socket peer must match
+before forwarding is considered; configure the proxy to overwrite forwarded
+host/protocol. Cricket validates XFF and walks right to left to the first
+untrusted hop. Use plain `request.clientIp`, `request.peerIp`, and
+`request.proxyTrusted`; do not parse forwarding headers in app code. OIDC uses
+the same validated facts and keeps hook `request.ip` equal to `clientIp`; it has
+no separate proxy option. Host allowlists and network access remain app policy.
+Automatic request snapshots omit the peer/client IP fields.
+
 Routes explicitly compose request schemas, rules, handlers, serializers, and
 response schemas. Request validation errors may be descriptive to clients.
 Response, serializer, and normalizer contract details are internal: inspect

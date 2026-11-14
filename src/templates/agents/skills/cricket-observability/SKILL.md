@@ -21,6 +21,7 @@ Use this when a change touches how a Cricket app explains itself.
   or `color: false` overrides detection. Children inherit the setting.
 - Keep `format: 'json'` for collection and `cricket trace`. JSON is the default
   and always stays one complete structured envelope per line without color.
+- Automatic request snapshots omit `clientIp` and `peerIp`; do not add raw IP values to logs by default.
 - Do not log secrets. Cricket redacts common secret-shaped keys, but app code should still avoid putting sensitive values in logs.
 - Use child metadata for stable facts such as `requestId`, job identity, route identity, account IDs, or operation names.
 - Endpoint API version families add bounded family, selected version, source,
