@@ -102,10 +102,14 @@ function parseRequestObjectSchema(schema, value) {
 }
 
 function responseDefinitionFor(endpoint, status) {
-  if (!endpoint.responses)
-    return endpoint.response;
+  if (!endpoint.responses) return endpoint.response;
 
-  return endpoint.responses[status] ?? endpoint.responses[String(status)];
+  let definition = endpoint.responses?.[status] ?? endpoint.responses?.[String(status)];
+  if (definition) return definition;
+
+  return String(status) === String(defaultStatusForMethod(endpoint.method))
+    ? endpoint.response
+    : undefined;
 }
 
 function normalizeFetchResponses(responses, method, path) {

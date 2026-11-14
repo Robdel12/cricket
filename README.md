@@ -706,6 +706,9 @@ The endpoint's `body`, `response`, and `responses` define the base contract.
 Historical entries contain only the compatibility work that endpoint needs.
 Body normalizers must reuse the endpoint's `body` schema as their `output`;
 Cricket parses it once and rejects skipped (null/undefined) results.
+OpenAPI includes the shorthand default `response` alongside the status-specific
+`responses`. A status-specific entry takes precedence when both declare the
+same status.
 
 By default, the response schema validates both canonical data and current public
 output. When those shapes differ, pair a canonical schema with a current serializer:
@@ -800,6 +803,9 @@ Bare values returned by handlers, middleware, and fallbacks are response bodies.
 Only Cricket's response functions control HTTP transport details, so a domain
 object containing fields such as `status`, `headers`, or `redirect` stays a
 normal JSON body.
+When `response` and `responses` are both declared, `response` validates and
+serializes the method's default success status unless an exact status-specific
+entry overrides it. Other statuses use only their matching `responses` entry.
 
 Throw framework errors such as `badRequest` for invalid input. Cricket maps error
 codes to HTTP statuses; an arbitrary error's `status` property does not choose its
