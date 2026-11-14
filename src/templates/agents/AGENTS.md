@@ -216,5 +216,10 @@ boundaries instead of polling. Between jobs, the continuous worker checks
 recovery, due cron slots, and delayed availability even while ready work remains.
 Exponential retries remain unclaimable until
 their calculated backoff expires. Deploy checks and product health remain app
-responsibility.
+responsibility. For an explicit command-transport fact, the built-in Redis
+`producer.driver.checkConnection()` and `worker.driver.checkConnection()` return
+a frozen `{ status: 'connected' | 'disconnected' | 'closed' }`. They PING the
+existing command connection without opening another client. This does not prove
+blocking-wait health, claim-loop progress, or product readiness; apps check
+ledger and capacity separately.
 <!-- /cricket-agent-guidance -->

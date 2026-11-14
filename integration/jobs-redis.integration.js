@@ -85,6 +85,68 @@ async function createDrivers(name, queueNames = ['reports']) {
 }
 
 describe('Cricket jobs: real Redis', () => {
+  it('checks each producer and worker command connection without replacing a disconnected client', async () => {
+    let admin = await createRedisSocketClient(redisUrl);
+    let readClients = async () => (await admin.command('CLIENT', 'LIST', 'TYPE', 'NORMAL'))
+      .trim().split('\n').filter(Boolean).map(line =>
+        Object.fromEntries(line.trim().split(' ').map(field => field.split('=')))
+      );
+    let job = reportJob();
+    let app = defineManualTestApp({ jobs: [job] });
+
+    try {
+      for (let create of [
+        queues => createCricketJobs({ jobs: [job], queues }),
+        queues => startCricketWorker(app, { queues })
+      ]) {
+        let beforeIds = new Set((await readClients()).map(client => client.id));
+        let owner = await create({ redis: { url: redisUrl, prefix: testPrefix('connection-health') } });
+        try {
+          let connected = await owner.driver.checkConnection();
+          assert.deepEqual(connected, { status: 'connected' });
+          assert.equal(Object.isFrozen(connected), true);
+          let clients = (await readClients()).filter(client => !beforeIds.has(client.id));
+          assert.equal(clients.length, 2, 'The driver owns its existing command and blocking clients');
+          let commandClient = clients.find(client => client.cmd === 'ping');
+          assert.ok(commandClient, 'PING uses the command connection already owned by this driver');
+          assert.equal(await admin.command('CLIENT', 'KILL', 'ID', commandClient.id), 1);
+          assert.deepEqual(await owner.driver.checkConnection(), { status: 'disconnected' });
+          assert.deepEqual(await owner.driver.checkConnection(), { status: 'disconnected' });
+          let remaining = (await readClients()).filter(client => !beforeIds.has(client.id));
+          assert.deepEqual(
+            remaining.map(client => client.id),
+            clients.filter(client => client.id !== commandClient.id).map(client => client.id)
+          );
+        } finally {
+          await owner.cleanup();
+        }
+        assert.deepEqual(await owner.driver.checkConnection(), { status: 'closed' });
+      }
+    } finally {
+      await admin.quit();
+    }
+  });
+
+  it('rejects all pending socket commands when Redis closes their exact connection', async () => {
+    let admin = await createRedisSocketClient(redisUrl);
+    let client = await createRedisSocketClient(redisUrl);
+    try {
+      let id = await client.command('CLIENT', 'ID');
+      let pending = Promise.allSettled([
+        client.command('BLPOP', testPrefix('pending-disconnect'), '0'),
+        client.command('PING')
+      ]);
+      assert.equal(await admin.command('CLIENT', 'KILL', 'ID', String(id)), 1);
+      let results = await pending;
+      assert.ok(results.every(result => result.status === 'rejected'));
+      assert.ok(results.every(result => /Redis connection closed/.test(result.reason.message)));
+      await assert.rejects(client.command('PING'), /Redis connection closed/);
+    } finally {
+      await client.quit();
+      await admin.quit();
+    }
+  });
+
   it('keeps app-owned Redis clients open while owning their blocking duplicate', async () => {
     let prefix = testPrefix('app-client');
     let main = await createRedisSocketClient(redisUrl);
@@ -141,6 +203,7 @@ describe('Cricket jobs: real Redis', () => {
 
       assert.equal(duplicateClosed, true);
       assert.equal(await main.command('PING'), 'PONG');
+      assert.deepEqual(await producer.driver.checkConnection(), { status: 'closed' });
     } finally {
       if (!cleaned)
         await producer.cleanup();

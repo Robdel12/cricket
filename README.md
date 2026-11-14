@@ -1081,6 +1081,24 @@ The app service should recheck the job status and applicable cutoff when it
 deletes each row. Cricket does not choose retention windows or schedule this
 work.
 
+The built-in Redis driver exposes an explicit command-connection check through
+both producer and worker controls:
+
+```js
+let connection = await producer.driver.checkConnection();
+// Or: await worker.driver.checkConnection()
+// Frozen result: { status: 'connected' | 'disconnected' | 'closed' }
+```
+
+`connected` means the existing command connection answered `PING` with `PONG`.
+`disconnected` means that check failed. `closed` means driver cleanup has begun,
+even when an app-supplied Redis client remains open. The check does not open a
+connection, reconnect, inspect job payloads, or run periodically. It does not
+check the blocking-wait connection, worker progress, or the claim loop. Apps
+combine this fact with their own ledger, capacity, and readiness checks. Custom
+and test drivers do not automatically provide this Redis-specific operation.
+See [the queue connection example](examples/queue-connection.js).
+
 `worker.cleanup()` closes runtime resources and driver-owned Redis connections;
 the app still owns any client it supplied. Cleanup does not delete coordination
 records.

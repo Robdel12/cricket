@@ -45,6 +45,14 @@ Use this when work leaves the request path but should keep Cricket's contract sh
   Abort the signal or call `worker.cleanup()` to stop that wait.
 - Between jobs, the continuous worker checks recovery, due cron slots, and
   delayed availability even while ready work remains.
+- For an explicit Redis command-transport check, call
+  `producer.driver.checkConnection()` or `worker.driver.checkConnection()`.
+  The frozen result has `status: 'connected' | 'disconnected' | 'closed'`.
+  It PINGs the existing command connection, never opens a replacement client,
+  and reports closed once driver cleanup begins. It does not check the
+  blocking-wait connection, claim loop, worker progress, ledger, or capacity.
+  Product health remains app-owned. Custom and test drivers do not automatically
+  provide this Redis-specific operation.
 - Job `run` functions receive `input`, `context`, `services`, `logger`, `trace`, `lifecycle`, `jobs`, and `progress`. They should not receive Redis clients.
 - Enqueue with `runAt` or `delayMs` for one-off delayed work.
 - Run app-owned cleanup in bounded batches. Call `jobs.removeFinished(ids)`
