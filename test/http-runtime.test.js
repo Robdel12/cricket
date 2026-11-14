@@ -19,6 +19,7 @@ import {
   generateOpenApi,
   forbidden,
   ok,
+  respond,
   startCricketApp,
   withCookies,
   withHeaders,
@@ -26,6 +27,7 @@ import {
   z
 } from '../src/index.js';
 import { defineManualTestApp } from '../test-support/app.js';
+import { defineProtocolHost } from '../src/protocol-host.js';
 import { app as pluginCompositionApp } from '../examples/plugin-composition/app.js';
 import {
   createHttpApp,
@@ -33,6 +35,146 @@ import {
 } from './fixtures/http.js';
 
 describe('Cricket HTTP runtime', () => {
+  it('applies response headers and early request policy to native protocol responses', async () => {
+    let hostCalls = [];
+    let middlewarePaths = [];
+    let policyPaths = [];
+    let responseHeaderPaths = [];
+    let streamStarted = Promise.withResolvers();
+    let releaseStream = Promise.withResolvers();
+    let protocolHost = defineProtocolHost({
+      name: 'test-protocol',
+      paths: { prefixes: ['/protocol'], exact: [] },
+      matches(request) { return request.path.startsWith('/protocol/'); },
+      async handle({ req, res, responseHeaders }) {
+        hostCalls.push(`${req.method} ${req.url}`);
+        if (req.url === '/protocol/throw')
+          throw new Error('protocol failure');
+        for (let [name, value] of Object.entries(responseHeaders)) {
+          if (!res.hasHeader(name))
+            res.setHeader(name, value);
+        }
+        if (req.url === '/protocol/denied') {
+          res.statusCode = 401;
+          res.end('denied');
+          return;
+        }
+        if (req.url === '/protocol/stream') {
+          res.statusCode = 200;
+          res.write('first ');
+          streamStarted.resolve();
+          await releaseStream.promise;
+          res.end('last');
+          return;
+        }
+        res.statusCode = 200;
+        res.setHeader('X-Policy', 'host value');
+        res.end('success');
+      }
+    });
+    let runtime = await createCricketRuntime(defineManualTestApp({
+      middleware: [async (context, next) => {
+        middlewarePaths.push(context.request.path);
+        return await next(context);
+      }],
+      endpoints: [defineEndpoint({
+        method: 'get',
+        path: '/ordinary',
+        handler() {
+          return withHeaders(respond(200, 'ordinary'), { 'X-POLICY': 'explicit value' });
+        }
+      })],
+      requestPolicy({ request }) {
+        policyPaths.push(request.path);
+        if (request.method === 'OPTIONS' && request.path.startsWith('/protocol/'))
+          return withHeaders(respond(204), {
+            'Access-Control-Allow-Origin': request.headers.origin,
+            'Access-Control-Allow-Methods': 'GET, OPTIONS',
+            Vary: 'Origin'
+          });
+      },
+      responseHeaders(request) {
+        assert.equal(Object.isFrozen(request), true);
+        assert.equal(Object.isFrozen(request.headers), true);
+        responseHeaderPaths.push(request.origin);
+        return {
+          'X-Content-Type-Options': 'nosniff',
+          'x-policy': 'default value',
+          'Access-Control-Allow-Origin': 'https://default.example.test',
+          'X-Request-Origin': request.origin
+        };
+      },
+      async setup() {
+        return { protocolHosts: [protocolHost] };
+      }
+    }), { logger() {} });
+    let server = runtime.app.listen(0, '127.0.0.1');
+    await new Promise((resolve, reject) => {
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+    let origin = `http://127.0.0.1:${server.address().port}`;
+
+    try {
+      let success = await request(origin).get('/protocol/success');
+      assert.equal(success.status, 200);
+      assert.equal(success.text, 'success');
+      assert.equal(success.headers['x-content-type-options'], 'nosniff');
+      assert.equal(success.headers['x-policy'], 'host value');
+      assert.equal(success.headers['x-request-origin'], origin);
+
+      let ordinary = await request(origin).get('/ordinary');
+      assert.equal(ordinary.text, 'ordinary');
+      assert.equal(ordinary.headers['x-policy'], 'explicit value');
+
+      let denied = await request(origin).get('/protocol/denied');
+      assert.equal(denied.status, 401);
+      assert.equal(denied.text, 'denied');
+      assert.equal(denied.headers['x-content-type-options'], 'nosniff');
+      assert.equal(denied.headers['x-policy'], 'default value');
+
+      let failed = await request(origin).get('/protocol/throw');
+      assert.equal(failed.status, 500);
+      assert.equal(failed.headers['x-content-type-options'], 'nosniff');
+
+      let preflight = await request(origin)
+        .options('/protocol/success')
+        .set('Origin', 'https://client.example.test');
+      assert.equal(preflight.status, 204);
+      assert.equal(preflight.headers['access-control-allow-origin'], 'https://client.example.test');
+      assert.equal(preflight.headers['access-control-allow-methods'], 'GET, OPTIONS');
+      assert.equal(hostCalls.some(call => call.startsWith('OPTIONS ')), false);
+
+      let streamResponse = new Promise((resolve, reject) => {
+        let chunks = [];
+        let incoming = http.get(`${origin}/protocol/stream`);
+        incoming.on('response', response => {
+          response.on('data', chunk => chunks.push(chunk));
+          response.on('end', () => resolve({ response, body: Buffer.concat(chunks).toString() }));
+          response.on('error', reject);
+        });
+        incoming.on('error', reject);
+      });
+      await streamStarted.promise;
+      let closing = false;
+      let cleanup = runtime.cleanup().then(() => { closing = true; });
+      await Promise.resolve();
+      assert.equal(closing, false, 'runtime cleanup waits for the native protocol response');
+      releaseStream.resolve();
+      let streamed = await streamResponse;
+      await cleanup;
+      assert.equal(streamed.body, 'first last');
+      assert.equal(streamed.response.headers['x-content-type-options'], 'nosniff');
+      assert.equal(policyPaths.length, 6);
+      assert.equal(responseHeaderPaths.length, 6);
+      assert.deepEqual(middlewarePaths, ['/ordinary']);
+    } finally {
+      releaseStream.resolve();
+      await runtime.cleanup();
+      await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
   it('runs filesystem and plugin domains in the same runtime and service registry', async () => {
     let runtime = await createCricketRuntime(pluginCompositionApp, {
       baseUrl: new URL('../examples/plugin-composition/app.js', import.meta.url)

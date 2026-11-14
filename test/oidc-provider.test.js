@@ -3,7 +3,7 @@ import http from 'node:http';
 import { generateKeyPairSync } from 'node:crypto';
 import { describe, it } from 'node:test';
 import { createMemoryAdapter } from 'oidc-provider/lib/adapters/memory_adapter.js';
-import { createCricketRuntime, defineEndpoint } from '../src/index.js';
+import { createCricketRuntime, defineEndpoint, respond, withHeaders } from '../src/index.js';
 import { createOidcProviderHost } from '../src/oidc-provider.js';
 import { defineManualTestApp } from '../test-support/app.js';
 
@@ -18,7 +18,12 @@ let paths = {
   interactionLanding: '/authorize'
 };
 
-async function startHost(overrides = {}, hookOverrides = {}, { cricketServer = false, afterCreate, trustProxy = false } = {}) {
+async function startHost(overrides = {}, hookOverrides = {}, {
+  cricketServer = false,
+  afterCreate,
+  trustProxy = false,
+  appOptions = {}
+} = {}) {
   let runtime;
   let oidcHost;
   let seenInteractions = [];
@@ -44,6 +49,7 @@ async function startHost(overrides = {}, hookOverrides = {}, { cricketServer = f
     origin = `http://127.0.0.1:${port}`;
   }
   let app = defineManualTestApp({
+    ...appOptions,
     trustProxy,
     async setup() {
       let clients = overrides.clients ?? [{
@@ -221,6 +227,84 @@ describe('Cricket OIDC provider host', () => {
       let metadata = await authorization.json();
       assert.equal(metadata.issuer, `${host.origin}/oauth`);
       assert.equal(metadata.token_endpoint, `${host.origin}/oauth/token`);
+    } finally {
+      await host.close();
+    }
+  });
+
+  it('applies app response headers and preflight policy to OIDC protocol responses', async () => {
+    let host = await startHost({}, {
+      authorizeRequest({ route }) {
+        if (route === 'interaction_details')
+          return { status: 401, body: { error: 'Sign in required.' } };
+      }
+    }, {
+      appOptions: {
+        responseHeaders(request) {
+          let headers = {
+            'X-Content-Type-Options': 'nosniff',
+            'X-Frame-Options': 'SAMEORIGIN',
+            'Referrer-Policy': 'strict-origin-when-cross-origin',
+            'X-Request-Path': request.path,
+            'Access-Control-Allow-Origin': 'https://default.example.test'
+          };
+          return headers;
+        },
+        requestPolicy({ request }) {
+          if (request.method === 'OPTIONS' && request.path.startsWith('/.well-known/'))
+            return withHeaders(respond(204), {
+              'Access-Control-Allow-Origin': request.headers.origin,
+              'Access-Control-Allow-Methods': 'GET, OPTIONS',
+              Vary: 'Origin'
+            });
+        }
+      }
+    });
+    try {
+      let resource = await request(host.origin, paths.resourceMetadata, {
+        headers: { origin: 'https://client.example.test' }
+      });
+      assert.equal(resource.status, 200);
+      assert.equal(resource.headers.get('x-content-type-options'), 'nosniff');
+      assert.equal(resource.headers.get('x-frame-options'), 'SAMEORIGIN');
+      assert.equal(resource.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
+      assert.equal(resource.headers.get('x-request-path'), paths.resourceMetadata);
+      assert.equal(resource.headers.get('access-control-allow-origin'), 'https://default.example.test');
+
+      let authorization = await request(host.origin, paths.authorizationMetadata, {
+        headers: { origin: host.origin }
+      });
+      assert.equal(authorization.status, 200);
+      assert.equal(authorization.headers.get('x-content-type-options'), 'nosniff');
+      assert.equal(authorization.headers.get('access-control-allow-origin'), host.origin,
+        'the provider’s explicit origin header overrides app defaults');
+
+      let providerCors = await request(host.origin, '/oauth/token', {
+        method: 'POST',
+        headers: {
+          origin: 'https://untrusted.example.test',
+          authorization: `Basic ${Buffer.from('test-client:test-secret').toString('base64')}`,
+          'content-type': 'application/x-www-form-urlencoded'
+        },
+        body: 'grant_type=invalid'
+      });
+      assert.equal(providerCors.status, 400);
+      assert.equal(providerCors.headers.get('access-control-allow-origin'), null,
+        'a provider-owned CORS denial is not replaced by the app default');
+
+      let denied = await request(host.origin, `${paths.interaction}/0123456789abcdef/details`, {
+        headers: { origin: 'https://client.example.test' }
+      });
+      assert.equal(denied.status, 401);
+      assert.equal(denied.headers.get('x-content-type-options'), 'nosniff');
+
+      let preflight = await request(host.origin, paths.resourceMetadata, {
+        method: 'OPTIONS',
+        headers: { origin: 'https://client.example.test', 'access-control-request-method': 'GET' }
+      });
+      assert.equal(preflight.status, 204);
+      assert.equal(preflight.headers.get('access-control-allow-origin'), 'https://client.example.test');
+      assert.equal(preflight.headers.get('access-control-allow-methods'), 'GET, OPTIONS');
     } finally {
       await host.close();
     }

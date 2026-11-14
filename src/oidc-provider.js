@@ -167,6 +167,15 @@ function hostResponse(ctx, result) {
   if (response.body !== undefined) ctx.body = response.body;
 }
 
+function applyResponseHeaderDefaults(ctx, headers, excluded = new Set()) {
+  for (let [name, value] of Object.entries(headers ?? {})) {
+    if (!excluded.has(name.toLowerCase()) && !ctx.response.has(name))
+      ctx.set(name, value);
+  }
+}
+
+let providerOwnedResponseHeaders = new Set(['access-control-allow-origin']);
+
 let admissionSchema = jsonValueSchema.pipe(z.object({
   status: z.number().int().min(200).max(599),
   body: jsonValueSchema.optional(),
@@ -515,6 +524,8 @@ export async function createOidcProviderHost({
     }
   };
 
+  let contextsByRequest = new WeakMap();
+  let controlsByRequest = new WeakMap();
   provider = new Provider(issuer, settings);
   provider.proxy = false;
   provider.on('server_error', (_ctx, error) => {
@@ -525,12 +536,31 @@ export async function createOidcProviderHost({
   provider.on('grant.revoked', (_ctx, grantId) => {
     if (hooks.onGrantRevoked) observeHook(hooks.onGrantRevoked, { grantId });
   });
+  provider.use(async (ctx, next) => {
+    try {
+      await next();
+    } finally {
+      applyResponseHeaderDefaults(ctx, controlsByRequest.get(ctx.req)?.responseHeaders,
+        providerOwnedResponseHeaders);
+    }
+  });
 
   let koaApp = new Koa({ proxy: false });
   koaApp.keys = [...cookieKeys];
-  let contextsByRequest = new WeakMap();
-  let controlsByRequest = new WeakMap();
   koaApp.on('error', () => {});
+  koaApp.use(async (ctx, next) => {
+    try {
+      await next();
+    } finally {
+      let controls = controlsByRequest.get(ctx.req);
+      let requestPath = controls?.request.path;
+      let usesProvider = requestPath === paths.providerMount ||
+        requestPath?.startsWith(`${paths.providerMount}/`) ||
+        requestPath === paths.authorizationMetadata;
+      if (controls && !usesProvider)
+        applyResponseHeaderDefaults(ctx, controls.responseHeaders);
+    }
+  });
   koaApp.use(async (ctx, next) => {
     let { request } = controlsByRequest.get(ctx.req);
     // Koa and the provider consume Cricket's validated transport facts. Their
@@ -779,8 +809,8 @@ export async function createOidcProviderHost({
         request.path === paths.authorizationMetadata ||
         interactionRoute(request.path, paths) !== null;
     },
-    async handle({ req, res, request, continueRequest, declineRequestBody }) {
-      controlsByRequest.set(req, { request, continueRequest, declineRequestBody });
+    async handle({ req, res, request, responseHeaders, continueRequest, declineRequestBody }) {
+      controlsByRequest.set(req, { request, responseHeaders, continueRequest, declineRequestBody });
       try {
         await handler(req, res);
       } finally {
