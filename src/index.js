@@ -41,8 +41,10 @@ export {
   redirect,
   respond,
   withCookies,
+  withResponseBody,
   withError,
   withHeaders,
+  withResponseHeaders,
   withResponseCleanup
 } from './response.js';
 
