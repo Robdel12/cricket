@@ -227,6 +227,26 @@ function methodNotAllowed(request, allowedMethods) {
   );
 }
 
+function endpointWithRequestBodyLimits(endpoint, requestBodyLimits) {
+  let operationId = routeIdentityFor(endpoint).operationId;
+  let limits = requestBodyLimits && Object.hasOwn(requestBodyLimits, operationId)
+    ? requestBodyLimits[operationId]
+    : undefined;
+  if (!limits)
+    return endpoint;
+
+  let multipart = endpoint.multipart === true ? {} : endpoint.multipart;
+  return {
+    ...endpoint,
+    maxBodyBytes: limits.maxBytes,
+    multipart: {
+      ...multipart,
+      maxBytes: limits.maxBytes,
+      ...(limits.maxFileBytes === undefined ? {} : { maxFileBytes: limits.maxFileBytes })
+    }
+  };
+}
+
 function optionsResponse(allowedMethods) {
   return withHeaders(respond(204), {
       Allow: allowedMethods.join(', ')
@@ -1064,7 +1084,10 @@ function createRuntimeHandler({
         if (match) {
           let matchedRequest = withMatchedParams(nextRequestContext.request, match);
           observedRequest = matchedRequest;
-          routeEndpoint = match.endpoint;
+          routeEndpoint = endpointWithRequestBodyLimits(
+            match.endpoint,
+            appContract.requestBodyLimits
+          );
           route = routeIdentityFor(routeEndpoint);
           apiVersionNegotiation = resolveEndpointApiVersion(routeEndpoint, matchedRequest);
           let versionMetadata = apiVersionLogMetadata(apiVersionNegotiation);
@@ -1112,7 +1135,7 @@ function createRuntimeHandler({
           );
 
           let contextAfterBeforeBodyRules = await timing.time('beforeBodyRulesMs', () =>
-            applyRules(match.endpoint.beforeBodyRules, {
+            applyRules(routeEndpoint.beforeBodyRules, {
               ...requestContextForMatchedRequest.context,
               ...(apiVersionNegotiation ? {
                 apiVersion: apiVersionNegotiation.version
@@ -1121,7 +1144,8 @@ function createRuntimeHandler({
             })
           );
 
-          if (routeEndpoint.fetch)
+          if (routeEndpoint.fetch || routeEndpoint.rawBody ||
+              !['GET', 'HEAD'].includes(matchedRequest.method.toUpperCase()))
             assertRequestBodySize(matchedRequest, maxBodyBytesFor(routeEndpoint));
 
           writeContinue();

@@ -44,6 +44,76 @@ function readResponse(outgoing) {
   });
 }
 
+async function expectContinueRequest(runtime, headers, body) {
+  let server = runtime.app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  let port = server.address().port;
+  let continued = false;
+  let outgoing;
+
+  try {
+    let response = await new Promise((resolve, reject) => {
+      outgoing = http.request({
+        host: '127.0.0.1',
+        port,
+        path: '/uploads',
+        method: 'POST',
+        headers
+      }, incoming => {
+        let chunks = [];
+        incoming.on('data', chunk => chunks.push(chunk));
+        incoming.once('end', () => resolve({
+          status: incoming.statusCode,
+          body: Buffer.concat(chunks).toString()
+        }));
+        incoming.once('error', reject);
+      });
+      outgoing.once('error', reject);
+      outgoing.once('continue', () => {
+        continued = true;
+        outgoing.end(body);
+      });
+      outgoing.flushHeaders();
+    });
+    return { ...response, continued };
+  } finally {
+    outgoing?.destroy();
+    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+}
+
+async function chunkedRequest(runtime, headers, body) {
+  let server = runtime.app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  let port = server.address().port;
+  let outgoing;
+
+  try {
+    return await new Promise((resolve, reject) => {
+      outgoing = http.request({
+        host: '127.0.0.1',
+        port,
+        path: '/uploads',
+        method: 'POST',
+        headers
+      }, incoming => {
+        let chunks = [];
+        incoming.on('data', chunk => chunks.push(chunk));
+        incoming.once('end', () => resolve({
+          status: incoming.statusCode,
+          body: Buffer.concat(chunks).toString()
+        }));
+        incoming.once('error', reject);
+      });
+      outgoing.once('error', reject);
+      outgoing.end(body);
+    });
+  } finally {
+    outgoing?.destroy();
+    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+}
+
 describe('Cricket multipart requests', () => {
   it('parses repeated fields and files, then removes temporary files', async () => {
     let tempDir = await mkdtemp(path.join(os.tmpdir(), 'cricket-test-'));
@@ -168,6 +238,143 @@ describe('Cricket multipart requests', () => {
 
     assert.equal(response.status, 200);
     assert.equal(response.body.size, elevenMegabytes.length);
+  });
+
+  it('applies runtime multipart byte and file limits before continuing or parsing', async t => {
+    let tempDir = await mkdtemp(path.join(os.tmpdir(), 'cricket-runtime-limits-'));
+    let boundary = 'cricket-runtime-limit-boundary';
+    let fileContent = Buffer.alloc(160, 97);
+    let body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="archive.zip"\r\nContent-Type: application/zip\r\n\r\n`),
+      fileContent,
+      Buffer.from(`\r\n--${boundary}--\r\n`)
+    ]);
+    let endpoint = defineEndpoint({
+      method: 'post',
+      path: '/uploads',
+      operationId: 'uploadArchive',
+      beforeBodyRules: [defineRule('requireUploadToken', ({ request }) => {
+        if (request.headers['x-upload-token'] !== 'allowed')
+          throw unauthenticated();
+      })],
+      multipart: {
+        maxBytes: 2048,
+        maxFileBytes: 2048,
+        maxFiles: 1,
+        maxFields: 5,
+        maxParts: 6,
+        tempDir
+      },
+      handler({ request: parsedRequest }) {
+        return ok({ size: parsedRequest.files[0].size });
+      }
+    });
+    let createRuntime = limits => createCricketRuntime(defineManualTestApp({
+      endpoints: [endpoint],
+      requestBodyLimits: { uploadArchive: limits }
+    }), { logger() {} });
+    let aggregateRuntime = await createRuntime({
+      maxBytes: body.length - 1,
+      maxFileBytes: 512
+    });
+    let fileRuntime = await createRuntime({
+      maxBytes: body.length + 100,
+      maxFileBytes: fileContent.length - 1
+    });
+    let acceptedRuntime = await createRuntime({
+      maxBytes: body.length + 100,
+      maxFileBytes: fileContent.length + 1
+    });
+    assert.equal(Object.isFrozen(aggregateRuntime.contract.requestBodyLimits), true);
+    assert.equal(Object.isFrozen(aggregateRuntime.contract.requestBodyLimits.uploadArchive), true);
+    assert.deepEqual(aggregateRuntime.contract.requestBodyLimits.uploadArchive, {
+      maxBytes: body.length - 1,
+      maxFileBytes: 512
+    });
+    t.after(async () => {
+      await aggregateRuntime.cleanup();
+      await fileRuntime.cleanup();
+      await acceptedRuntime.cleanup();
+      await rm(tempDir, { recursive: true, force: true });
+    });
+
+    let expectHeaders = {
+      expect: '100-continue',
+      'content-length': body.length,
+      'content-type': `multipart/form-data; boundary=${boundary}`
+    };
+    let unauthenticatedResponse = await expectContinueRequest(
+      aggregateRuntime,
+      expectHeaders,
+      body
+    );
+    assert.equal(unauthenticatedResponse.status, 401);
+    assert.equal(unauthenticatedResponse.continued, false);
+
+    let oversizedResponse = await expectContinueRequest(
+      aggregateRuntime,
+      { ...expectHeaders, 'x-upload-token': 'allowed' },
+      body
+    );
+    assert.equal(oversizedResponse.status, 413);
+    assert.equal(oversizedResponse.continued, false);
+
+    let streamedOversized = await chunkedRequest(aggregateRuntime, {
+      'content-type': `multipart/form-data; boundary=${boundary}`,
+      'x-upload-token': 'allowed'
+    }, body);
+    assert.equal(streamedOversized.status, 413);
+    assert.deepEqual(await readdir(tempDir), []);
+
+    let fileTooLarge = await request(fileRuntime.app)
+      .post('/uploads')
+      .set('x-upload-token', 'allowed')
+      .set('content-type', `multipart/form-data; boundary=${boundary}`)
+      .send(body);
+    assert.equal(fileTooLarge.status, 413);
+    assert.deepEqual(await readdir(tempDir), []);
+
+    let accepted = await request(acceptedRuntime.app)
+      .post('/uploads')
+      .set('x-upload-token', 'allowed')
+      .set('content-type', `multipart/form-data; boundary=${boundary}`)
+      .send(body);
+    assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+    assert.deepEqual(accepted.body, { size: fileContent.length });
+    assert.deepEqual(await readdir(tempDir), []);
+  });
+
+  it('rejects request body limit entries that do not name multipart operations', async () => {
+    assert.throws(() => defineManualTestApp({
+      requestBodyLimits: { uploadArchive: { maxBytes: 0 } }
+    }), /maxBytes must be a positive safe integer/);
+    assert.throws(() => defineManualTestApp({
+      requestBodyLimits: { uploadArchive: { maxBytes: 1024, maxFiles: 2 } }
+    }), /unsupported keys: maxFiles/);
+
+    let endpoint = defineEndpoint({
+      method: 'post',
+      path: '/uploads',
+      operationId: 'uploadArchive',
+      multipart: {},
+      handler: () => ok({ uploaded: true })
+    });
+    await assert.rejects(createCricketRuntime(defineManualTestApp({
+      endpoints: [endpoint],
+      requestBodyLimits: { unknownUpload: { maxBytes: 1024 } }
+    }), { logger() {} }), /unknown operation ID unknownUpload/);
+
+    let fetchEndpoint = defineEndpoint({
+      method: 'post',
+      path: '/fetch',
+      operationId: 'fetchUpload',
+      fetchResponses: { 200: {} },
+      fetch: () => new Response('ok')
+    });
+    await assert.rejects(createCricketRuntime(defineManualTestApp({
+      endpoints: [fetchEndpoint],
+      requestBodyLimits: { fetchUpload: { maxBytes: 1024 } }
+    }), { logger() {} }), /requires a parsed multipart endpoint/);
   });
 
   it('runs endpoint access rules before parsing or creating temporary files', async () => {
