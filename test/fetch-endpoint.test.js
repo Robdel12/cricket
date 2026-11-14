@@ -6,7 +6,10 @@ import { createCricketRuntime, defineEndpoint, generateOpenApi, tooManyRequests,
 import { defineManualTestApp } from '../test-support/app.js';
 
 async function startFetchApp(endpoint, appOptions = {}) {
-  let runtime = await createCricketRuntime(defineManualTestApp({ ...appOptions, endpoints: [endpoint] }), { logger() {} });
+  let runtime = await createCricketRuntime(defineManualTestApp({
+    ...appOptions,
+    endpoints: Array.isArray(endpoint) ? endpoint : [endpoint]
+  }), { logger() {} });
   let server = runtime.app.listen(0, '127.0.0.1');
   await once(server, 'listening');
   return {
@@ -34,19 +37,47 @@ async function readResponse(response) {
 }
 
 describe('Fetch endpoints', () => {
+  it('rejects parsed response schemas on Fetch endpoints', () => {
+    let fetch = async () => new Response('stream');
+    assert.throws(() => defineEndpoint({
+      method: 'get', path: '/schema', fetch, response: z.string()
+    }), /Fetch endpoints use fetchResponses instead of parsed response contracts/);
+    assert.throws(() => defineEndpoint({
+      method: 'get', path: '/schemas', fetch, responses: { 200: z.string() }
+    }), /Fetch endpoints use fetchResponses instead of parsed response contracts/);
+    assert.throws(() => defineEndpoint({
+      method: 'post', path: '/body-schema', fetch, body: z.string(),
+      fetchResponses: { 200: {} }
+    }), /Fetch handlers cannot use parsed body/);
+    assert.throws(() => defineEndpoint({
+      method: 'get', path: '/schema-field', fetch,
+      fetchResponses: { 200: { schema: z.string() } }
+    }), /does not support schema/);
+    assert.throws(() => defineEndpoint({
+      method: 'get', path: '/wrong-owner', handler: () => ({}),
+      fetchResponses: { 200: { contentTypes: ['application/json'] } }
+    }), /fetchResponses requires a Fetch handler/);
+    assert.throws(() => defineEndpoint({
+      method: 'get', path: '/missing-contract', fetch
+    }), /Fetch endpoints need fetchResponses/);
+  });
+
   it('documents multiple Fetch response media types without buffering the body', () => {
     let endpoint = defineEndpoint({
       method: 'post',
       path: '/stream',
-      responses: {
-        200: { schema: z.unknown(), contentType: ['application/json', 'text/event-stream'] }
+      fetchResponses: {
+        200: { description: 'Streaming response', contentTypes: ['application/json', 'text/event-stream'] }
       },
       fetch: async () => new Response()
     });
     let docs = generateOpenApi({ endpoints: [endpoint] });
-    assert.deepEqual(Object.keys(docs.paths['/stream'].post.responses[200].content), [
+    let responseDocs = docs.paths['/stream'].post.responses[200];
+    assert.equal(responseDocs.description, 'Streaming response');
+    assert.deepEqual(Object.keys(responseDocs.content), [
       'application/json', 'text/event-stream'
     ]);
+    assert.equal(responseDocs.content['application/json'].schema, undefined);
   });
 
   it('keeps Fetch Request and Response transport details inside Cricket', async () => {
@@ -59,8 +90,8 @@ describe('Fetch endpoints', () => {
       beforeBodyRules: [({ request }) => {
         assert.equal(request.path, '/fetch/snapshot-1');
       }],
-      responses: {
-        202: { schema: z.string(), contentType: ['text/plain', 'text/event-stream'] }
+      fetchResponses: {
+        202: { contentTypes: ['text/plain', 'text/event-stream'] }
       },
       fetch(request, context) {
         handlerRequest = request;
@@ -117,7 +148,7 @@ describe('Fetch endpoints', () => {
     let app = await startFetchApp(defineEndpoint({
       method: 'head',
       path: '/head',
-      responses: { 200: { schema: z.string(), contentType: 'text/plain' } },
+      fetchResponses: { 200: { contentTypes: ['text/plain'] } },
       fetch: () => new Response(new ReadableStream({
         start(controller) { controller.enqueue(new TextEncoder().encode('hello')); },
         pull() { pulls += 1; },
@@ -142,11 +173,43 @@ describe('Fetch endpoints', () => {
     }
   });
 
+  it('rejects undeclared status and media type before sending a Fetch stream', async () => {
+    let cancelled = [];
+    let app = await startFetchApp(defineEndpoint({
+      method: 'get',
+      path: '/contract/:case',
+      fetchResponses: { 200: { contentTypes: ['text/plain'] } },
+      fetch: request => new Response(new ReadableStream({
+        start(controller) { controller.enqueue(new TextEncoder().encode('never sent')); },
+        cancel() { cancelled.push(new URL(request.url).pathname); }
+      }), {
+        status: new URL(request.url).pathname.endsWith('/status') ? 201 : 200,
+        headers: {
+          'content-type': new URL(request.url).pathname.endsWith('/status')
+            ? 'text/plain'
+            : 'application/json'
+        }
+      })
+    }));
+    try {
+      let statusResponse = await fetch(`${app.origin}/contract/status`);
+      assert.equal(statusResponse.status, 500);
+      await statusResponse.arrayBuffer();
+      let mediaResponse = await fetch(`${app.origin}/contract/media`);
+      assert.equal(mediaResponse.status, 500);
+      await mediaResponse.arrayBuffer();
+      assert.deepEqual(cancelled, ['/contract/status', '/contract/media']);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('enforces a body limit while the Fetch handler reads the web stream', async () => {
     let app = await startFetchApp(defineEndpoint({
       method: 'post',
       path: '/fetch',
       maxBodyBytes: 4,
+      fetchResponses: { 200: { contentTypes: ['text/plain'] } },
       fetch: async request => new Response(await request.text())
     }));
     try {
@@ -182,6 +245,7 @@ describe('Fetch endpoints', () => {
     let app = await startFetchApp(defineEndpoint({
       method: 'post',
       path: '/echo',
+      fetchResponses: { 200: {} },
       fetch(request) {
         let reader;
         let body = new ReadableStream({
@@ -217,6 +281,7 @@ describe('Fetch endpoints', () => {
       method: 'post',
       path: '/early',
       maxBodyBytes: 1024,
+      fetchResponses: { 200: { contentTypes: ['text/plain'] } },
       fetch: async () => new Response('early response')
     }));
     let request;
@@ -253,6 +318,7 @@ describe('Fetch endpoints', () => {
     let app = await startFetchApp(defineEndpoint({
       method: 'get',
       path: '/slow',
+      fetchResponses: { 200: {} },
       fetch: () => new Response(new ReadableStream({
         start(controller) {
           emitted += 1;
@@ -294,6 +360,7 @@ describe('Fetch endpoints', () => {
       method: 'post',
       path: '/echo',
       maxBodyBytes: 4,
+      fetchResponses: { 200: { contentTypes: ['text/plain'] } },
       fetch: request => new Response(request.body, {
         headers: { 'content-type': 'text/plain', 'content-length': '6' }
       })
@@ -343,6 +410,7 @@ describe('Fetch endpoints', () => {
       method: 'post',
       path: '/fetch',
       beforeBodyRules: [() => { throw tooManyRequests('Slow down'); }],
+      fetchResponses: { 200: { contentTypes: ['text/plain'] } },
       fetch: async () => new Response('unreachable')
     }));
     try {
@@ -379,6 +447,7 @@ describe('Fetch endpoints', () => {
     let app = await startFetchApp(defineEndpoint({
       method: 'get',
       path: '/fetch',
+      fetchResponses: { 200: {} },
       fetch: request => {
         fetchSignal = request.signal;
         enteredResolve();
@@ -418,6 +487,7 @@ describe('Fetch endpoints', () => {
     let app = await startFetchApp(defineEndpoint({
       method: 'get',
       path: '/fetch',
+      fetchResponses: { 200: { contentTypes: ['text/plain'] } },
       fetch: async request => {
         enteredResolve();
         request.signal.addEventListener('abort', signalAbortedResolve, { once: true });

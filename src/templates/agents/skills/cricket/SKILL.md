@@ -79,7 +79,9 @@ Use an endpoint's `fetch(request, context)` option when an integration already
 speaks the Web Fetch API. The request body is streamed with `maxBodyBytes`; the
 response body stays streamed through Cricket's HTTP writer. Use the ordinary
 endpoint rules for admission, and honor `request.signal` on disconnect or
-shutdown. Do not expose Node request/response objects to the app.
+shutdown. Declare status and media types with `fetchResponses`; Fetch endpoints
+do not accept parsed response schemas because Cricket does not buffer their
+response bodies. Do not expose Node request/response objects to the app.
 
 Use framework errors such as `badRequest` for invalid input. Response, serializer,
 and normalizer contract details stay internal. Configure app `onError` once for
