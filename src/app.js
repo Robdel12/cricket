@@ -104,7 +104,7 @@ function validateResolvedRequestBodyLimits(requestBodyLimits, endpoints) {
     return;
 
   let operations = new Map(endpoints.map(endpoint => [operationIdFor(endpoint), endpoint]));
-  for (let [operationId, limits] of Object.entries(requestBodyLimits)) {
+  for (let operationId of Object.keys(requestBodyLimits)) {
     let endpoint = operations.get(operationId);
     if (!endpoint)
       throw new Error(
@@ -179,6 +179,7 @@ function freezeAppContract(contract) {
     models: stable.models,
     plugins: stable.plugins,
     trustProxy: stable.trustProxy,
+    requestBodyLimits: stable.requestBodyLimits,
     requestPolicy: stable.requestPolicy,
     responseHeaders: stable.responseHeaders
   });
@@ -200,6 +201,7 @@ function definedAppFor(app) {
     'models',
     'plugins',
     'trustProxy',
+    'requestBodyLimits',
     'requestPolicy',
     'responseHeaders'
   ].filter(key => app[key] !== definition[key]);
