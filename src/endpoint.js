@@ -19,6 +19,7 @@ import {
   resolveHttpResponse,
   withResponseBody
 } from './response.js';
+import { fetchResponseToHttpResponse } from './http/fetch.js';
 
 export let supportedEndpointMethods = Object.freeze([
   'DELETE',
@@ -53,7 +54,8 @@ let endpointOptionKeys = new Set([
   'responses',
   'beforeBodyRules',
   'rules',
-  'handler'
+  'handler',
+  'fetch'
 ]);
 let deprecationOptionKeys = new Set([
   'since',
@@ -362,7 +364,7 @@ function parseRequestHeaders(schema, headers = {}) {
  * @param {string[]} [config.tags=[]]
  * @param {string} [config.operationId]
  * @param {string} [config.traceName] - Optional request trace span name for the handler.
- * @param {number} [config.maxBodyBytes] - Maximum buffered request body size for this endpoint.
+ * @param {number} [config.maxBodyBytes] - Maximum request body size for this endpoint.
  * @param {boolean|object} [config.multipart=false] - Parse multipart form data for this endpoint.
  * @param {boolean|object} [config.rawBody=false] - Endpoint option for requests that need the unparsed request body.
  * @param {object} [config.apiVersions] - Optional endpoint version contract returned by defineApiVersions().
@@ -376,7 +378,8 @@ function parseRequestHeaders(schema, headers = {}) {
  * @param {Record<string | number, any>} [config.responses]
  * @param {Array<Function>} [config.beforeBodyRules=[]] - Rules that run before request body parsing.
  * @param {Array<Function>} [config.rules=[]]
- * @param {(context: any) => any|Promise<any>} config.handler
+ * @param {(request: Request, context: any) => Response|Promise<Response>} [config.fetch] - Fetch-style transport handler; the Node HTTP bridge stays inside Cricket.
+ * @param {(context: any) => any|Promise<any>} [config.handler] - Use with parsed endpoint bodies.
  * @returns {{
  *   method: string,
  *   path: string,
@@ -395,6 +398,7 @@ function parseRequestHeaders(schema, headers = {}) {
  *   responses?: Record<string | number, any>,
  *   beforeBodyRules: Array<Function>,
  *   rules: Array<Function>,
+ *   fetch?: Function,
  *   handle(request: any, context?: any): Promise<{
  *     status: number,
  *     body?: any,
@@ -430,14 +434,25 @@ export function defineEndpoint(config) {
     responses,
     beforeBodyRules = [],
     rules = [],
-    handler
+    handler,
+    fetch
   } = config;
 
   if (!method) throw new Error('Endpoint method is required');
   if (!path) throw new Error('Endpoint path is required');
   let normalizedMethod = normalizeEndpointMethod(method);
+  if (maxBodyBytes !== undefined && (!Number.isSafeInteger(maxBodyBytes) || maxBodyBytes < 1))
+    throw new Error(`${normalizedMethod} ${path} maxBodyBytes must be a positive safe integer`);
 
-  if (typeof handler !== 'function')
+  if (fetch !== undefined && typeof fetch !== 'function')
+    throw new Error(`${normalizedMethod} ${path} fetch must be a function`);
+  if (fetch && handler)
+    throw new Error(`${normalizedMethod} ${path} must use either handler or fetch`);
+  if (fetch && (body || multipart || rawBody || apiVersions || requestBody))
+    throw new Error(`${normalizedMethod} ${path} Fetch handlers cannot use parsed body, rawBody, multipart, apiVersions, or requestBody contracts`);
+  if (fetch && (response?.serializer || Object.values(responses ?? {}).some(definition => definition?.serializer)))
+    throw new Error(`${normalizedMethod} ${path} Fetch response bodies cannot use Cricket serializers`);
+  if (!fetch && typeof handler !== 'function')
     throw new Error(`${normalizedMethod} ${path} needs a handler`);
   if (traceName !== undefined && typeof traceName !== 'string')
     throw new Error(`${normalizedMethod} ${path} traceName must be a string`);
@@ -473,6 +488,7 @@ export function defineEndpoint(config) {
     responses: frozenPlain(responses),
     beforeBodyRules: Object.freeze([...beforeBodyRules]),
     rules: Object.freeze([...rules]),
+    ...(fetch ? { fetch } : {}),
 
     async handle(request, context = {}, {
       apiVersionNegotiation,
@@ -519,6 +535,54 @@ export function defineEndpoint(config) {
       return await timePhase(timing, 'responseValidationMs', () =>
         parseEndpointResponse(endpoint, result, versionContract, serializerContext)
       );
+    },
+
+    async handleFetch(fetchRequest, request, context = {}, {
+      timing,
+      onClose
+    } = {}) {
+      if (!fetch) throw new Error(`${normalizedMethod} ${path} is not a Fetch endpoint`);
+      let input = await timePhase(timing, 'validationMs', () => ({
+        params: parseRequestObjectSchema(params, request.params),
+        query: parseRequestObjectSchema(query, request.query),
+        ...(headers === undefined ? {} : {
+          headers: parseRequestHeaders(headers, request.headers)
+        })
+      }));
+      let endpointContext = { ...context, request, input };
+      let handlerContext = await timePhase(timing, 'rulesMs', () =>
+        applyRules(rules, endpointContext)
+      );
+      let response;
+      try {
+        response = await timePhase(timing, 'handlerMs', () => {
+          let handlerTraceName = traceName ?? operationIdFor(endpoint);
+          if (typeof handlerContext.trace?.span === 'function')
+            return handlerContext.trace.span(handlerTraceName, () => fetch(fetchRequest, handlerContext));
+          return fetch(fetchRequest, handlerContext);
+        });
+        if (!(response instanceof Response))
+          throw responseContractFailed({ issues: [{ message: 'Fetch endpoint must return a Fetch Response' }] });
+        let definition = responseDefinitionFor(endpoint, response.status);
+        if ((endpoint.responses && !definition) || (
+          endpoint.response && response.status !== defaultStatusForMethod(endpoint.method)
+        ))
+          throw responseContractFailed({ issues: [{ message: `Undeclared Fetch response status ${response.status}` }] });
+        let expectedContentTypes = definition?.contentType;
+        if (expectedContentTypes) {
+          let allowed = Array.isArray(expectedContentTypes) ? expectedContentTypes : [expectedContentTypes];
+          let actual = response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase();
+          if (!actual || !allowed.some(contentType => contentType.toLowerCase() === actual))
+            throw responseContractFailed({ issues: [{ message: 'Fetch response Content-Type does not match its contract' }] });
+        }
+        return fetchResponseToHttpResponse(response, { signal: fetchRequest.signal });
+      } catch (error) {
+        try {
+          await response?.body?.cancel();
+        } catch {}
+        onClose?.();
+        throw error;
+      }
     }
   };
 
