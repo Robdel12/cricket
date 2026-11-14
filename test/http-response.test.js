@@ -16,7 +16,10 @@ import {
   respond,
   tooManyRequests,
   withCookies,
+  withError,
   withHeaders,
+  withResponseBody,
+  withResponseHeaders,
   withResponseCleanup,
   z
 } from '../src/index.js';
@@ -28,6 +31,46 @@ import {
 } from './fixtures/http.js';
 
 describe('Cricket HTTP responses', () => {
+  it('replaces a response body and exact headers through public helpers without losing metadata', async () => {
+    let original = new Error('private stream details');
+    let source = Readable.from(['replacement body']);
+    let cleaned = Promise.withResolvers();
+    let reports = [];
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/replacement',
+      handler() {
+        let response = withError(respond(503, { error: 'original body' }), original);
+        response = withHeaders(response, {
+          'Content-Length': '1',
+          'X-Discard': 'old'
+        });
+        response = withCookies(response, [{ name: 'session', value: 'kept' }]);
+        response = withResponseCleanup(response, () => {
+          source.destroy();
+          cleaned.resolve();
+        });
+        response = withResponseBody(response, source);
+        return withResponseHeaders(response, { 'Content-Type': 'text/plain' });
+      }
+    });
+    let app = await createHttpApp({
+      endpoints: [endpoint],
+      onError(error) { reports.push(error); }
+    });
+    let response = await request(app).get('/replacement');
+    await cleaned.promise;
+
+    assert.equal(response.status, 503);
+    assert.equal(response.text, 'replacement body');
+    assert.equal(response.headers['content-length'], undefined);
+    assert.match(response.headers['set-cookie'][0], /^session=kept/);
+    assert.equal(response.headers['x-discard'], undefined);
+    assert.equal(response.headers['content-type'], 'text/plain');
+    assert.deepEqual(reports, [original]);
+    assert.equal(source.destroyed, true);
+  });
+
   it('composes immutable transport metadata without freezing response bodies', () => {
     let body = {
       status: 'active'

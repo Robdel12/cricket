@@ -772,6 +772,8 @@ import {
   withCookies,
   withError,
   withHeaders,
+  withResponseBody,
+  withResponseHeaders,
   withResponseCleanup
 } from '@robdel12/cricket';
 
@@ -801,6 +803,12 @@ return withResponseCleanup(
   () => stream.destroy()
 );
 ```
+
+When a policy replaces a response body after validation, `withResponseBody`
+keeps the explicit response's status, cookies, headers, redirect, cleanup, and
+handled-error metadata. `withResponseHeaders` replaces the complete header set;
+use it when the new body makes an earlier header such as `Content-Length`
+invalid. Cookies and cleanup stay attached to the response.
 
 For a file with a known byte length, set `Content-Length` alongside the stream.
 Cricket forwards chunks with backpressure and checks the declared size. A short
