@@ -53,7 +53,7 @@ export function normalizeObservability(config, {
     ? config.requestId
     : randomUUID;
 
-  async function emit(event) {
+  async function emit(event, context) {
     if (!observers.length)
       return;
 
@@ -61,7 +61,7 @@ export function normalizeObservability(config, {
 
     for (let observe of observers) {
       try {
-        await observe(observed);
+        await observe(observed, context);
       } catch (error) {
         try {
           logger?.error?.('observability.failed', {
@@ -76,11 +76,14 @@ export function normalizeObservability(config, {
     }
   }
 
-  function createReplay() {
+  function createReplay(requestContext) {
     if (!observers.length)
       return noopReplay;
 
     let events = [];
+    let context = requestContext === undefined
+      ? undefined
+      : Object.freeze({ logger: requestContext.logger, services: requestContext.services });
 
     return {
       async emit(event) {
@@ -90,7 +93,7 @@ export function normalizeObservability(config, {
         await emit({
           ...replayEvent,
           replay: event.terminal ? Object.freeze([...events]) : undefined
-        });
+        }, context);
       }
     };
   }

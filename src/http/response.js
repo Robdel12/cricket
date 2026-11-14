@@ -680,6 +680,11 @@ export function createResponseWriter(req, res, {
       own((immediately ? Promise.resolve() : terminated).then(() => response.onClose()));
   }
 
+  function observeTerminal(onTerminal) {
+    if (onTerminal)
+      own(terminated.then(onTerminal));
+  }
+
   function write(response, {
     onTerminal,
     maxBodyBytes,
@@ -700,8 +705,7 @@ export function createResponseWriter(req, res, {
 
     cleanup(response);
 
-    if (onTerminal)
-      own(terminated.then(onTerminal));
+    observeTerminal(onTerminal);
 
     if (terminal === 'closed') {
       discard(response?.body);
@@ -806,5 +810,5 @@ export function createResponseWriter(req, res, {
     }
   }
 
-  return { write, complete, drainRequest };
+  return { write, complete, drainRequest, observeTerminal };
 }
