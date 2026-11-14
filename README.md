@@ -916,6 +916,27 @@ files and exposed through `request.files` during the handler. Cricket removes th
 endpoint returns, including when parsing or validation fails. Set `maxBodyBytes`, `maxFileBytes`,
 `maxFieldBytes`, `maxFiles`, and `maxFields` for the upload's actual limits.
 
+When an upload cap comes from runtime configuration, bind it by a stable operation ID on the app
+instead of reading the environment while defining the endpoint:
+
+```js
+let app = defineCricketApp({
+  domains: './domains',
+  requestBodyLimits: {
+    uploadArchive: {
+      maxBytes: configuredUploadBytes,
+      maxFileBytes: configuredUploadBytes
+    }
+  }
+});
+```
+
+Each entry must name a parsed multipart endpoint and provide a positive safe integer `maxBytes`;
+`maxFileBytes` is optional. Cricket resolves these frozen limits for the matched operation after
+`beforeBodyRules` pass, checks a declared `Content-Length` before sending `100 Continue`, and uses
+the same values for aggregate parsing and each file stream. Field, file-count, part-count, and
+temporary-directory settings remain on the endpoint.
+
 Use `beforeBodyRules` for authentication and other inexpensive checks that must pass before Cricket
 accepts an upload. These rules receive request headers, route parameters, and app context, but no
 parsed body. Their returned facts are available to the endpoint's remaining rules and handler.
