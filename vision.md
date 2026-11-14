@@ -183,6 +183,16 @@ The runtime should expose capabilities deliberately at the phase that owns
 them, not imply one universal bag:
 
 - Setup returns one explicit `{ dependencies, services, protocolHosts, cleanup }` contract. A protocol host is a first-party Cricket integration that owns its protocol engine and transport privately; apps supply plain policy hooks and facts, not raw requests, responses, or framework contexts.
+- `responseHeaders(request)` returns immutable-by-copy default headers after
+  request normalization. Ordinary responses merge explicit headers over
+  defaults without regard to header-name casing; protocol hosts apply the same
+  defaults after their own header policy so provider checks and explicit headers
+  keep precedence. A host may reserve headers whose absence carries a policy
+  decision.
+- `requestPolicy({ request })` can return `undefined` to continue or an explicit
+  Cricket response to end a request before protocol-host dispatch and ordinary
+  middleware. Use it for narrow early decisions such as trusted-origin
+  preflight, not route authorization or as a replacement for middleware.
 - Setup, service composition, and middleware initialization receive lifecycle
   and logger before request or job identity exists.
 - Request context, rules, and handlers receive services, lifecycle, setup

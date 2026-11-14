@@ -70,6 +70,15 @@ bodies. Use `ok`, `created`, `respond`, or `redirect` for transport intent, then
 compose headers, cookies, or cleanup with Cricket's response helpers. Do not
 return implicit `{ status, body }` transport objects.
 
+For shared HTTP defaults, `responseHeaders(request)` returns plain headers after
+request normalization. Explicit ordinary response headers override defaults
+case-insensitively. Protocol hosts apply defaults after their own header policy,
+so provider-owned checks and headers keep precedence. Hosts may reserve headers
+when a missing value represents a denial. `requestPolicy({ request
+})` may return `undefined` or an explicit Cricket response before protocol-host
+dispatch and ordinary middleware; keep it narrow, such as for trusted-origin
+preflight, and leave route authorization to rules.
+
 For file streams with a known byte length, set `Content-Length` through
 `withHeaders`. Cricket checks the byte count, keeps backpressure, and closes
 mismatched responses. HEAD preserves the length without consuming the stream.

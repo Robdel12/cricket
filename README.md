@@ -325,12 +325,54 @@ the Provider's normal access-token revocation behavior; grant-wide revocations
 still remove the app's grant artifacts through `deleteGrantArtifacts`.
 
 Cricket checks that protocol host paths do not overlap. Shared HTTP checks run
-first, then protocol hosts run before app bearer-auth middleware so OAuth
-client authentication remains Provider-owned. Cricket waits for accepted HTTP
-requests before closing the host; observer hooks such as `onGrantRevoked` are
-tracked and drained rather than left as detached promises. The MCP Fetch
-transport remains an ordinary app endpoint and uses the same runtime admission
-and shutdown lifecycle.
+first, then protocol hosts run before ordinary app middleware so OAuth client
+authentication remains Provider-owned. Apps can configure `responseHeaders`
+and `requestPolicy` on `defineCricketApp` for the shared HTTP edge:
+
+```js
+import { defineCricketApp, respond, withHeaders } from '@robdel12/cricket';
+
+let trustedOrigins = new Set(['https://console.example.test']);
+let app = defineCricketApp({
+  domains: './domains',
+  responseHeaders(request) {
+    return {
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'strict-origin-when-cross-origin'
+    };
+  },
+  requestPolicy({ request }) {
+    let origin = request.headers.origin;
+    if (request.method === 'OPTIONS' &&
+        request.path.startsWith('/oauth') &&
+        trustedOrigins.has(origin))
+      return withHeaders(respond(204), {
+        'Access-Control-Allow-Origin': origin,
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        Vary: 'Origin'
+      });
+  }
+});
+```
+
+`responseHeaders(request)` runs once after Cricket normalizes the request and
+returns plain default headers. Ordinary response headers override defaults
+case-insensitively. Protocol hosts receive the same header record and apply
+defaults after their own response policy, so explicit provider headers and
+origin checks keep precedence; a host can reserve a header that its policy may
+deliberately omit. A response-header policy cannot add headers to a request
+that fails before Cricket can create normalized request facts.
+
+`requestPolicy({ request })` runs before protocol hosts and ordinary middleware.
+It returns `undefined` to continue, or an explicit Cricket response to end the
+request. Use it for early shared decisions such as trusted-origin preflight.
+Returning a response skips protocol dispatch and ordinary middleware for that
+request; it is not a replacement for route authorization or general middleware.
+Provider paths retain Provider-owned authentication and CORS checks. The MCP
+Fetch transport remains an ordinary app endpoint and uses the same runtime
+admission and shutdown lifecycle. Cricket waits for accepted HTTP requests
+before closing the host; observer hooks such as `onGrantRevoked` are tracked and
+drained rather than left as detached promises.
 
 The host includes protocol mechanics and route ownership, not a consent UI or
 product-specific grant model. Apps own client registration, durable Provider

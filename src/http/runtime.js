@@ -16,7 +16,7 @@ import {
   expectationFailed,
   toHttpError
 } from '../errors.js';
-import { isPlainObject } from '../immutable.js';
+import { frozenPlain, isPlainObject } from '../immutable.js';
 import { resolveLogger } from '../logger.js';
 import { normalizeObservability } from '../observability.js';
 import { assertKnownOptions } from '../options.js';
@@ -29,10 +29,12 @@ import {
 } from '../trace.js';
 import { routeIdentityFor } from '../route-identity.js';
 import {
+  isHttpResponse,
   getResponseError,
   resolveHttpResponse,
   respond,
   withHeaders,
+  withResponseHeaders,
   withResponseCleanup
 } from '../response.js';
 import {
@@ -61,6 +63,7 @@ import {
 } from './router.js';
 import {
   createResponseWriter,
+  normalizeResponseHeaders as normalizeHttpResponseHeaders,
   safeResponseSnapshot
 } from './response.js';
 
@@ -227,6 +230,19 @@ function optionsResponse(allowedMethods) {
   return withHeaders(respond(204), {
       Allow: allowedMethods.join(', ')
   });
+}
+
+function responseWithDefaultHeaders(response, defaults) {
+  if (!Object.keys(defaults).length)
+    return response;
+
+  let headers = new Map(Object.entries(defaults).map(([name, value]) => [
+    name.toLowerCase(),
+    [name, value]
+  ]));
+  for (let [name, value] of Object.entries(response.headers ?? {}))
+    headers.set(name.toLowerCase(), [name, value]);
+  return withResponseHeaders(response, Object.fromEntries(headers.values()));
 }
 
 /**
@@ -777,6 +793,8 @@ function createRuntimeHandler({
     let requestLogger = logger;
     let trace = createNoopTrace();
     let observedRequest;
+    let defaultResponseHeaders = Object.freeze({});
+    let policyRequest;
     let route;
     let routeEndpoint;
     let apiVersionNegotiation;
@@ -808,6 +826,7 @@ function createRuntimeHandler({
     function writeResponse(response, observation) {
       let declineRequestBody = expectContinue && !continued;
       if (declineRequestBody) declineContinue();
+      response = responseWithDefaultHeaders(response, defaultResponseHeaders);
       writeObservedResponse(writer, response, {
         ...observation,
         maxBodyBytes: maxBodyBytesFor(routeEndpoint),
@@ -847,6 +866,7 @@ function createRuntimeHandler({
         ...baseRequest,
         id: requestId
       };
+      policyRequest = frozenPlain(baseRequest);
       observedRequest = baseRequest;
       requestLogger = logger.child({
         requestId
@@ -860,6 +880,10 @@ function createRuntimeHandler({
         requestId,
         request: safeRequestSnapshot(baseRequest)
       }));
+      if (appContract.responseHeaders)
+        defaultResponseHeaders = normalizeHttpResponseHeaders(
+          appContract.responseHeaders(policyRequest)
+        );
       assertAllowedHost(baseRequest, appContract.allowedHosts);
 
       if (unsupportedExpectation) {
@@ -882,6 +906,30 @@ function createRuntimeHandler({
         return;
       }
 
+      if (appContract.requestPolicy) {
+        let response = await appContract.requestPolicy({ request: policyRequest });
+        if (response !== undefined) {
+          if (!isHttpResponse(response))
+            throw new Error('Cricket requestPolicy must return a Cricket response or undefined');
+          route = 'request-policy';
+          requestLogger = requestLogger.child({ route });
+          Object.assign(completionContext, { logger: requestLogger, route });
+          response = responseWithDefaultHeaders(response, defaultResponseHeaders);
+          let error = getResponseError(response);
+          if (error !== undefined)
+            await reportFailure(error, response, true);
+          writeResponse(response, {
+            logger: requestLogger,
+            replay,
+            request: baseRequest,
+            requestId,
+            route,
+            timing
+          });
+          return;
+        }
+      }
+
       if (baseRequest.method.toUpperCase() === 'OPTIONS' && baseRequest.path === '*') {
         writeResponse(optionsResponse(supportedEndpointMethods), {
           replay,
@@ -902,6 +950,7 @@ function createRuntimeHandler({
         try {
           await protocolHost.definition.handle({
             req, res, request: baseRequest, logger: requestLogger,
+            responseHeaders: defaultResponseHeaders,
             continueRequest: writeContinue,
             declineRequestBody: declineContinue
           });
@@ -1117,6 +1166,7 @@ function createRuntimeHandler({
       let result = await composeMiddleware(middleware, finalHandler, timing)(requestContext);
       let response = resolveHttpResponse(result);
       response = applyApiVersionHeaders(response, routeEndpoint, apiVersionNegotiation);
+      response = responseWithDefaultHeaders(response, defaultResponseHeaders);
 
       let error = getResponseError(response);
       if (error !== undefined)
@@ -1134,6 +1184,7 @@ function createRuntimeHandler({
       let response = toHttpError(error);
 
       response = applyApiVersionHeaders(response, routeEndpoint, apiVersionNegotiation);
+      response = responseWithDefaultHeaders(response, defaultResponseHeaders);
 
       await reportFailure(error, response);
 
