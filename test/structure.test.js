@@ -323,6 +323,9 @@ describe('Cricket CLI', () => {
     assert.match(agents, /custom product\s+pages/);
     assert.match(agents, /Navigation does not grant API access/);
     assert.match(agents, /Apps own auth/);
+    assert.match(agents, /`fetch\(request, context\)`/);
+    assert.match(agents, /`fetchResponses`/);
+    assert.match(agents, /do not accept parsed body schemas, response schemas, or serializers/);
     assert.match(agents, /pnpm cricket check api\/index\.js/);
     assert.match(agents, /App Shape/);
     assert.match(agents, /Domain Shape/);
