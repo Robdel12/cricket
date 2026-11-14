@@ -597,16 +597,16 @@ and passes a standard `Request` plus the usual endpoint context. The handler
 must return a standard `Response`.
 
 ```js
-import { defineEndpoint, z } from '@robdel12/cricket';
+import { defineEndpoint } from '@robdel12/cricket';
 
 export let stream = defineEndpoint({
   method: 'post',
   path: '/stream',
   maxBodyBytes: 1024 * 1024,
-  responses: {
+  fetchResponses: {
     200: {
-      schema: z.unknown(),
-      contentType: ['application/json', 'text/event-stream']
+      description: 'JSON or event stream',
+      contentTypes: ['application/json', 'text/event-stream']
     }
   },
   fetch(request, { request: cricketRequest, services }) {
@@ -626,11 +626,14 @@ backpressure between the Web stream and the Node response, preserves repeated
 `Set-Cookie` headers, and cancels the Fetch signal on disconnect or shutdown.
 If an upload is still incomplete when the response finishes, Cricket closes
 that connection instead of racing a second reader against the Fetch body.
-Fetch response schemas describe OpenAPI output; Cricket validates the status
-and any declared content type without buffering or parsing the response body.
+Every Fetch endpoint declares statuses in `fetchResponses`. It lists supported
+media types and adds them to OpenAPI without claiming a body schema. Cricket
+checks the status and declared content type without buffering or parsing the
+response body. Fetch endpoints reject parsed `response` and `responses`
+schemas; use `fetchResponses` for this transport contract.
 
-Use `responses` when status or media type varies. A list of media types on a
-response describes each supported wire format.
+Use one `fetchResponses` entry per status and list the media types that status
+can return.
 
 ### Endpoint API versions
 

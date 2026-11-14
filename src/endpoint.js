@@ -9,7 +9,7 @@ import {
   responseContractFailed,
   validationFailed
 } from './errors.js';
-import { frozenPlain } from './immutable.js';
+import { frozenPlain, isPlainObject } from './immutable.js';
 import {
   isZodSchema,
   parseZod
@@ -52,6 +52,7 @@ let endpointOptionKeys = new Set([
   'requestBody',
   'response',
   'responses',
+  'fetchResponses',
   'beforeBodyRules',
   'rules',
   'handler',
@@ -105,6 +106,37 @@ function responseDefinitionFor(endpoint, status) {
     return endpoint.response;
 
   return endpoint.responses[status] ?? endpoint.responses[String(status)];
+}
+
+function normalizeFetchResponses(responses, method, path) {
+  if (responses === undefined) return undefined;
+  if (!isPlainObject(responses) || !Object.keys(responses).length)
+    throw new Error(`${method} ${path} fetchResponses must be a non-empty status map`);
+
+  return Object.fromEntries(Object.entries(responses).map(([status, definition]) => {
+    if (!/^[2-5][0-9]{2}$/.test(status))
+      throw new Error(`${method} ${path} fetchResponses has invalid status ${status}`);
+    if (!isPlainObject(definition))
+      throw new Error(`${method} ${path} fetchResponses ${status} must be a plain object`);
+    for (let key of Object.keys(definition)) {
+      if (!['description', 'contentTypes'].includes(key))
+        throw new Error(`${method} ${path} fetchResponses ${status} does not support ${key}`);
+    }
+    if (definition.description !== undefined &&
+        (typeof definition.description !== 'string' || !definition.description.trim()))
+      throw new Error(`${method} ${path} fetchResponses ${status} description must be a non-empty string`);
+    let contentTypes = definition.contentTypes;
+    if (contentTypes !== undefined && (
+      !Array.isArray(contentTypes) || !contentTypes.length || contentTypes.some(type =>
+        typeof type !== 'string' || !/^[\w!#$&^_.+-]+\/[\w!#$&^_.+-]+$/.test(type)
+      ) || new Set(contentTypes).size !== contentTypes.length
+    ))
+      throw new Error(`${method} ${path} fetchResponses ${status} contentTypes must be unique media types`);
+    return [status, {
+      ...(definition.description ? { description: definition.description.trim() } : {}),
+      ...(contentTypes ? { contentTypes: [...contentTypes] } : {})
+    }];
+  }));
 }
 
 function responseSchemaFrom(definition) {
@@ -376,6 +408,7 @@ function parseRequestHeaders(schema, headers = {}) {
  * @param {object} [config.requestBody] - Wire documentation: description, contentType, example, required, multipart files, or rawBody schema.
  * @param {any} [config.response] - Zod schema or { schema, serializer }; canonical parsing precedes the selected public serializer.
  * @param {Record<string | number, any>} [config.responses]
+ * @param {Record<string | number, {description?: string, contentTypes?: string[]}>} config.fetchResponses - Required Fetch transport status/media contract; bodies remain streams.
  * @param {Array<Function>} [config.beforeBodyRules=[]] - Rules that run before request body parsing.
  * @param {Array<Function>} [config.rules=[]]
  * @param {(request: Request, context: any) => Response|Promise<Response>} [config.fetch] - Fetch-style transport handler; the Node HTTP bridge stays inside Cricket.
@@ -396,6 +429,7 @@ function parseRequestHeaders(schema, headers = {}) {
  *   query?: any,
  *   response?: any,
  *   responses?: Record<string | number, any>,
+ *   fetchResponses?: Record<string | number, {description?: string, contentTypes?: string[]}>,
  *   beforeBodyRules: Array<Function>,
  *   rules: Array<Function>,
  *   fetch?: Function,
@@ -432,6 +466,7 @@ export function defineEndpoint(config) {
     requestBody,
     response,
     responses,
+    fetchResponses,
     beforeBodyRules = [],
     rules = [],
     handler,
@@ -450,8 +485,12 @@ export function defineEndpoint(config) {
     throw new Error(`${normalizedMethod} ${path} must use either handler or fetch`);
   if (fetch && (body || multipart || rawBody || apiVersions || requestBody))
     throw new Error(`${normalizedMethod} ${path} Fetch handlers cannot use parsed body, rawBody, multipart, apiVersions, or requestBody contracts`);
-  if (fetch && (response?.serializer || Object.values(responses ?? {}).some(definition => definition?.serializer)))
-    throw new Error(`${normalizedMethod} ${path} Fetch response bodies cannot use Cricket serializers`);
+  if (fetch && (response !== undefined || responses !== undefined))
+    throw new Error(`${normalizedMethod} ${path} Fetch endpoints use fetchResponses instead of parsed response contracts`);
+  if (fetch && fetchResponses === undefined)
+    throw new Error(`${normalizedMethod} ${path} Fetch endpoints need fetchResponses`);
+  if (!fetch && fetchResponses !== undefined)
+    throw new Error(`${normalizedMethod} ${path} fetchResponses requires a Fetch handler`);
   if (!fetch && typeof handler !== 'function')
     throw new Error(`${normalizedMethod} ${path} needs a handler`);
   if (traceName !== undefined && typeof traceName !== 'string')
@@ -465,6 +504,7 @@ export function defineEndpoint(config) {
     response,
     responses
   });
+  let normalizedFetchResponses = normalizeFetchResponses(fetchResponses, normalizedMethod, path);
 
   let endpoint = {
     method: normalizedMethod,
@@ -486,6 +526,7 @@ export function defineEndpoint(config) {
     ...(requestBody === undefined ? {} : { requestBody: frozenPlain(requestBody) }),
     response: frozenPlain(response),
     responses: frozenPlain(responses),
+    ...(normalizedFetchResponses ? { fetchResponses: frozenPlain(normalizedFetchResponses) } : {}),
     beforeBodyRules: Object.freeze([...beforeBodyRules]),
     rules: Object.freeze([...rules]),
     ...(fetch ? { fetch } : {}),
@@ -563,16 +604,13 @@ export function defineEndpoint(config) {
         });
         if (!(response instanceof Response))
           throw responseContractFailed({ issues: [{ message: 'Fetch endpoint must return a Fetch Response' }] });
-        let definition = responseDefinitionFor(endpoint, response.status);
-        if ((endpoint.responses && !definition) || (
-          endpoint.response && response.status !== defaultStatusForMethod(endpoint.method)
-        ))
+        let definition = endpoint.fetchResponses?.[response.status];
+        if (endpoint.fetchResponses && !definition)
           throw responseContractFailed({ issues: [{ message: `Undeclared Fetch response status ${response.status}` }] });
-        let expectedContentTypes = definition?.contentType;
+        let expectedContentTypes = definition?.contentTypes;
         if (expectedContentTypes) {
-          let allowed = Array.isArray(expectedContentTypes) ? expectedContentTypes : [expectedContentTypes];
           let actual = response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase();
-          if (!actual || !allowed.some(contentType => contentType.toLowerCase() === actual))
+          if (!actual || !expectedContentTypes.some(contentType => contentType.toLowerCase() === actual))
             throw responseContractFailed({ issues: [{ message: 'Fetch response Content-Type does not match its contract' }] });
         }
         return fetchResponseToHttpResponse(response, { signal: fetchRequest.signal });
