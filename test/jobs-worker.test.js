@@ -304,8 +304,10 @@ describe('Cricket jobs: worker', () => {
       }),
       async run({ input }) {
         started.get(input.id).resolve();
-        if (input.id === 'failure')
+        if (input.id === 'failure') {
+          await started.get('held').promise;
           throw failure;
+        }
         await releaseHeld.promise;
         return { id: input.id };
       }
