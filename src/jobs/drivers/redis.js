@@ -161,47 +161,24 @@ export async function createRedisQueueDriver({
         let connecting = duplicate.connect();
 
         if (signal) {
-          await new Promise((resolve, reject) => {
-            let settled = false;
-            let onAbort = async () => {
-              if (settled)
-                return;
-
-              settled = true;
-              signal.removeEventListener('abort', onAbort);
-
-              try {
-                await closeDuplicate();
-                reject(Object.assign(new Error('Redis wait client creation aborted'), {
-                  name: 'AbortError'
-                }));
-              } catch (error) {
-                reject(error);
-              }
-            };
-
-            signal.addEventListener('abort', onAbort, {
-              once: true
-            });
-            connecting.then(value => {
-              if (settled)
-                return;
-
-              settled = true;
-              signal.removeEventListener('abort', onAbort);
-              resolve(value);
-            }, error => {
-              if (settled)
-                return;
-
-              settled = true;
-              signal.removeEventListener('abort', onAbort);
-              reject(error);
-            });
-
-            if (signal.aborted)
-              onAbort();
+          let aborted = Promise.withResolvers();
+          let onAbort = () => aborted.reject(Object.assign(
+            new Error('Redis wait client creation aborted'), {
+              name: 'AbortError'
+            }
+          ));
+          signal.addEventListener('abort', onAbort, {
+            once: true
           });
+
+          if (signal.aborted)
+            onAbort();
+
+          try {
+            await Promise.race([connecting, aborted.promise]);
+          } finally {
+            signal.removeEventListener('abort', onAbort);
+          }
         } else {
           await connecting;
         }
