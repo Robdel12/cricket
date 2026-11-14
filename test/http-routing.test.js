@@ -340,7 +340,7 @@ describe('Cricket HTTP routing', () => {
     });
     let trustedApp = await createHttpApp({
       endpoints: [endpoint],
-      trustProxy: true
+      trustProxy: { peers: ['127.0.0.1', '::1'] }
     });
     let direct = await request(directApp)
       .get('/where-am-i')
@@ -433,7 +433,7 @@ describe('Cricket HTTP routing', () => {
       request: request => request
         .set('x-forwarded-host', 'api.example.test/path')
         .set('x-forwarded-proto', 'https'),
-      options: { trustProxy: true },
+      options: { trustProxy: { peers: ['127.0.0.1', '::1'] } },
       message: 'Invalid Host header'
     },
     {
@@ -472,7 +472,7 @@ describe('Cricket HTTP routing', () => {
       let called = false;
       let app = await createHttpApp({
         endpoints: [healthEndpoint('/session')],
-        trustProxy: true,
+        trustProxy: { peers: ['127.0.0.1', '::1'] },
         middleware: [
           async (requestContext, next) => {
             called = true;
