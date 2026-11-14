@@ -151,6 +151,38 @@ describe('Canonical response data and public projections', () => {
     assert.deepEqual(created.body, { created: true });
   });
 
+  it('keeps response-only contracts active for explicit non-default success statuses', async t => {
+    let endpoint = defineEndpoint({
+      method: 'post',
+      path: '/post-response/:mode',
+      params: z.object({ mode: z.enum(['valid', 'invalid']) }),
+      response: {
+        schema: z.object({ connected: z.boolean(), internalSecret: z.string() }),
+        serializer: defineSerializer({
+          name: 'post.response.public',
+          output: z.object({ connected: z.boolean() }),
+          serialize: value => ({ connected: value.connected })
+        })
+      },
+      handler({ input }) {
+        if (input.params.mode === 'invalid') return ok({ connected: true });
+        return ok({ connected: true, internalSecret: 'never returned' });
+      }
+    });
+    let runtime = await createTestRuntime(
+      defineCricketApp({ domains: [{ name: 'post-response', endpoints: [endpoint] }] })
+    );
+    t.after(() => runtime.cleanup());
+
+    let success = await runtime.api.post('/post-response/valid');
+    assert.equal(success.status, 200);
+    assert.deepEqual(success.body, { connected: true });
+
+    let invalid = await runtime.api.post('/post-response/invalid');
+    assert.equal(invalid.status, 500);
+    assert.equal(invalid.body.error.code, 'RESPONSE_CONTRACT_FAILED');
+  });
+
   it('preserves legacy history and loads only requested current facts through real HTTP and SQLite', async t => {
     let { app, endpoint, loads, earlyVersions, handlerVersions } = comparisonApp();
     let runtime = await createTestRuntime(app);

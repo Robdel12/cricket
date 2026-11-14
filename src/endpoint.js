@@ -102,6 +102,8 @@ function parseRequestObjectSchema(schema, value) {
 }
 
 function responseDefinitionFor(endpoint, status) {
+  if (!endpoint.responses) return endpoint.response;
+
   let definition = endpoint.responses?.[status] ?? endpoint.responses?.[String(status)];
   if (definition) return definition;
 
