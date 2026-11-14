@@ -11,6 +11,7 @@ import { flattenRoutes } from './http/router.js';
 import { normalizeTrustProxy } from './http/proxy.js';
 import { collectApiVersionFamilies } from './api-version.js';
 import { frozenPlain } from './immutable.js';
+import { operationIdFor } from './route-identity.js';
 import { assertKnownOptions } from './options.js';
 import { normalizeDatabaseConfig } from './persistence/database.js';
 import { isCricketPlugin } from './plugin.js';
@@ -37,6 +38,7 @@ let appOptionKeys = new Set([
   'prefix',
   'authMethods',
   'requestPolicy',
+  'requestBodyLimits',
   'responseHeaders',
   'services',
   'setup',
@@ -58,6 +60,61 @@ function validateDomainSource(domains) {
     return;
 
   throw new Error('defineCricketApp domains must be a path, URL, or array of inline domains.');
+}
+
+function normalizeRequestBodyLimits(requestBodyLimits) {
+  if (requestBodyLimits === undefined)
+    return undefined;
+  if (!requestBodyLimits || typeof requestBodyLimits !== 'object' ||
+      Array.isArray(requestBodyLimits) ||
+      ![Object.prototype, null].includes(Object.getPrototypeOf(requestBodyLimits)))
+    throw new Error('defineCricketApp requestBodyLimits must be a plain operation ID map');
+
+  let normalized = Object.create(null);
+  for (let [operationId, limits] of Object.entries(requestBodyLimits)) {
+    if (!operationId.trim())
+      throw new Error('defineCricketApp requestBodyLimits keys must be non-empty operation IDs');
+    if (!limits || typeof limits !== 'object' || Array.isArray(limits) ||
+        ![Object.prototype, null].includes(Object.getPrototypeOf(limits)))
+      throw new Error(`defineCricketApp requestBodyLimits.${operationId} must be a plain object`);
+    let unknownKeys = Object.keys(limits).filter(key =>
+      !['maxBytes', 'maxFileBytes'].includes(key)
+    );
+    if (unknownKeys.length)
+      throw new Error(
+        `defineCricketApp requestBodyLimits.${operationId} has unsupported keys: ${unknownKeys.join(', ')}`
+      );
+    for (let [name, value] of Object.entries(limits)) {
+      if (!Number.isSafeInteger(value) || value < 1)
+        throw new Error(
+          `defineCricketApp requestBodyLimits.${operationId}.${name} must be a positive safe integer`
+        );
+    }
+    if (!Number.isSafeInteger(limits.maxBytes) || limits.maxBytes < 1)
+      throw new Error(
+        `defineCricketApp requestBodyLimits.${operationId}.maxBytes must be a positive safe integer`
+      );
+    normalized[operationId] = limits;
+  }
+  return frozenPlain(normalized);
+}
+
+function validateResolvedRequestBodyLimits(requestBodyLimits, endpoints) {
+  if (!requestBodyLimits)
+    return;
+
+  let operations = new Map(endpoints.map(endpoint => [operationIdFor(endpoint), endpoint]));
+  for (let operationId of Object.keys(requestBodyLimits)) {
+    let endpoint = operations.get(operationId);
+    if (!endpoint)
+      throw new Error(
+        `defineCricketApp requestBodyLimits references unknown operation ID ${operationId}`
+      );
+    if (endpoint.fetch || endpoint.rawBody || !endpoint.multipart)
+      throw new Error(
+        `defineCricketApp requestBodyLimits.${operationId} requires a parsed multipart endpoint`
+      );
+  }
 }
 
 function architectureFor(options) {
@@ -122,6 +179,7 @@ function freezeAppContract(contract) {
     models: stable.models,
     plugins: stable.plugins,
     trustProxy: stable.trustProxy,
+    requestBodyLimits: stable.requestBodyLimits,
     requestPolicy: stable.requestPolicy,
     responseHeaders: stable.responseHeaders
   });
@@ -143,6 +201,7 @@ function definedAppFor(app) {
     'models',
     'plugins',
     'trustProxy',
+    'requestBodyLimits',
     'requestPolicy',
     'responseHeaders'
   ].filter(key => app[key] !== definition[key]);
@@ -216,6 +275,8 @@ function validateResolvedDomains(domains) {
  *   Default headers for normalized requests.
  * @param {(input: {request: object}) => object|undefined} [options.requestPolicy]
  *   Early response policy.
+ * @param {Record<string, {maxBytes: number, maxFileBytes?: number}>} [options.requestBodyLimits]
+ *   Runtime request byte limits keyed by multipart endpoint operation ID.
  * @returns {object} Normalized Cricket app contract.
  */
 export function defineCricketApp(options = {}) {
@@ -226,6 +287,7 @@ export function defineCricketApp(options = {}) {
     throw new Error('defineCricketApp requestPolicy must be a function');
   if (options.responseHeaders !== undefined && typeof options.responseHeaders !== 'function')
     throw new Error('defineCricketApp responseHeaders must be a function');
+  let requestBodyLimits = normalizeRequestBodyLimits(options.requestBodyLimits);
 
   let architecture = architectureFor(options);
   let domains = options.domains ?? [];
@@ -265,6 +327,7 @@ export function defineCricketApp(options = {}) {
     prefix,
     trustProxy,
     middleware,
+    ...(requestBodyLimits === undefined ? {} : { requestBodyLimits }),
     ...(endpoints === undefined ? {} : { endpoints }),
     ...(jobs === undefined ? {} : { jobs }),
     ...(models === undefined ? {} : { models })
@@ -295,6 +358,8 @@ export async function resolveCricketApp(app, {
   let hasExplicitModels = Object.hasOwn(definedApp, 'models');
 
   let endpoints = flattenRoutes(hasExplicitEndpoints ? definedApp.endpoints : collectEndpoints(domains));
+
+  validateResolvedRequestBodyLimits(definedApp.requestBodyLimits, endpoints);
 
   collectApiVersionFamilies(endpoints);
 
