@@ -236,7 +236,11 @@ describe('Cricket OIDC provider host', () => {
     let host = await startHost({}, {
       authorizeRequest({ route }) {
         if (route === 'interaction_details')
-          return { status: 401, body: { error: 'Sign in required.' } };
+          return {
+            status: 401,
+            body: { error: 'Sign in required.' },
+            headers: { Vary: 'Accept-Encoding' }
+          };
       }
     }, {
       appOptions: {
@@ -246,7 +250,8 @@ describe('Cricket OIDC provider host', () => {
             'X-Frame-Options': 'SAMEORIGIN',
             'Referrer-Policy': 'strict-origin-when-cross-origin',
             'X-Request-Path': request.path,
-            'Access-Control-Allow-Origin': 'https://default.example.test'
+          'Access-Control-Allow-Origin': 'https://default.example.test',
+          Vary: 'Origin'
           };
           return headers;
         },
@@ -297,6 +302,7 @@ describe('Cricket OIDC provider host', () => {
       });
       assert.equal(denied.status, 401);
       assert.equal(denied.headers.get('x-content-type-options'), 'nosniff');
+      assert.equal(denied.headers.get('vary'), 'Accept-Encoding, Origin');
 
       let preflight = await request(host.origin, paths.resourceMetadata, {
         method: 'OPTIONS',
