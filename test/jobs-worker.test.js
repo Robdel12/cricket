@@ -2,11 +2,13 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  concurrency,
   createCricketJobs,
   cronSchedule,
   defineCricketApp,
   defineCricketPlugin,
   defineJob,
+  jobFailure,
   redisQueue,
   startCricketWorker,
   z
@@ -23,6 +25,330 @@ import {
 } from '../test-support/jobs.js';
 
 describe('Cricket jobs: worker', () => {
+  it('runs accepted jobs up to the local limit and joins them after abort', async () => {
+    let started = new Map(['first', 'second'].map(id => [id, deferred()]));
+    let release = new Map(['first', 'second'].map(id => [id, deferred()]));
+    let completed = [];
+    let controller = new AbortController();
+    let job = defineJob({
+      name: 'reports.concurrent',
+      input: z.object({ id: z.string() }),
+      queue: redisQueue({
+        name: 'concurrent',
+        priority: ({ input }) => ({
+          first: 3,
+          second: 2,
+          queued: 1
+        })[input.id]
+      }),
+      async run({ input }) {
+        started.get(input.id)?.resolve();
+        await release.get(input.id)?.promise;
+        completed.push(input.id);
+        return { id: input.id };
+      }
+    });
+    let worker = await startCricketWorker(defineManualTestApp({ logger() {} }), {
+      jobs: [job],
+      queues: { test: true }
+    });
+    let runFinished = false;
+
+    try {
+      let enqueued = await Promise.all(['first', 'second', 'queued'].map(id =>
+        worker.jobs.enqueue(job, { id })
+      ));
+      let running = worker.run({ signal: controller.signal, concurrency: 2 })
+        .then(() => { runFinished = true; });
+      await Promise.all([...started.values()].map(item => item.promise));
+      controller.abort();
+      await Promise.resolve();
+      assert.equal(runFinished, false, 'run joins both accepted jobs after abort');
+      assert.deepEqual(worker.driver.snapshot().items.map(item => item.status), [
+        'active', 'active', 'queued'
+      ]);
+
+      release.get('first').resolve();
+      release.get('second').resolve();
+      await running;
+
+      assert.deepEqual(completed.sort(), ['first', 'second']);
+      assert.deepEqual(worker.driver.snapshot().items.map(item => item.status), [
+        'completed', 'completed', 'queued'
+      ]);
+      assert.equal(enqueued.length, 3);
+    } finally {
+      controller.abort();
+      for (let gate of release.values()) gate.resolve();
+      await worker.cleanup();
+    }
+  });
+
+  it('keeps run concurrency within each job partition', async () => {
+    let started = new Map(['a-first', 'a-second', 'b-first'].map(id => [id, deferred()]));
+    let release = new Map(['a-first', 'a-second', 'b-first'].map(id => [id, deferred()]));
+    let finished = new Map(['a-first', 'a-second', 'b-first'].map(id => [id, deferred()]));
+    let activeByOrganization = new Map();
+    let maxActiveByOrganization = new Map();
+    let job = defineJob({
+      name: 'reports.partitionedConcurrency',
+      input: z.object({ id: z.string(), organization: z.string() }),
+      queue: redisQueue({ name: 'partitioned-concurrency' }),
+      concurrency: concurrency.partition({
+        key: ({ input }) => `organization:${input.organization}`,
+        limit: 1
+      }),
+      async run({ input }) {
+        let active = (activeByOrganization.get(input.organization) ?? 0) + 1;
+        activeByOrganization.set(input.organization, active);
+        maxActiveByOrganization.set(input.organization, Math.max(
+          maxActiveByOrganization.get(input.organization) ?? 0,
+          active
+        ));
+        started.get(input.id)?.resolve();
+        await release.get(input.id)?.promise;
+        activeByOrganization.set(input.organization, active - 1);
+        finished.get(input.id)?.resolve();
+        return { id: input.id };
+      }
+    });
+    let worker = await startCricketWorker(defineManualTestApp({ logger() {} }), {
+      jobs: [job],
+      queues: { test: true }
+    });
+    let controller = new AbortController();
+
+    try {
+      await worker.jobs.enqueue(job, { id: 'a-first', organization: 'a' });
+      await worker.jobs.enqueue(job, { id: 'a-second', organization: 'a' });
+      await worker.jobs.enqueue(job, { id: 'b-first', organization: 'b' });
+      let running = worker.run({ signal: controller.signal, concurrency: 3 });
+      await Promise.all([started.get('a-first').promise, started.get('b-first').promise]);
+      assert.equal(activeByOrganization.get('a'), 1);
+      assert.equal(activeByOrganization.get('b'), 1);
+
+      release.get('b-first').resolve();
+      await finished.get('b-first').promise;
+      assert.equal(activeByOrganization.get('a'), 1);
+
+      release.get('a-first').resolve();
+      await finished.get('a-first').promise;
+      await started.get('a-second').promise;
+      assert.deepEqual([...maxActiveByOrganization.values()], [1, 1]);
+      release.get('a-second').resolve();
+      await finished.get('a-second').promise;
+      controller.abort();
+      await running;
+      assert.equal(activeByOrganization.get('a'), 0);
+    } finally {
+      controller.abort();
+      for (let gate of release.values()) gate.resolve();
+      await worker.cleanup();
+    }
+  });
+
+  it('executes a claim that resolves after the run signal aborts', async () => {
+    let claimEntered = deferred();
+    let releaseClaim = deferred();
+    let jobStarted = deferred();
+    let processed = [];
+    let job = defineJob({
+      name: 'reports.claimRacingAbort',
+      input: z.object({ id: z.string() }),
+      queue: redisQueue({ name: 'claim-race' }),
+      run({ input }) {
+        jobStarted.resolve();
+        processed.push(input.id);
+        return { id: input.id };
+      }
+    });
+    let baseDriver = createTestQueueDriver();
+    let driver = {
+      ...baseDriver,
+      async claim() {
+        claimEntered.resolve();
+        await releaseClaim.promise;
+        return await baseDriver.claim();
+      }
+    };
+    let worker = await startCricketWorker(defineManualTestApp({ logger() {} }), {
+      jobs: [job],
+      queues: { driver }
+    });
+    let controller = new AbortController();
+
+    try {
+      await worker.jobs.enqueue(job, { id: 'accepted' });
+      let running = worker.run({ signal: controller.signal });
+      await claimEntered.promise;
+      controller.abort();
+      releaseClaim.resolve();
+      await jobStarted.promise;
+      await running;
+      assert.deepEqual(processed, ['accepted']);
+      assert.equal(worker.driver.snapshot().items[0].status, 'completed');
+    } finally {
+      controller.abort();
+      releaseClaim.resolve();
+      await worker.cleanup();
+    }
+  });
+
+  it('recovers an expired foreign claim while local work remains active', async () => {
+    let clock = createManualClock('2026-06-19T12:00:00.000Z');
+    let localStarted = deferred();
+    let releaseLocal = deferred();
+    let foreignRecovered = deferred();
+    let foreignStarted = deferred();
+    let controller = new AbortController();
+    let foreign = defineJob({
+      name: 'reports.foreignRecovery',
+      input: z.object({}),
+      queue: redisQueue({ name: 'foreign-recovery', priority: () => 1 }),
+      recover() {
+        foreignRecovered.resolve();
+        return { action: 'retry', reason: 'Expired on another worker' };
+      },
+      run() {
+        foreignStarted.resolve();
+      }
+    });
+    let local = defineJob({
+      name: 'reports.localLongWork',
+      input: z.object({}),
+      queue: redisQueue({ name: 'local-long-work', priority: () => 2 }),
+      async run() {
+        localStarted.resolve();
+        await releaseLocal.promise;
+      }
+    });
+    let worker = await startCricketWorker(defineManualTestApp({ logger() {} }), {
+      clock: clock.clock,
+      jobs: [foreign, local],
+      queues: { test: true }
+    });
+
+    try {
+      await worker.jobs.enqueue(foreign, {});
+      await worker.driver.claim();
+      await worker.jobs.enqueue(local, {});
+      clock.advanceBy(60_000);
+      let running = worker.run({ signal: controller.signal, concurrency: 1 });
+
+      await Promise.all([foreignRecovered.promise, localStarted.promise]);
+      assert.equal(worker.driver.snapshot().items.find(item =>
+        item.envelope.name === foreign.name
+      ).status, 'queued');
+
+      releaseLocal.resolve();
+      await foreignStarted.promise;
+      controller.abort();
+      await running;
+    } finally {
+      controller.abort();
+      releaseLocal.resolve();
+      await worker.cleanup();
+    }
+  });
+
+  it('bounds run concurrency and allows only one active run loop', async () => {
+    let waiting = deferred();
+    let baseDriver = createTestQueueDriver();
+    let waitForWork = baseDriver.waitForWork.bind(baseDriver);
+    let driver = {
+      ...baseDriver,
+      async waitForWork(options) {
+        waiting.resolve();
+        return await waitForWork(options);
+      }
+    };
+    let worker = await startCricketWorker(defineManualTestApp({ logger() {} }), {
+      queues: { driver }
+    });
+    let controller = new AbortController();
+
+    try {
+      await assert.rejects(worker.run({ concurrency: 0 }), /concurrency must be an integer/);
+      await assert.rejects(worker.run({ concurrency: 1.5 }), /concurrency must be an integer/);
+      await assert.rejects(worker.run({ concurrency: 101 }), /concurrency must be an integer/);
+      await assert.rejects(worker.run({ concurrency: Number.MAX_SAFE_INTEGER + 1 }),
+        /concurrency must be an integer/
+      );
+      let running = worker.run({ signal: controller.signal, concurrency: 2 });
+      await waiting.promise;
+      await assert.rejects(worker.run(), /worker\.run is already active/);
+      controller.abort();
+      await running;
+    } finally {
+      controller.abort();
+      await worker.cleanup();
+    }
+  });
+
+  it('joins accepted work before rejecting when throwOnError is enabled', async () => {
+    let started = new Map(['failure', 'held'].map(id => [id, deferred()]));
+    let releaseHeld = deferred();
+    let failureLogged = deferred();
+    let failure = new Error('first job failed');
+    let job = defineJob({
+      name: 'reports.concurrentFailure',
+      input: z.object({ id: z.string() }),
+      queue: redisQueue({
+        name: 'concurrent-failure',
+        priority: ({ input }) => input.id === 'failure' ? 2 : 1
+      }),
+      failure: jobFailure({
+        exhausted() {
+          failureLogged.resolve();
+        }
+      }),
+      async run({ input }) {
+        started.get(input.id).resolve();
+        if (input.id === 'failure')
+          throw failure;
+        await releaseHeld.promise;
+        return { id: input.id };
+      }
+    });
+    let app = defineManualTestApp({
+      logger() {
+        return {
+          child() { return this; },
+          info() {},
+          warn() {},
+          error(event) {
+            if (event === 'job.failed')
+              failureLogged.resolve();
+          }
+        };
+      }
+    });
+    let worker = await startCricketWorker(app, {
+      jobs: [job],
+      queues: { test: true }
+    });
+    let runSettled = false;
+
+    try {
+      await worker.jobs.enqueue(job, { id: 'failure' });
+      await worker.jobs.enqueue(job, { id: 'held' });
+      let running = worker.run({ concurrency: 2, throwOnError: true })
+        .finally(() => { runSettled = true; });
+      await Promise.all([...started.values()].map(item => item.promise));
+      await failureLogged.promise;
+      assert.equal(runSettled, false, 'run waits for all accepted work before rejecting');
+
+      releaseHeld.resolve();
+      await assert.rejects(running, error => error === failure);
+      assert.deepEqual(worker.driver.snapshot().items.map(item => item.status), [
+        'failed', 'completed'
+      ]);
+    } finally {
+      releaseHeld.resolve();
+      await worker.cleanup();
+    }
+  });
+
   it('services recovery, due delayed work, and cron jobs before a ready backlog drains', async () => {
     let time = createManualClock('2026-06-19T12:00:01.000Z');
     let controller = new AbortController();

@@ -337,7 +337,13 @@ export function createTestQueueDriver() {
       until,
       waitUntil
     } = {}) {
-      let queued = items.find(item => item.status === 'queued');
+      let activeEnvelopes = items
+        .filter(item => item.status === 'active')
+        .map(item => item.envelope);
+      let queued = items
+        .filter(item => item.status === 'queued')
+        .sort((left, right) => compareClaimOrder(left.envelope, right.envelope))
+        .find(item => canClaimEnvelope(item.envelope, activeEnvelopes));
 
       if (queued)
         return frozenPlain({
