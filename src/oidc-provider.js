@@ -2,6 +2,7 @@ import { Provider, errors } from 'oidc-provider';
 import Koa from 'koa';
 import mount from 'koa-mount';
 import { z } from 'zod';
+import { mergeDefaultHeaders } from './http/headers.js';
 import { readRequestBody } from './http/request.js';
 import { defineProtocolHost } from './protocol-host.js';
 
@@ -168,8 +169,15 @@ function hostResponse(ctx, result) {
 }
 
 function applyResponseHeaderDefaults(ctx, headers, excluded = new Set()) {
+  let merged = mergeDefaultHeaders(headers, ctx.response.headers);
+  let mergedVary = Object.entries(merged).find(([name]) => name.toLowerCase() === 'vary')?.[1];
   for (let [name, value] of Object.entries(headers ?? {})) {
-    if (!excluded.has(name.toLowerCase()) && !ctx.response.has(name))
+    let normalized = name.toLowerCase();
+    if (excluded.has(normalized))
+      continue;
+    if (normalized === 'vary' && ctx.response.has(name))
+      ctx.set(name, mergedVary);
+    else if (!ctx.response.has(name))
       ctx.set(name, value);
   }
 }

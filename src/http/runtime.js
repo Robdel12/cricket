@@ -17,6 +17,7 @@ import {
   toHttpError
 } from '../errors.js';
 import { frozenPlain, isPlainObject } from '../immutable.js';
+import { mergeDefaultHeaders } from './headers.js';
 import { resolveLogger } from '../logger.js';
 import { normalizeObservability } from '../observability.js';
 import { assertKnownOptions } from '../options.js';
@@ -236,13 +237,7 @@ function responseWithDefaultHeaders(response, defaults) {
   if (!Object.keys(defaults).length)
     return response;
 
-  let headers = new Map(Object.entries(defaults).map(([name, value]) => [
-    name.toLowerCase(),
-    [name, value]
-  ]));
-  for (let [name, value] of Object.entries(response.headers ?? {}))
-    headers.set(name.toLowerCase(), [name, value]);
-  return withResponseHeaders(response, Object.fromEntries(headers.values()));
+  return withResponseHeaders(response, mergeDefaultHeaders(defaults, response.headers));
 }
 
 /**
