@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import net from 'node:net';
 
 import {
   concurrency,
@@ -34,6 +35,101 @@ function jobRecordKeys(prefix, id) {
     'spans',
     'progress'
   ].map(type => `${prefix}:${type}:${id}`);
+}
+
+async function createSelectResponseGate(targetUrl) {
+  let target = new URL(targetUrl);
+  let backendHost = target.hostname;
+  let backendPort = Number(target.port || 6379);
+  let sockets = new Set();
+  let selectHeld = deferred();
+  let firstBlockingWait = deferred();
+  let connectionClosed = new Map();
+  let connectionNumber = 0;
+  let postAbortBlockingWait = false;
+  let aborted = false;
+  let server = net.createServer(client => {
+    connectionNumber += 1;
+    let id = connectionNumber;
+    let backend = net.createConnection({
+      host: backendHost,
+      port: backendPort
+    });
+    let isRestartedWaitClient = id === 3;
+    let selectRequested = false;
+    let held = false;
+    let incoming = '';
+    let pair = {
+      client,
+      backend
+    };
+
+    sockets.add(pair);
+    connectionClosed.set(id, deferred());
+    client.on('close', () => {
+      sockets.delete(pair);
+      connectionClosed.get(id)?.resolve();
+      backend.destroy();
+    });
+    backend.on('close', () => client.destroy());
+    client.on('error', () => backend.destroy());
+    backend.on('error', () => client.destroy());
+    client.on('data', chunk => {
+      incoming += chunk.toString('utf8');
+      if (isRestartedWaitClient && incoming.includes('$6\r\nSELECT\r\n'))
+        selectRequested = true;
+      if (incoming.includes('$5\r\nBLPOP\r\n')) {
+        if (id === 2)
+          firstBlockingWait.resolve();
+        if (id === 3 && aborted)
+          postAbortBlockingWait = true;
+      }
+
+      backend.write(chunk);
+    });
+    backend.on('data', chunk => {
+      if (
+        isRestartedWaitClient &&
+        selectRequested &&
+        !held &&
+        chunk.toString().startsWith('+OK\r\n')
+      ) {
+        held = true;
+        selectHeld.resolve();
+        return;
+      }
+
+      client.write(chunk);
+    });
+  });
+
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  let address = server.address();
+  target.hostname = '127.0.0.1';
+  target.port = String(address.port);
+
+  return {
+    url: target.toString(),
+    selectHeld: selectHeld.promise,
+    firstBlockingWait: firstBlockingWait.promise,
+    markAborted() {
+      aborted = true;
+    },
+    sawPostAbortBlockingWait() {
+      return postAbortBlockingWait;
+    },
+    async waitForClose(id) {
+      await connectionClosed.get(id)?.promise;
+    },
+    async close() {
+      for (let pair of sockets) {
+        pair.client.destroy();
+        pair.backend.destroy();
+      }
+
+      await new Promise(resolve => server.close(resolve));
+    }
+  };
 }
 
 function reportJob({
@@ -85,6 +181,48 @@ async function createDrivers(name, queueNames = ['reports']) {
 }
 
 describe('Cricket jobs: real Redis', () => {
+  it('cancels a restarted wait client during Redis database selection', async () => {
+    let target = new URL(redisUrl);
+    target.pathname = '/1';
+    let gate = await createSelectResponseGate(target.toString());
+    let driver;
+
+    try {
+      driver = await createRedisQueueDriver({
+        url: gate.url,
+        prefix: testPrefix('wait-client-abort'),
+        queueNames: ['reports']
+      });
+      let firstController = new AbortController();
+      let firstWait = driver.waitForWork({
+        signal: firstController.signal
+      });
+
+      await gate.firstBlockingWait;
+      firstController.abort();
+      assert.deepEqual(await firstWait, {
+        reason: 'aborted'
+      });
+
+      let secondController = new AbortController();
+      let secondWait = driver.waitForWork({
+        signal: secondController.signal
+      });
+
+      await gate.selectHeld;
+      gate.markAborted();
+      secondController.abort();
+      assert.deepEqual(await secondWait, {
+        reason: 'aborted'
+      });
+      await gate.waitForClose(3);
+      assert.equal(gate.sawPostAbortBlockingWait(), false);
+    } finally {
+      await driver?.cleanup();
+      await gate.close();
+    }
+  });
+
   it('checks each producer and worker command connection without replacing a disconnected client', async () => {
     let admin = await createRedisSocketClient(redisUrl);
     let readClients = async () => (await admin.command('CLIENT', 'LIST', 'TYPE', 'NORMAL'))
