@@ -50,6 +50,13 @@ async function tempRoot() {
 }
 
 describe('Cricket core', () => {
+  it('validates shared HTTP policy hooks as functions', () => {
+    assert.throws(() => defineCricketApp({ domains: [], requestPolicy: true }),
+      /requestPolicy must be a function/);
+    assert.throws(() => defineCricketApp({ domains: [], responseHeaders: {} }),
+      /responseHeaders must be a function/);
+  });
+
   it('requires domains unless an app explicitly accepts manual migration debt', () => {
     let endpoint = defineEndpoint({
       method: 'get',

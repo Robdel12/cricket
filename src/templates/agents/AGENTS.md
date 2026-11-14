@@ -77,6 +77,12 @@ instead of attaching another `listening` listener.
 The folder is the domain. Keep services boring, rules named, and routes thin.
 Keep HTTP request behavior in `middleware/`, not in rules. Keep app-wide clients
 and shared capabilities in `services/`, not in one random domain.
+Use `requestPolicy({ request })` only for an early explicit response before
+protocol hosts and ordinary middleware, such as trusted-origin preflight.
+Use `responseHeaders(request)` for plain default HTTP headers. Ordinary explicit
+response headers override defaults case-insensitively; protocol hosts apply
+defaults after their own policy so provider checks and headers keep precedence.
+A protocol host may reserve a header when its absence carries a policy decision.
 Keep source payload weirdness in `*.normalizers.js`, not scattered through
 services and routes.
 Keep create/update/search/import input contracts in `*.validations.js`, not on
