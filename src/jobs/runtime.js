@@ -540,7 +540,7 @@ export async function startCricketWorker(cricketApp, {
   let locallyExecutingEnvelopeIds = new Set();
   let activeRuns = new Set();
   let activeRunClaims = new Set();
-  let runTaskChange = Promise.withResolvers();
+  let runTaskWaiters = new Set();
   let currentRun;
   let clockCanDriveWorker = !clockOptions?.now || Boolean(clockOptions.waitUntil);
   let shuttingDown = false;
@@ -792,9 +792,54 @@ export async function startCricketWorker(cricketApp, {
   }
 
   function notifyRunTaskChange() {
-    let previous = runTaskChange;
-    runTaskChange = Promise.withResolvers();
-    previous.resolve();
+    for (let waiter of [...runTaskWaiters])
+      waiter.notify();
+  }
+
+  function waitForRunTaskChange(signal) {
+    let resolve;
+    let settled = false;
+    let onAbort;
+    let promise = new Promise(resolvePromise => {
+      resolve = resolvePromise;
+    });
+
+    function remove() {
+      runTaskWaiters.delete(waiter);
+      signal?.removeEventListener('abort', onAbort);
+    }
+
+    function finish() {
+      if (settled)
+        return;
+
+      settled = true;
+      remove();
+      resolve('changed');
+    }
+
+    let waiter = { notify: finish };
+    let cancel = () => {
+      if (settled)
+        return;
+
+      settled = true;
+      remove();
+      resolve('cancelled');
+    };
+
+    if (signal?.aborted)
+      finish();
+    else {
+      runTaskWaiters.add(waiter);
+      onAbort = finish;
+      signal?.addEventListener('abort', onAbort, { once: true });
+    }
+
+    return {
+      promise,
+      cancel
+    };
   }
 
   async function recover({
@@ -1166,21 +1211,6 @@ export async function startCricketWorker(cricketApp, {
       return result;
     }
 
-    async function taskOrAbortWait() {
-      if (runSignal.aborted)
-        return;
-
-      let changed = runTaskChange.promise;
-      let onAbort;
-      let aborted = new Promise(resolve => {
-        onAbort = resolve;
-        runSignal.addEventListener('abort', onAbort, { once: true });
-      });
-
-      await Promise.race([changed, aborted]);
-      runSignal.removeEventListener('abort', onAbort);
-    }
-
     try {
       while (!runSignal.aborted && !(throwOnError && runErrors.length)) {
         await recover({ throwOnError, excludeLocal: true });
@@ -1210,17 +1240,23 @@ export async function startCricketWorker(cricketApp, {
           continue;
 
         if (activeRunClaims.size >= concurrencyLimit) {
-          await taskOrAbortWait();
+          let taskWait = waitForRunTaskChange(runSignal);
+          try {
+            await taskWait.promise;
+          } finally {
+            taskWait.cancel();
+          }
           continue;
         }
 
-        let changed = runTaskChange.promise;
+        let taskWait = waitForRunTaskChange();
         let activity = await Promise.race([
-          changed.then(() => ({ type: 'task' })),
+          taskWait.promise.then(() => ({ type: 'task' })),
           workWait().then(result => ({ type: 'work', result }))
         ]);
 
         if (activity.type === 'task') {
+          taskWait.cancel();
           let result = await cancelPendingWorkWait();
           if (result?.error && result.error?.name !== 'AbortError') {
             loopError = result.error;
@@ -1229,6 +1265,7 @@ export async function startCricketWorker(cricketApp, {
           continue;
         }
 
+        taskWait.cancel();
         pendingWorkWait = undefined;
         pendingWorkController = undefined;
         if (activity.result.error) {

@@ -194,6 +194,57 @@ describe('Cricket jobs: worker', () => {
     }
   });
 
+  it('keeps making progress after repeated unclaimable wakeups', async () => {
+    let baseDriver = createTestQueueDriver();
+    let baseWaitForWork = baseDriver.waitForWork.bind(baseDriver);
+    let spuriousWakesRemaining = 25;
+    let spuriousWakesDrained = deferred();
+    let jobFinished = deferred();
+    let processed = [];
+    let driver = {
+      ...baseDriver,
+      async waitForWork(options) {
+        if (spuriousWakesRemaining) {
+          spuriousWakesRemaining -= 1;
+          if (!spuriousWakesRemaining)
+            spuriousWakesDrained.resolve();
+          return { reason: 'work' };
+        }
+
+        return await baseWaitForWork(options);
+      }
+    };
+    let job = defineJob({
+      name: 'reports.spuriousWakeups',
+      input: z.object({ id: z.string() }),
+      queue: redisQueue({ name: 'spurious-wakeups' }),
+      run({ input }) {
+        processed.push(input.id);
+        jobFinished.resolve();
+      }
+    });
+    let worker = await startCricketWorker(defineManualTestApp({ logger() {} }), {
+      jobs: [job],
+      queues: { driver }
+    });
+    let controller = new AbortController();
+
+    try {
+      let running = worker.run({ signal: controller.signal });
+      await spuriousWakesDrained.promise;
+      await worker.jobs.enqueue(job, { id: 'after-wakes' });
+      await jobFinished.promise;
+      controller.abort();
+      await running;
+
+      assert.deepEqual(processed, ['after-wakes']);
+      assert.equal(spuriousWakesRemaining, 0);
+    } finally {
+      controller.abort();
+      await worker.cleanup();
+    }
+  });
+
   it('recovers an expired foreign claim while local work remains active', async () => {
     let clock = createManualClock('2026-06-19T12:00:00.000Z');
     let localStarted = deferred();
