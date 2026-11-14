@@ -670,7 +670,12 @@ export function createResponseWriter(req, res, {
       own((immediately ? Promise.resolve() : terminated).then(() => response.onClose()));
   }
 
-  function write(response, { onTerminal, maxBodyBytes } = {}) {
+  function write(response, {
+    onTerminal,
+    maxBodyBytes,
+    declineRequestBody = false,
+    skipRequestDrain = false
+  } = {}) {
     let prepared;
 
     try {
@@ -698,15 +703,23 @@ export function createResponseWriter(req, res, {
     let drain;
     let closeCurrent = requestWantsClose || responseWantsClose;
     let incompleteRequest = !req.complete && !req.destroyed;
+    let declinedBody = incompleteRequest && declineRequestBody;
+    let deferredBody = incompleteRequest && skipRequestDrain;
 
-    if (incompleteRequest && closeCurrent)
+    if (incompleteRequest && (closeCurrent || declinedBody || deferredBody))
       onCloseAfterCurrent?.();
 
     res.statusCode = prepared.status;
     for (let [name, value] of Object.entries(prepared.headers))
       res.setHeader(name, value);
 
-    if (incompleteRequest) {
+    if (declinedBody) {
+      res.shouldKeepAlive = false;
+      res.setHeader('connection', 'close');
+    } else if (deferredBody) {
+      res.shouldKeepAlive = false;
+      res.setHeader('connection', 'close');
+    } else if (incompleteRequest) {
       // Keep the response alive until the request body is drained. Node closes
       // a response marked Connection: close as soon as its response bytes flush.
       res.shouldKeepAlive = true;

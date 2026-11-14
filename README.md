@@ -589,6 +589,49 @@ export let createProject = defineEndpoint({
 Definition builders reject unknown app and endpoint options so misspelled
 wiring fails immediately instead of becoming unused metadata.
 
+### Fetch endpoints
+
+Use `fetch` for a handler that already speaks the Web Fetch API. Cricket keeps
+the Node socket bridge private, runs normal route matching and access rules,
+and passes a standard `Request` plus the usual endpoint context. The handler
+must return a standard `Response`.
+
+```js
+import { defineEndpoint, z } from '@robdel12/cricket';
+
+export let stream = defineEndpoint({
+  method: 'post',
+  path: '/stream',
+  maxBodyBytes: 1024 * 1024,
+  responses: {
+    200: {
+      schema: z.unknown(),
+      contentType: ['application/json', 'text/event-stream']
+    }
+  },
+  fetch(request, { request: cricketRequest, services }) {
+    return services.stream.handle(request, {
+      requestId: cricketRequest.id,
+      host: cricketRequest.host,
+      origin: cricketRequest.origin
+    });
+  }
+});
+```
+
+Fetch request bodies stay streamed and are limited by `maxBodyBytes` (10 MiB
+by default). The Request body remains available through the response stream, so
+a handler can return a Response that streams that body. Cricket applies
+backpressure between the Web stream and the Node response, preserves repeated
+`Set-Cookie` headers, and cancels the Fetch signal on disconnect or shutdown.
+If an upload is still incomplete when the response finishes, Cricket closes
+that connection instead of racing a second reader against the Fetch body.
+Fetch response schemas describe OpenAPI output; Cricket validates the status
+and any declared content type without buffering or parsing the response body.
+
+Use `responses` when status or media type varies. A list of media types on a
+response describes each supported wire format.
+
 ### Endpoint API versions
 
 API versioning is endpoint-owned and optional. A shared immutable version

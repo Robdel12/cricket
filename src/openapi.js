@@ -96,14 +96,15 @@ function schemaProperties(schema, source, convert) {
 }
 
 function contentForSchema(schema, contentType = JSON_CONTENT_TYPE, example) {
-  if (typeof contentType !== 'string' || !/^[\w!#$&^_.+-]+\/[\w!#$&^_.+-]+$/.test(contentType))
-    throw new Error('Content type must be a media type without parameters');
-  return {
-    [contentType]: {
+  let contentTypes = Array.isArray(contentType) ? contentType : [contentType];
+  if (!contentTypes.length || contentTypes.some(type =>
+    typeof type !== 'string' || !/^[\w!#$&^_.+-]+\/[\w!#$&^_.+-]+$/.test(type)
+  ))
+    throw new Error('Content type must be a media type or non-empty list of media types without parameters');
+  return Object.fromEntries(contentTypes.map(type => [type, {
       schema,
       ...(example === undefined ? {} : { example })
-    }
-  };
+  }]));
 }
 
 function parametersFromSchema(source, schema, convert) {
