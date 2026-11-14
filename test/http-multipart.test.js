@@ -375,6 +375,28 @@ describe('Cricket multipart requests', () => {
       endpoints: [fetchEndpoint],
       requestBodyLimits: { fetchUpload: { maxBytes: 1024 } }
     }), { logger() {} }), /requires a parsed multipart endpoint/);
+
+    let app = defineManualTestApp({
+      endpoints: [endpoint],
+      requestBodyLimits: { uploadArchive: { maxBytes: 1024 } },
+      setup() {
+        return { services: { fromSetup: true } };
+      }
+    });
+    await assert.rejects(createCricketRuntime({
+      ...app,
+      requestBodyLimits: { uploadArchive: { maxBytes: 1 } }
+    }), /cannot replace requestBodyLimits/);
+
+    let runtime = await createCricketRuntime({
+      ...app,
+      services({ services }) {
+        return { ...services, fromApp: true };
+      }
+    }, { logger() {} });
+    assert.equal(runtime.services.fromSetup, true);
+    assert.equal(runtime.services.fromApp, true);
+    await runtime.cleanup();
   });
 
   it('runs endpoint access rules before parsing or creating temporary files', async () => {
