@@ -123,20 +123,68 @@ export async function createRedisQueueDriver({
   let waitRedis;
   let closed = false;
 
-  async function createWaitClient() {
+  async function createWaitClient({ signal } = {}) {
+    if (signal?.aborted) {
+      let error = new Error('Redis wait client creation aborted');
+      error.name = 'AbortError';
+      throw error;
+    }
+
     if (ownsClient)
-      return await createRedisSocketClient(url, tlsOptions);
+      return await createRedisSocketClient(url, tlsOptions, { signal });
 
     if (typeof redis.duplicate !== 'function')
       throw new Error('App-provided Redis clients need duplicate() for blocking waits');
 
     let duplicate = await redis.duplicate();
+    let duplicateClosed = false;
+    async function closeDuplicate() {
+      if (duplicateClosed)
+        return;
+
+      duplicateClosed = true;
+      if (typeof duplicate.disconnect === 'function')
+        await duplicate.disconnect();
+      else
+        await duplicate.quit?.();
+    }
+
+    if (signal?.aborted) {
+      await closeDuplicate();
+      throw Object.assign(new Error('Redis wait client creation aborted'), {
+        name: 'AbortError'
+      });
+    }
 
     try {
-      if (duplicate.isOpen === false && typeof duplicate.connect === 'function')
-        await duplicate.connect();
+      if (duplicate.isOpen === false && typeof duplicate.connect === 'function') {
+        let connecting = duplicate.connect();
+
+        if (signal) {
+          let aborted = Promise.withResolvers();
+          let onAbort = () => aborted.reject(Object.assign(
+            new Error('Redis wait client creation aborted'), {
+              name: 'AbortError'
+            }
+          ));
+          signal.addEventListener('abort', onAbort, {
+            once: true
+          });
+
+          if (signal.aborted)
+            onAbort();
+
+          try {
+            await Promise.race([connecting, aborted.promise]);
+          } finally {
+            signal.removeEventListener('abort', onAbort);
+          }
+        } else {
+          await connecting;
+        }
+      }
     } catch (error) {
-      await duplicate.quit?.();
+      await closeDuplicate();
       throw error;
     }
 
@@ -646,23 +694,44 @@ export async function createRedisQueueDriver({
         timeout = String(remainingMs / 1_000);
       }
 
-      waitRedis ??= await createWaitClient();
-      let work = callWaitRedis('BLPOP', wakeupsKey(prefix), timeout);
       let result;
 
       if (!signal) {
+        waitRedis ??= await createWaitClient();
+        let work = callWaitRedis('BLPOP', wakeupsKey(prefix), timeout);
         result = await work;
       } else {
+        try {
+          if (!waitRedis)
+            waitRedis = await createWaitClient({ signal });
+        } catch (error) {
+          if (!signal.aborted)
+            throw error;
+        }
+
+        if (signal.aborted) {
+          await disconnectWaitClient();
+          return frozenPlain({
+            reason: 'aborted'
+          });
+        }
+
         result = await new Promise((resolve, reject) => {
-          let aborting;
+          let aborting = false;
           let onAbort = () => {
-            aborting = disconnectWaitClient();
-            aborting.then(() => resolve(undefined), reject);
+            aborting = true;
+            disconnectWaitClient().then(() => resolve(undefined), reject);
           };
 
           signal.addEventListener('abort', onAbort, {
             once: true
           });
+          if (signal.aborted) {
+            onAbort();
+            return;
+          }
+
+          let work = callWaitRedis('BLPOP', wakeupsKey(prefix), timeout);
           work.then(value => {
             signal.removeEventListener('abort', onAbort);
             resolve(value);

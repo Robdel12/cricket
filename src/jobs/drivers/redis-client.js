@@ -123,9 +123,17 @@ function decodeRedisValue(value) {
   return value;
 }
 
-export async function createRedisSocketClient(url, tlsOptions = {}) {
+export async function createRedisSocketClient(url, tlsOptions = {}, {
+  signal
+} = {}) {
   if (!url)
     throw new Error('Redis queue configuration needs a url or app-provided client');
+
+  if (signal?.aborted) {
+    let error = new Error('Redis connection aborted');
+    error.name = 'AbortError';
+    throw error;
+  }
 
   let parsed = new URL(url);
   if (parsed.protocol !== 'redis:' && parsed.protocol !== 'rediss:')
@@ -164,6 +172,16 @@ export async function createRedisSocketClient(url, tlsOptions = {}) {
       ...(servername ? { servername } : {})
     })
     : net.createConnection(connection);
+  let onAbort = () => {
+    let error = new Error('Redis connection aborted');
+    error.name = 'AbortError';
+    socket.destroy(error);
+  };
+  signal?.addEventListener('abort', onAbort, {
+    once: true
+  });
+  if (signal?.aborted)
+    onAbort();
   let pending = [];
   let connectionError;
   let buffer = Buffer.alloc(0);
@@ -229,6 +247,8 @@ export async function createRedisSocketClient(url, tlsOptions = {}) {
   } catch (error) {
     socket.destroy();
     throw error;
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
   }
 
   return {
