@@ -147,6 +147,12 @@ without version metadata leave version headers alone.
 Cricket provides its HTTP runtime. It should not wrap another web framework or pass
 foreign request/response objects through app code as an escape hatch.
 
+Integrations that already use the Web Fetch API can own an endpoint through
+`fetch(request, context)`. Cricket adapts Node HTTP requests and responses at
+its boundary, keeps streaming and cancellation inside the runtime, and checks
+declared status and media types without buffering response bodies. These
+endpoints document wire formats but do not claim parsed response schemas.
+
 Proxy trust belongs to the native HTTP boundary. Defaults ignore forwarding;
 apps explicitly allow verified socket peers or CIDRs. Cricket validates authority
 and forwarded IP hops once, exposes plain peer/client facts, and stops the IP

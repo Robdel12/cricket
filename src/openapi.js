@@ -209,6 +209,18 @@ function normalizeResponse(status, response, method, convert) {
 }
 
 function responsesForEndpoint(endpoint, convert) {
+  if (endpoint.fetch && endpoint.fetchResponses) {
+    return Object.fromEntries(Object.entries(endpoint.fetchResponses).map(([status, definition]) => {
+      let noBody = endpoint.method === 'HEAD' || ['204', '205', '304'].includes(status);
+      return [status, {
+        description: definition.description ?? (noBody ? 'No content' : 'Success'),
+        ...(!noBody && definition.contentTypes?.length ? {
+          content: Object.fromEntries(definition.contentTypes.map(contentType => [contentType, {}]))
+        } : {})
+      }];
+    }));
+  }
+
   if (endpoint.responses) {
     return Object.fromEntries(
       Object.entries(endpoint.responses).map(([status, response]) => [
