@@ -165,6 +165,7 @@ export async function createRedisSocketClient(url, tlsOptions = {}) {
     })
     : net.createConnection(connection);
   let pending = [];
+  let connectionError;
   let buffer = Buffer.alloc(0);
 
   function rejectPending(error) {
@@ -190,16 +191,30 @@ export async function createRedisSocketClient(url, tlsOptions = {}) {
         command.resolve(decodeRedisValue(response.value));
     }
   });
-  socket.on('error', error => rejectPending(error));
-  socket.on('close', () => rejectPending(new Error('Redis connection closed')));
+  function closeConnection(error = new Error('Redis connection closed')) {
+    connectionError ??= error;
+    rejectPending(connectionError);
+  }
+
+  socket.on('error', closeConnection);
+  socket.on('end', () => closeConnection());
+  socket.on('close', () => closeConnection());
 
   function sendCommand(...parts) {
+    if (connectionError || socket.destroyed || socket.readableEnded || socket.writableEnded) {
+      closeConnection();
+      return Promise.reject(connectionError);
+    }
+
     return new Promise((resolve, reject) => {
       pending.push({
         resolve,
         reject
       });
-      socket.write(encodeCommand(parts));
+      socket.write(encodeCommand(parts), error => {
+        if (error)
+          closeConnection(error);
+      });
     });
   }
 
@@ -219,9 +234,11 @@ export async function createRedisSocketClient(url, tlsOptions = {}) {
   return {
     command: sendCommand,
     async disconnect() {
+      closeConnection();
       socket.destroy();
     },
     async quit() {
+      closeConnection();
       socket.end();
       socket.destroy();
     }
