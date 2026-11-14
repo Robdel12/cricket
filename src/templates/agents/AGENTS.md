@@ -39,7 +39,7 @@ Cricket definition builders return stable contracts and reject unknown app or
 endpoint options. Compose new definitions instead of mutating existing apps,
 endpoints, rules, models, serializers, normalizers, or jobs after construction.
 
-Setup returns `undefined` or `{ dependencies, services, cleanup }`. It receives
+Setup returns `undefined` or `{ dependencies, services, protocolHosts, cleanup }`. It receives
 the app, database, lifecycle, logger, and a no-op startup trace. Service and
 middleware initialization receive dependencies, lifecycle, and logger before
 requests exist. Request context, rules, and handlers receive services,
@@ -48,6 +48,8 @@ lifecycle, dependencies, and request-scoped logger and trace capabilities. Job
 and progress. Recovery receives evidence, time, logger, and trace for a pure
 decision. Shutdown hooks receive the assembled runtime. Product health checks
 may read `lifecycle`, but they still own database, worker, and deploy readiness.
+
+A first-party protocol host is declared in setup through `protocolHosts` and shares Cricket's HTTP admission, error reporting, and drain lifecycle. Use the dedicated integration export rather than creating an app-owned server or passing Node requests, responses, or foreign framework contexts to app code. Apps keep the protocol policy, account checks, consent, persistence, and product UI.
 
 `runtime.requests.pause()` synchronously closes admission and returns an
 independent hold with `idle({ signal })` and `resume()`. Await accepted request,

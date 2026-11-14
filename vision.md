@@ -168,7 +168,7 @@ close waits for both the response and request body before ending the connection.
 The runtime should expose capabilities deliberately at the phase that owns
 them, not imply one universal bag:
 
-- Setup returns one explicit `{ dependencies, services, cleanup }` contract.
+- Setup returns one explicit `{ dependencies, services, protocolHosts, cleanup }` contract. A protocol host is a first-party Cricket integration that owns its protocol engine and transport privately; apps supply plain policy hooks and facts, not raw requests, responses, or framework contexts.
 - Setup, service composition, and middleware initialization receive lifecycle
   and logger before request or job identity exists.
 - Request context, rules, and handlers receive services, lifecycle, setup
