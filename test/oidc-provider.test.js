@@ -188,6 +188,34 @@ describe('Cricket OIDC provider host', () => {
     }
   });
 
+  it('accepts equivalent OIDC authorities and rejects different hosts and ports before admission', async () => {
+    let admitted = [];
+    let origin = 'https://auth.example.test';
+    let host = await startHost({ origin, issuer: `${origin}/oauth`, resource: `${origin}/mcp` }, {
+      authorizeRequest({ request }) { admitted.push(request.host); }
+    }, { trustProxy: { peers: ['127.0.0.0/8'] } });
+    try {
+      for (let authority of ['auth.example.test', 'AUTH.EXAMPLE.TEST', 'auth.example.test:443', 'AUTH.EXAMPLE.TEST:443']) {
+        let response = await request(host.origin, paths.authorizationMetadata, { headers: {
+          'x-forwarded-host': authority, 'x-forwarded-proto': 'https'
+        } });
+        assert.equal(response.status, 200, authority);
+        assert.equal((await response.json()).issuer, `${origin}/oauth`);
+      }
+      assert.equal(admitted.length, 4);
+      for (let authority of ['attacker.example.test', 'auth.example.test:8443', '[:::]']) {
+        let response = await request(host.origin, paths.authorizationMetadata, { headers: {
+          'x-forwarded-host': authority, 'x-forwarded-proto': 'https'
+        } });
+        assert.equal(response.status, 421, authority);
+        assert.deepEqual(await response.json(), { error: 'Use the configured OIDC origin.' });
+      }
+      assert.equal(admitted.length, 4, 'foreign authorities never reach app admission');
+    } finally {
+      await host.close();
+    }
+  });
+
   it('ignores untrusted OIDC authority and IP spoofing before protocol admission', async () => {
     let seen;
     let host = await startHost({}, {

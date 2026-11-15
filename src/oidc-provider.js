@@ -571,7 +571,8 @@ export async function createOidcProviderHost({
       ctx.body = { error: closed ? 'OIDC service is shutting down.' : 'OIDC service is starting.' };
       return;
     }
-    if (ctx.host !== originUrl.host) {
+    let authorityUrl = `${originUrl.protocol}//${ctx.host}`;
+    if (!URL.canParse(authorityUrl) || new URL(authorityUrl).host !== originUrl.host) {
       declineRequestBody();
       ctx.status = 421;
       ctx.body = { error: 'Use the configured OIDC origin.' };
