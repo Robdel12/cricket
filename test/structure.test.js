@@ -337,7 +337,7 @@ describe('Cricket CLI', () => {
     assert.match(agents, /lifecycle/);
     assert.match(agents, /runtime\.requests\.pause\(\)/);
     assert.match(agents, /resolves after listening/);
-    assert.match(agents, /\{ dependencies, services, cleanup \}/);
+    assert.match(agents, /\{ dependencies, services, protocolHosts, cleanup \}/);
     assert.match(agents, /Recovery receives evidence, time, logger, and trace/);
     assert.match(agents, /format: 'pretty'/);
     assert.match(observabilitySkill, /format: 'pretty'/);
@@ -355,6 +355,8 @@ describe('Cricket CLI', () => {
     assert.match(agents, /\*\.test\.js/);
     assert.match(agents, /worker boundary/);
     assert.match(agents, /API versioning is optional and endpoint-owned/);
+    assert.match(agents, /first-party protocol host/);
+    assert.match(cricketSkill, /protocol integrations/);
     assert.match(agents, /defineApiVersions/);
     assert.match(agents, /Historical serializers receive validated canonical data/);
     assert.match(agents, /Sunset dates only announce policy/);

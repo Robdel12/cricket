@@ -653,6 +653,18 @@ export function createResponseWriter(req, res, {
     own(cleanup);
   }
 
+  function drainRequest(maxBodyBytes = defaultMaxBodyBytes) {
+    let drain = discardRequest(maxBodyBytes);
+    own(drain.then(reason => {
+      if (reason !== 'limit') return;
+      return terminated.then(kind => {
+        if (kind === 'finished' && !socket?.destroyed)
+          socket.destroy();
+      });
+    }));
+    return drain;
+  }
+
   function cleanup(response, immediately = false) {
     if (typeof response?.onClose === 'function')
       own((immediately ? Promise.resolve() : terminated).then(() => response.onClose()));
@@ -771,5 +783,5 @@ export function createResponseWriter(req, res, {
     }
   }
 
-  return { write, complete };
+  return { write, complete, drainRequest };
 }
