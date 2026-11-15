@@ -103,7 +103,15 @@ function validateResolvedRequestBodyLimits(requestBodyLimits, endpoints) {
   if (!requestBodyLimits)
     return;
 
-  let operations = new Map(endpoints.map(endpoint => [operationIdFor(endpoint), endpoint]));
+  let operations = new Map();
+  for (let endpoint of endpoints) {
+    let operationId = operationIdFor(endpoint);
+    if (operations.has(operationId) && Object.hasOwn(requestBodyLimits, operationId))
+      throw new Error(
+        `defineCricketApp requestBodyLimits.${operationId} requires a unique operation ID`
+      );
+    operations.set(operationId, endpoint);
+  }
   for (let operationId of Object.keys(requestBodyLimits)) {
     let endpoint = operations.get(operationId);
     if (!endpoint)

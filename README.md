@@ -942,7 +942,8 @@ let app = defineCricketApp({
 });
 ```
 
-Each entry must name a parsed multipart endpoint and provide a positive safe integer `maxBytes`;
+Each entry must name exactly one parsed multipart endpoint through a unique operation ID
+and provide a positive safe integer `maxBytes`;
 `maxFileBytes` is optional. Cricket resolves these frozen limits for the matched operation after
 `beforeBodyRules` pass, checks a declared `Content-Length` before sending `100 Continue`, and uses
 the same values for aggregate parsing and each file stream. Field, file-count, part-count, and

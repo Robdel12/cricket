@@ -344,6 +344,29 @@ describe('Cricket multipart requests', () => {
     assert.deepEqual(await readdir(tempDir), []);
   });
 
+  it('rejects ambiguous upload limits regardless of endpoint order', async () => {
+    let upload = defineEndpoint({
+      method: 'post', path: '/uploads', operationId: 'uploadArchive', multipart: {},
+      handler: () => ok({ uploaded: true })
+    });
+    let plain = defineEndpoint({
+      method: 'post', path: '/plain', operationId: 'uploadArchive',
+      handler: () => ok({ uploaded: false })
+    });
+    let otherUpload = defineEndpoint({
+      method: 'post', path: '/other-uploads', operationId: 'uploadArchive', multipart: {},
+      handler: () => ok({ uploaded: true })
+    });
+    for (let endpoints of [[plain, upload], [upload, plain], [upload, otherUpload]]) {
+      await assert.rejects(async () => {
+        let runtime = await createCricketRuntime(defineManualTestApp({
+          endpoints, requestBodyLimits: { uploadArchive: { maxBytes: 1024 } }
+        }), { logger() {} });
+        await runtime.cleanup();
+      }, /requestBodyLimits.uploadArchive requires a unique operation ID/);
+    }
+  });
+
   it('rejects request body limit entries that do not name multipart operations', async () => {
     assert.throws(() => defineManualTestApp({
       requestBodyLimits: { uploadArchive: { maxBytes: 0 } }
