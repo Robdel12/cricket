@@ -293,6 +293,11 @@ export async function createOidcProviderHost({
         throw new Error(`OIDC host paths ${pathEntries[index][0]} and ${pathEntries[other][0]} overlap`);
     }
   }
+  for (let name of ['providerMount', 'interaction']) {
+    if (paths.interactionLanding === paths[name] ||
+        paths.interactionLanding.startsWith(`${paths[name]}/`))
+      throw new Error('OIDC interactionLanding must be outside OIDC host paths');
+  }
   paths = Object.freeze(paths);
   cookieNames = z.object({
     session: z.string().regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/),

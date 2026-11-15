@@ -278,7 +278,8 @@ revocation or coordinate app-specific cleanup. Without that hook, Cricket keeps
 the Provider's normal access-token revocation behavior; grant-wide revocations
 still remove the app's grant artifacts through `deleteGrantArtifacts`.
 
-Cricket checks that protocol host paths do not overlap. Shared HTTP checks run
+Cricket checks that protocol host paths do not overlap. The app-owned
+`interactionLanding` must stay outside provider and interaction paths. Shared HTTP checks run
 first, then protocol hosts run before app bearer-auth middleware so OAuth
 client authentication remains Provider-owned. Cricket waits for accepted HTTP
 requests before closing the host; observer hooks such as `onGrantRevoked` are

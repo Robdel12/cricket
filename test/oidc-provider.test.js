@@ -141,6 +141,16 @@ function updateCookies(cookie, response) {
 }
 
 describe('Cricket OIDC provider host', () => {
+  it('rejects consent UI paths claimed by the provider or interaction host', async () => {
+    for (let interactionLanding of ['/oauth', '/oauth/consent', '/api/oauth-interactions', '/api/oauth-interactions/consent']) {
+      await assert.rejects(async () => {
+        let host = await startHost({ paths: { ...paths, interactionLanding } });
+        await host.close();
+      },
+        /interactionLanding must be outside OIDC host paths/);
+    }
+  });
+
   it('serves resource and authorization metadata through Cricket HTTP admission', async () => {
     let host = await startHost();
     try {
