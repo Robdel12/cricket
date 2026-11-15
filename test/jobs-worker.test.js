@@ -211,6 +211,8 @@ describe('Cricket jobs: worker', () => {
     let releaseLocal = deferred();
     let foreignRecovered = deferred();
     let foreignStarted = deferred();
+    let localRuns = 0;
+    let localFinished = false;
     let controller = new AbortController();
     let foreign = defineJob({
       name: 'reports.foreignRecovery',
@@ -228,14 +230,22 @@ describe('Cricket jobs: worker', () => {
       name: 'reports.localLongWork',
       input: z.object({}),
       queue: redisQueue({ name: 'local-long-work', priority: () => 2 }),
+      recover() { throw new Error('Active local work must not be recovered'); },
       async run() {
+        localRuns += 1;
         localStarted.resolve();
         await releaseLocal.promise;
+        localFinished = true;
       }
+    });
+    let wake = defineJob({
+      name: 'reports.wakeRecovery', input: z.object({}),
+      queue: redisQueue({ name: 'wake-recovery' }),
+      run() {}
     });
     let worker = await startCricketWorker(defineManualTestApp({ logger() {} }), {
       clock: clock.clock,
-      jobs: [foreign, local],
+      jobs: [foreign, local, wake],
       queues: { test: true }
     });
 
@@ -243,16 +253,19 @@ describe('Cricket jobs: worker', () => {
       await worker.jobs.enqueue(foreign, {});
       await worker.driver.claim();
       await worker.jobs.enqueue(local, {});
+      let running = worker.run({ signal: controller.signal, concurrency: 2 });
+      await localStarted.promise;
       clock.advanceBy(60_000);
-      let running = worker.run({ signal: controller.signal, concurrency: 1 });
-
-      await Promise.all([foreignRecovered.promise, localStarted.promise]);
+      await worker.jobs.enqueue(wake, {});
+      await foreignRecovered.promise;
+      assert.equal(localFinished, false);
+      assert.equal(localRuns, 1);
       assert.equal(worker.driver.snapshot().items.find(item =>
-        item.envelope.name === foreign.name
-      ).status, 'queued');
+        item.envelope.name === local.name
+      ).status, 'active');
 
-      releaseLocal.resolve();
       await foreignStarted.promise;
+      releaseLocal.resolve();
       controller.abort();
       await running;
     } finally {
