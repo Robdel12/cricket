@@ -72,7 +72,8 @@ return implicit `{ status, body }` transport objects.
 
 For shared HTTP defaults, `responseHeaders(request)` returns plain headers after
 request normalization. Explicit ordinary response headers override defaults
-case-insensitively. Protocol hosts apply defaults after their own header policy,
+case-insensitively. `Vary` keeps explicit tokens and appends missing default
+tokens, matching them without regard to case; `*` in either value wins. Protocol hosts apply defaults after their own header policy,
 so provider-owned checks and headers keep precedence. Hosts may reserve headers
 when a missing value represents a denial. `requestPolicy({ request
 })` may return `undefined` or an explicit Cricket response before protocol-host

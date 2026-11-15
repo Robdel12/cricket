@@ -35,6 +35,33 @@ import {
 } from './fixtures/http.js';
 
 describe('Cricket HTTP runtime', () => {
+  it('preserves explicit Vary tokens, adds missing defaults, and lets a wildcard win', async () => {
+    let cases = [
+      { path: '/tokens', defaults: 'Origin, ACCEPT-ENCODING, Accept-Language', explicit: 'origin, Accept-Encoding', expected: 'origin, Accept-Encoding, Accept-Language' },
+      { path: '/explicit-star', defaults: 'Origin', explicit: '*', expected: '*' },
+      { path: '/default-star', defaults: '*', explicit: 'Origin', expected: '*' }
+    ];
+    let runtime = await createCricketRuntime(defineManualTestApp({
+      endpoints: cases.map(({ path, explicit }) => defineEndpoint({
+        method: 'get', path,
+        handler() { return withHeaders(ok({ received: true }), { vary: explicit }); }
+      })),
+      responseHeaders(request) {
+        return { Vary: cases.find(entry => entry.path === request.path).defaults };
+      }
+    }), { logger() {} });
+    try {
+      for (let entry of cases) {
+        let response = await request(runtime.app).get(entry.path);
+        assert.equal(response.status, 200);
+        assert.deepEqual(response.body, { received: true });
+        assert.equal(response.headers.vary, entry.expected);
+      }
+    } finally {
+      await runtime.cleanup();
+    }
+  });
+
   it('applies response headers and early request policy to native protocol responses', async () => {
     let hostCalls = [];
     let middlewarePaths = [];
@@ -83,7 +110,10 @@ describe('Cricket HTTP runtime', () => {
         method: 'get',
         path: '/ordinary',
         handler() {
-          return withHeaders(respond(200, 'ordinary'), { 'X-POLICY': 'explicit value' });
+          return withHeaders(respond(200, 'ordinary'), {
+            'X-POLICY': 'explicit value',
+            Vary: 'Accept-Encoding'
+          });
         }
       })],
       requestPolicy({ request }) {
@@ -92,7 +122,7 @@ describe('Cricket HTTP runtime', () => {
           return withHeaders(respond(204), {
             'Access-Control-Allow-Origin': request.headers.origin,
             'Access-Control-Allow-Methods': 'GET, OPTIONS',
-            Vary: 'Origin'
+            Vary: 'Accept-Encoding'
           });
       },
       responseHeaders(request) {
@@ -103,7 +133,8 @@ describe('Cricket HTTP runtime', () => {
           'X-Content-Type-Options': 'nosniff',
           'x-policy': 'default value',
           'Access-Control-Allow-Origin': 'https://default.example.test',
-          'X-Request-Origin': request.origin
+          'X-Request-Origin': request.origin,
+          Vary: 'Origin'
         };
       },
       async setup() {
@@ -133,6 +164,7 @@ describe('Cricket HTTP runtime', () => {
       let ordinary = await request(origin).get('/ordinary');
       assert.equal(ordinary.text, 'ordinary');
       assert.equal(ordinary.headers['x-policy'], 'explicit value');
+      assert.equal(ordinary.headers.vary, 'Accept-Encoding, Origin');
 
       let denied = await request(origin).get('/protocol/denied');
       assert.equal(denied.status, 401);
@@ -150,6 +182,7 @@ describe('Cricket HTTP runtime', () => {
       assert.equal(preflight.status, 204);
       assert.equal(preflight.headers['access-control-allow-origin'], 'https://client.example.test');
       assert.equal(preflight.headers['access-control-allow-methods'], 'GET, OPTIONS');
+      assert.equal(preflight.headers.vary, 'Accept-Encoding, Origin');
       assert.equal(hostCalls.some(call => call.startsWith('OPTIONS ')), false);
 
       let streamResponse = new Promise((resolve, reject) => {

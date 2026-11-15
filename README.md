@@ -359,7 +359,8 @@ let app = defineCricketApp({
 
 `responseHeaders(request)` runs once after Cricket normalizes the request and
 returns plain default headers. Ordinary response headers override defaults
-case-insensitively. Protocol hosts receive the same header record and apply
+case-insensitively. `Vary` keeps explicit tokens and appends missing default
+tokens, matching them without regard to case; `*` in either value wins. Protocol hosts receive the same header record and apply
 defaults after their own response policy, so explicit provider headers and
 origin checks keep precedence; a host can reserve a header that its policy may
 deliberately omit. A response-header policy cannot add headers to a request
