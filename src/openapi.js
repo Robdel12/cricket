@@ -95,15 +95,19 @@ function schemaProperties(schema, source, convert) {
   }));
 }
 
+function contentForTypes(schema, contentTypes, example) {
+  for (let type of contentTypes) {
+    if (typeof type !== 'string' || !/^[\w!#$&^_.+-]+\/[\w!#$&^_.+-]+$/.test(type))
+      throw new Error('Content type must be a media type without parameters');
+  }
+  return Object.fromEntries(contentTypes.map(type => [type, {
+    schema,
+    ...(example === undefined ? {} : { example })
+  }]));
+}
+
 function contentForSchema(schema, contentType = JSON_CONTENT_TYPE, example) {
-  if (typeof contentType !== 'string' || !/^[\w!#$&^_.+-]+\/[\w!#$&^_.+-]+$/.test(contentType))
-    throw new Error('Content type must be a media type without parameters');
-  return {
-    [contentType]: {
-      schema,
-      ...(example === undefined ? {} : { example })
-    }
-  };
+  return contentForTypes(schema, [contentType], example);
 }
 
 function parametersFromSchema(source, schema, convert) {
@@ -204,7 +208,11 @@ function normalizeResponse(status, response, method, convert) {
   return {
     description: descriptor.description ?? (noBody ? 'No content' : 'Success'),
     ...(descriptor.headers ? { headers: responseHeaders(descriptor.headers, convert) } : {}),
-    ...(schema ? { content: contentForSchema(schema, descriptor.contentType, descriptor.example) } : {})
+    ...(schema ? {
+      content: descriptor.contentTypes
+        ? contentForTypes(schema, descriptor.contentTypes, descriptor.example)
+        : contentForSchema(schema, descriptor.contentType, descriptor.example)
+    } : {})
   };
 }
 

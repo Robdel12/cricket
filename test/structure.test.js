@@ -389,6 +389,7 @@ describe('Cricket CLI', () => {
     assert.match(cricketSkill, /Sunset dates only announce policy/);
     assert.match(cricketSkill, /\*\.jobs\.js/);
     assert.match(cricketSkill, /OpenAPI/);
+    assert.match(cricketSkill, /contentTypes/);
     assert.match(cricketSkill, /cricket-jobs/);
     assert.match(cricketSkill, /cricket-observability/);
     assert.match(cricketSkill, /cricket-testing/);

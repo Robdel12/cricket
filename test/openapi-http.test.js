@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
+import { Readable } from 'node:stream';
 import { promisify } from 'node:util';
 import { describe, it } from 'node:test';
 import request from 'supertest';
@@ -146,6 +147,111 @@ describe('Public HTTP contracts and generated OpenAPI', () => {
     assert.throws(() => endpoint({ security: [] }), /[Uu]nknown|[Uu]nsupported/);
     assert.throws(() => defineManualTestApp({ securitySchemes: {} }), /[Uu]nknown|[Uu]nsupported/);
     assert.throws(() => endpoint({ headers: z.object({ 'X-Uppercase': z.string() }) }), /lowercase/);
+  });
+
+  it('documents streamed responses for multiple media types and preserves raw bytes', async t => {
+    let bytes = Buffer.from([0, 255, 128, 10, 0]);
+    let contentTypes = ['image/png', 'application/octet-stream'];
+    let binary = z.instanceof(Readable).meta({
+      jsonSchema: { type: 'string', format: 'binary' }
+    });
+    let responseDefinition = { schema: binary, contentTypes };
+    let respondWithAsset = ({ input }) => {
+      let contentType =
+        input.params.format === 'png' ? 'image/png' : 'application/octet-stream';
+      return withHeaders(ok(Readable.from([bytes])), {
+        'Content-Type': contentType,
+        'Content-Length': String(bytes.length)
+      });
+    };
+    let endpoints = [
+      defineEndpoint({
+        method: 'get',
+        path: '/assets/:format',
+        params: z.object({ format: z.enum(['png', 'legacy']) }),
+        response: responseDefinition,
+        handler: respondWithAsset
+      }),
+      defineEndpoint({
+        method: 'get',
+        path: '/status-assets/:format',
+        params: z.object({ format: z.enum(['png', 'legacy']) }),
+        responses: { 200: responseDefinition },
+        handler: respondWithAsset
+      })
+    ];
+    contentTypes.push('text/plain');
+
+    assert.deepEqual(endpoints[0].response.contentTypes, [
+      'image/png',
+      'application/octet-stream'
+    ]);
+    assert.deepEqual(endpoints[1].responses['200'].contentTypes, [
+      'image/png',
+      'application/octet-stream'
+    ]);
+    assert.equal(Object.isFrozen(endpoints[0].response.contentTypes), true);
+    assert.equal(Object.isFrozen(endpoints[1].responses['200'].contentTypes), true);
+
+    let docs = generateOpenApi({ endpoints });
+    for (let route of ['/assets/{format}', '/status-assets/{format}']) {
+      let content = docs.paths[route].get.responses[200].content;
+      assert.deepEqual(Object.keys(content), ['image/png', 'application/octet-stream']);
+      assert.equal(content['image/png'].schema.type, 'string');
+      assert.equal(content['image/png'].schema.format, 'binary');
+      assert.deepEqual(
+        content['application/octet-stream'].schema,
+        content['image/png'].schema
+      );
+      assert.equal(content['application/json'], undefined);
+    }
+
+    let runtime = await createTestRuntime(defineManualTestApp({ endpoints }));
+    t.after(() => runtime.cleanup());
+    for (let route of ['/assets', '/status-assets']) {
+      for (let [format, contentType] of [
+        ['png', 'image/png'],
+        ['legacy', 'application/octet-stream']
+      ]) {
+        let response = await fetch(`${runtime.origin}${route}/${format}`);
+        assert.equal(response.status, 200);
+        assert.equal(response.headers.get('content-type'), contentType);
+        assert.equal(response.headers.get('content-length'), String(bytes.length));
+        assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
+      }
+    }
+  });
+
+  it('rejects invalid or ambiguous normal response media type lists', () => {
+    let binary = z.instanceof(Readable).meta({
+      jsonSchema: { type: 'string', format: 'binary' }
+    });
+    let endpoint = response => defineEndpoint({
+      method: 'get',
+      path: '/binary',
+      response,
+      handler: () => ok(Readable.from([]))
+    });
+    assert.throws(
+      () => endpoint({
+        schema: binary,
+        contentType: 'image/png',
+        contentTypes: ['image/png', 'application/octet-stream']
+      }),
+      /cannot specify both contentType and contentTypes/
+    );
+    assert.throws(
+      () => endpoint({ schema: binary, contentTypes: [] }),
+      /unique media types/
+    );
+    assert.throws(
+      () => endpoint({ schema: binary, contentTypes: ['image/png', 'image/png'] }),
+      /unique media types/
+    );
+    assert.throws(
+      () => endpoint({ schema: binary, contentTypes: ['image/png; charset=utf-8'] }),
+      /unique media types/
+    );
   });
 
   it('keeps private model views out of automatic components and preserves caller metadata', () => {

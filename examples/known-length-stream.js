@@ -17,16 +17,17 @@ export let app = defineCricketApp({
     endpoints: [defineEndpoint({
       method: 'get',
       path: '/download',
+      query: z.object({ format: z.enum(['text', 'binary']).default('binary') }),
       responses: {
         200: {
           schema: z.instanceof(Readable).meta({ jsonSchema: { type: 'string', format: 'binary' } }),
-          contentType: 'application/octet-stream'
+          contentTypes: ['text/plain', 'application/octet-stream']
         }
       },
-      handler() {
+      handler({ input }) {
         let stream = Readable.from([content]);
         return withResponseCleanup(withHeaders(ok(stream), {
-          'Content-Type': 'application/octet-stream',
+          'Content-Type': input.query.format === 'text' ? 'text/plain' : 'application/octet-stream',
           'Content-Length': String(content.length),
           'Content-Disposition': 'attachment; filename="example.txt"'
         }), () => stream.destroy());

@@ -357,6 +357,11 @@ describe a schema accurately. Recursive Zod schemas keep their structure through
 local component references; documentation must not weaken them to accept
 anything.
 
+A normal response can document one schema under several exact media types using
+`contentTypes`. The list is immutable by copy and excludes the singular
+`contentType` option. Handlers still return the actual header and body; documentation
+metadata does not rewrite transport behavior.
+
 Exclude private model views from automatic components. Apps still review their
 endpoint responses before publishing. Generate frozen docs without changing
 caller-owned objects or starting services.
