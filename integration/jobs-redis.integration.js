@@ -483,6 +483,140 @@ describe('Cricket jobs: real Redis', () => {
     }
   });
 
+  it('runs only the accepted local concurrency and joins it after abort', async () => {
+    let drivers = await createDrivers('local-run-concurrency');
+    let started = new Map(['first', 'second', 'queued'].map(id => [id, deferred()]));
+    let release = new Map([...started.keys()].map(id => [id, deferred()]));
+    let controller = new AbortController();
+    let processed = [];
+    let job = defineJob({
+      name: 'reports.localRunConcurrency',
+      input: z.object({ reportId: z.string() }),
+      queue: redisQueue({
+        name: 'reports',
+        priority: ({ input }) => input.reportId === 'queued' ? 1 : 2
+      }),
+      async run({ input }) {
+        started.get(input.reportId)?.resolve();
+        await release.get(input.reportId)?.promise;
+        processed.push(input.reportId);
+        return { status: 'completed' };
+      }
+    });
+    let worker = await startCricketWorker(defineManualTestApp({ logger() {} }), {
+      jobs: [job],
+      queues: { driver: drivers.driverA }
+    });
+
+    try {
+      for (let reportId of ['first', 'second', 'queued'])
+        await worker.jobs.enqueue(job, { reportId });
+
+      let running = worker.run({ signal: controller.signal, concurrency: 2 });
+      await Promise.all(['first', 'second'].map(id => started.get(id).promise));
+      controller.abort();
+      release.get('first').resolve();
+      release.get('second').resolve();
+      let outcome = await Promise.race([
+        running.then(() => 'finished'),
+        started.get('queued').promise.then(() => 'third-started')
+      ]);
+      assert.equal(outcome, 'finished', 'run leaves the third job unclaimed after abort');
+
+      assert.deepEqual(processed.sort(), ['first', 'second']);
+      let queued = await worker.driver.claim();
+      assert.equal(queued.envelope.input.reportId, 'queued');
+      assert.equal((await worker.driver.complete(queued.envelope, {
+        status: 'completed'
+      }, { attempt: queued.attempt })).settled, true);
+    } finally {
+      controller.abort();
+      for (let gate of release.values()) gate.resolve();
+      await worker.cleanup();
+      await drivers.driverB.cleanup();
+    }
+  });
+
+  it('preserves Redis partition limits with local run concurrency', async () => {
+    let drivers = await createDrivers('local-partition-concurrency');
+    let started = new Map(['a-first', 'a-second', 'b-first', 'b-second'].map(id =>
+      [id, deferred()]
+    ));
+    let finished = new Map([...started.keys()].map(id => [id, deferred()]));
+    let release = new Map([...started.keys()].map(id => [id, deferred()]));
+    let activeByAccount = new Map();
+    let maxActiveByAccount = new Map();
+    let maxActive = 0;
+    let controller = new AbortController();
+    let job = defineJob({
+      name: 'reports.localPartitionConcurrency',
+      input: z.object({ reportId: z.string(), accountId: z.string() }),
+      queue: redisQueue({
+        name: 'reports',
+        priority: ({ input }) => input.reportId.endsWith('-first') ? 2 : 1
+      }),
+      concurrency: concurrency.partition({
+        key: ({ input }) => input.accountId,
+        limit: 1
+      }),
+      async run({ input }) {
+        let active = (activeByAccount.get(input.accountId) ?? 0) + 1;
+        activeByAccount.set(input.accountId, active);
+        maxActiveByAccount.set(input.accountId, Math.max(
+          maxActiveByAccount.get(input.accountId) ?? 0,
+          active
+        ));
+        maxActive = Math.max(maxActive, [...activeByAccount.values()].reduce((sum, value) =>
+          sum + value, 0
+        ));
+        started.get(input.reportId).resolve();
+        await release.get(input.reportId).promise;
+        activeByAccount.set(input.accountId, activeByAccount.get(input.accountId) - 1);
+        finished.get(input.reportId).resolve();
+        return { status: 'completed' };
+      }
+    });
+    let worker = await startCricketWorker(defineManualTestApp({ logger() {} }), {
+      jobs: [job],
+      queues: { driver: drivers.driverA }
+    });
+
+    try {
+      // Tie timestamps and reverse IDs so this scenario relies on its declared priority.
+      for (let [reportId, accountId] of [
+        ['a-first', 'account-a'],
+        ['a-second', 'account-a'],
+        ['b-first', 'account-b'],
+        ['b-second', 'account-b']
+      ]) {
+        await worker.jobs.enqueue(job, { reportId, accountId }, {
+          now: () => new Date('2026-06-19T12:00:00.000Z'),
+          createId: () => `jobenv_${reportId.endsWith('-first') ? 'z' : 'a'}_${reportId}`
+        });
+      }
+
+      let running = worker.run({ signal: controller.signal, concurrency: 4 });
+      await Promise.all([started.get('a-first').promise, started.get('b-first').promise]);
+      assert.equal(maxActive, 2);
+      assert.deepEqual([...maxActiveByAccount.values()], [1, 1]);
+
+      release.get('a-first').resolve();
+      release.get('b-first').resolve();
+      await Promise.all([started.get('a-second').promise, started.get('b-second').promise]);
+      release.get('a-second').resolve();
+      release.get('b-second').resolve();
+      await Promise.all([...finished.values()].map(item => item.promise));
+      controller.abort();
+      await running;
+      assert.deepEqual([...maxActiveByAccount.values()], [1, 1]);
+    } finally {
+      controller.abort();
+      for (let gate of release.values()) gate.resolve();
+      await worker.cleanup();
+      await drivers.driverB.cleanup();
+    }
+  });
+
   it('claims ready work by priority with deterministic ties', async () => {
     let drivers = await createDrivers('priority');
     let job = defineJob({

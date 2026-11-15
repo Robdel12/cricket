@@ -38,7 +38,7 @@ Use this when work leaves the request path but should keep Cricket's contract sh
 ## Producers And Workers
 
 - Use `createCricketJobs` when code only needs to enqueue work.
-- Use `startCricketWorker` in `api/workers/` entrypoints that execute jobs, then call `worker.run({ signal })`.
+- Use `startCricketWorker` in `api/workers/` entrypoints that execute jobs, then call `worker.run({ signal, concurrency })`. Local concurrency defaults to one and accepts values up to 100; Redis still reserves global and partition capacity across worker processes.
 - Configure `queues.redis` or an app-provided `queues.driver` explicitly. Use
   `queues.test: true` only in tests; Cricket does not silently choose an
   in-memory queue.

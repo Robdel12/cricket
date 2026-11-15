@@ -224,7 +224,9 @@ Keep app logs structured so both formats retain useful metadata and full IDs.
 
 Use `createCricketJobs` in producers that only enqueue work. Use
 `startCricketWorker` in `api/workers/` entrypoints that execute work, then
-`worker.run({ signal })` for the job loop. Configure `queues.redis` or an
+`worker.run({ signal, concurrency })` for the job loop. Concurrency defaults to
+one and can be bounded from one to 100 within this worker process; queue drivers
+continue enforcing shared global and partition limits. Configure `queues.redis` or an
 app-provided `queues.driver` explicitly; only tests should opt into
 `queues.test: true`. Workers wait for queue wakeups and delayed or cron
 boundaries instead of polling. Between jobs, the continuous worker checks

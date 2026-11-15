@@ -22,6 +22,7 @@ import { retryAvailability } from './retry.js';
 import { createTestQueueDriver } from './test-driver.js';
 
 let heartbeatIntervalMs = 15_000;
+let maxWorkerRunConcurrency = 100;
 
 function toArray(value) {
   if (!value)
@@ -536,7 +537,11 @@ export async function startCricketWorker(cricketApp, {
     logger: runtime.logger
   });
   let activeClaims = new Set();
+  let locallyExecutingEnvelopeIds = new Set();
   let activeRuns = new Set();
+  let activeRunClaims = new Set();
+  let runTaskWaiters = new Set();
+  let currentRun;
   let clockCanDriveWorker = !clockOptions?.now || Boolean(clockOptions.waitUntil);
   let shuttingDown = false;
   let workerLifecycle = new AbortController();
@@ -774,6 +779,7 @@ export async function startCricketWorker(cricketApp, {
   }
 
   async function executeClaim(claim) {
+    locallyExecutingEnvelopeIds.add(claim.envelope.id);
     let execution = runClaim(claim);
     activeClaims.add(execution);
 
@@ -781,19 +787,77 @@ export async function startCricketWorker(cricketApp, {
       return await execution;
     } finally {
       activeClaims.delete(execution);
+      locallyExecutingEnvelopeIds.delete(claim.envelope.id);
     }
   }
 
+  function notifyRunTaskChange() {
+    for (let waiter of [...runTaskWaiters])
+      waiter.notify();
+  }
+
+  function waitForRunTaskChange(signal) {
+    let resolve;
+    let settled = false;
+    let onAbort;
+    let promise = new Promise(resolvePromise => {
+      resolve = resolvePromise;
+    });
+
+    function remove() {
+      runTaskWaiters.delete(waiter);
+      signal?.removeEventListener('abort', onAbort);
+    }
+
+    function finish() {
+      if (settled)
+        return;
+
+      settled = true;
+      remove();
+      resolve('changed');
+    }
+
+    let waiter = { notify: finish };
+    let cancel = () => {
+      if (settled)
+        return;
+
+      settled = true;
+      remove();
+      resolve('cancelled');
+    };
+
+    if (signal?.aborted)
+      finish();
+    else {
+      runTaskWaiters.add(waiter);
+      onAbort = finish;
+      signal?.addEventListener('abort', onAbort, { once: true });
+    }
+
+    return {
+      promise,
+      cancel
+    };
+  }
+
   async function recover({
-    throwOnError = false
+    throwOnError = false,
+    excludeLocal = false
   } = {}) {
     let results = [];
     let candidates = await driver.recoveryCandidates?.({
       now: clock.now()
     }) ?? [];
+    let localEnvelopeIds = excludeLocal
+      ? new Set(locallyExecutingEnvelopeIds)
+      : new Set();
 
     for (let candidate of candidates) {
       let envelope = candidate.envelope;
+      if (localEnvelopeIds.has(envelope.id))
+        continue;
       let job = byName.get(envelope.name);
 
       if (!job?.recover)
@@ -1086,50 +1150,171 @@ export async function startCricketWorker(cricketApp, {
 
   async function runLoop({
     signal,
-    throwOnError = false
+    throwOnError = false,
+    concurrency: concurrencyLimit = 1
   } = {}) {
     if (!clockCanDriveWorker)
       throw new Error('worker.run with a custom clock.now needs clock.waitUntil');
+    if (!Number.isSafeInteger(concurrencyLimit) ||
+        concurrencyLimit < 1 || concurrencyLimit > maxWorkerRunConcurrency)
+      throw new Error(`worker.run concurrency must be an integer from 1 to ${maxWorkerRunConcurrency}`);
 
     let runSignal = combinedSignal(signal, workerLifecycle.signal);
+    let failedRunController = new AbortController();
+    let stopRunController = new AbortController();
+    let waitSignal = combinedSignal(runSignal, failedRunController.signal, stopRunController.signal);
+    let pendingWorkWait;
+    let pendingWorkController;
+    let runErrors = [];
+    let loopError;
 
-    while (!runSignal.aborted) {
-      await recover({
-        throwOnError
+    function startClaim(claim) {
+      let execution = executeClaim(claim);
+      activeRunClaims.add(execution);
+      execution.then(() => {
+        activeRunClaims.delete(execution);
+        notifyRunTaskChange();
+      }, error => {
+        activeRunClaims.delete(execution);
+        if (throwOnError) {
+          runErrors.push(error);
+          failedRunController.abort();
+        }
+        notifyRunTaskChange();
       });
-      await tickSchedules();
-      let results = await drainReady({ signal: runSignal, throwOnError }, 1);
+    }
 
-      if (results.length)
-        continue;
+    async function workWait() {
+      if (!pendingWorkWait) {
+        pendingWorkController = new AbortController();
+        pendingWorkWait = (async () => {
+          let until = await nextWorkerBoundary();
+          return await driver.waitForWork({
+            signal: combinedSignal(waitSignal, pendingWorkController.signal),
+            until,
+            now: clock.now(),
+            waitUntil: clock.waitUntil
+          });
+        })().then(wait => ({ wait }), error => ({ error }));
+      }
+      return await pendingWorkWait;
+    }
 
-      try {
-        let wait = await driver.waitForWork({
-          signal: runSignal,
-          until: await nextWorkerBoundary(),
-          now: clock.now(),
-          waitUntil: clock.waitUntil
+    async function cancelPendingWorkWait() {
+      if (!pendingWorkWait)
+        return;
+
+      pendingWorkController.abort();
+      let result = await pendingWorkWait;
+      pendingWorkWait = undefined;
+      pendingWorkController = undefined;
+      return result;
+    }
+
+    try {
+      while (!runSignal.aborted && !(throwOnError && runErrors.length)) {
+        await recover({ throwOnError, excludeLocal: true });
+        await tickSchedules();
+        await driver.promoteDelayed?.({
+          now: clock.now()
         });
 
-        if (wait?.reason === 'aborted')
-          return;
-      } catch (error) {
-        if (error?.name === 'AbortError' || runSignal.aborted)
-          return;
+        let claimed = false;
+        while (!runSignal.aborted &&
+            !(throwOnError && runErrors.length) &&
+            activeRunClaims.size < concurrencyLimit) {
+          let claim = await driver.claim();
+          if (!claim)
+            break;
 
-        throw error;
+          // A claim that resolves while abort is in flight is already accepted;
+          // start and join it before the run loop exits.
+          startClaim(claim);
+          claimed = true;
+        }
+
+        if (runSignal.aborted || (throwOnError && runErrors.length))
+          break;
+
+        if (claimed)
+          continue;
+
+        if (activeRunClaims.size >= concurrencyLimit) {
+          let taskWait = waitForRunTaskChange(runSignal);
+          try {
+            await taskWait.promise;
+          } finally {
+            taskWait.cancel();
+          }
+          continue;
+        }
+
+        let taskWait = waitForRunTaskChange();
+        let activity = await Promise.race([
+          taskWait.promise.then(() => ({ type: 'task' })),
+          workWait().then(result => ({ type: 'work', result }))
+        ]);
+
+        if (activity.type === 'task') {
+          taskWait.cancel();
+          let result = await cancelPendingWorkWait();
+          if (result?.error && result.error?.name !== 'AbortError') {
+            loopError = result.error;
+            break;
+          }
+          continue;
+        }
+
+        taskWait.cancel();
+        pendingWorkWait = undefined;
+        pendingWorkController = undefined;
+        if (activity.result.error) {
+          let error = activity.result.error;
+          if (!runSignal.aborted && !failedRunController.signal.aborted && error?.name !== 'AbortError')
+            loopError = error;
+          break;
+        }
+        if (activity.result.wait?.reason === 'aborted')
+          break;
       }
+    } catch (error) {
+      loopError = error;
+    } finally {
+      stopRunController.abort();
+      if (pendingWorkWait) {
+        let result = await pendingWorkWait;
+        pendingWorkWait = undefined;
+        pendingWorkController = undefined;
+        if (result.error && !loopError && !runSignal.aborted &&
+            !failedRunController.signal.aborted && result.error?.name !== 'AbortError')
+          loopError = result.error;
+      }
+      await Promise.allSettled([...activeRunClaims]);
     }
+
+    if (throwOnError && runErrors.length) {
+      if (runErrors.length === 1)
+        throw runErrors[0];
+      throw new AggregateError(runErrors, 'Worker run failed');
+    }
+    if (loopError)
+      throw loopError;
   }
 
   async function run(options = {}) {
+    if (currentRun)
+      throw new Error('worker.run is already active; configure concurrency on its active call');
+
     let execution = runLoop(options);
+    currentRun = execution;
     activeRuns.add(execution);
 
     try {
       return await execution;
     } finally {
       activeRuns.delete(execution);
+      if (currentRun === execution)
+        currentRun = undefined;
     }
   }
 

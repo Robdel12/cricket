@@ -1153,9 +1153,15 @@ wakeups never stall normal Redis commands. The built-in driver targets a
 standalone Redis primary; Redis Cluster is not supported by the built-in
 driver.
 
-`worker.run({ signal })` blocks on queue wakeups and the next delayed or cron
-boundary. Enqueuing ready work wakes it immediately. Aborting the signal or
-calling `worker.cleanup()` stops the wait without a polling interval.
+`worker.run({ signal, concurrency })` blocks on queue wakeups and the next delayed
+or cron boundary. Local run concurrency defaults to one and accepts values from
+one to 100. This bounds active handlers in this process; queue drivers still
+enforce shared global and partition limits across workers. Enqueuing ready work
+wakes it immediately. Aborting the signal or calling `worker.cleanup()` stops
+new claims and waits for every accepted job before the run promise settles.
+The loop also recovers expired claims owned by other workers without treating
+its own active handlers as abandoned; explicit `worker.recover()` calls retain
+their lease-fencing behavior for app recovery workflows.
 Between jobs, the continuous worker rechecks recovery, due cron slots, and
 delayed availability, so a ready backlog cannot postpone those checks until
 the queue empties. `worker.drain()` still runs all currently ready work for
