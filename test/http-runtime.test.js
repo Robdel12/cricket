@@ -35,6 +35,33 @@ import {
 } from './fixtures/http.js';
 
 describe('Cricket HTTP runtime', () => {
+  it('preserves explicit Vary tokens, adds missing defaults, and lets a wildcard win', async () => {
+    let cases = [
+      { path: '/tokens', defaults: 'Origin, ACCEPT-ENCODING, Accept-Language', explicit: 'origin, Accept-Encoding', expected: 'origin, Accept-Encoding, Accept-Language' },
+      { path: '/explicit-star', defaults: 'Origin', explicit: '*', expected: '*' },
+      { path: '/default-star', defaults: '*', explicit: 'Origin', expected: '*' }
+    ];
+    let runtime = await createCricketRuntime(defineManualTestApp({
+      endpoints: cases.map(({ path, explicit }) => defineEndpoint({
+        method: 'get', path,
+        handler() { return withHeaders(ok({ received: true }), { vary: explicit }); }
+      })),
+      responseHeaders(request) {
+        return { Vary: cases.find(entry => entry.path === request.path).defaults };
+      }
+    }), { logger() {} });
+    try {
+      for (let entry of cases) {
+        let response = await request(runtime.app).get(entry.path);
+        assert.equal(response.status, 200);
+        assert.deepEqual(response.body, { received: true });
+        assert.equal(response.headers.vary, entry.expected);
+      }
+    } finally {
+      await runtime.cleanup();
+    }
+  });
+
   it('applies response headers and early request policy to native protocol responses', async () => {
     let hostCalls = [];
     let middlewarePaths = [];
