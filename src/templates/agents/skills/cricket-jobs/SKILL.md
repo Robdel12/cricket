@@ -30,7 +30,8 @@ Use this when work leaves the request path but should keep Cricket's contract sh
   writes. Apps still make product-side effects idempotent or attempt-aware.
 - The built-in client accepts `redis://` and `rediss://` URLs, ACL credentials,
   numeric database paths, and Node TLS options. App-provided clients also need
-  `duplicate()` for blocking wakeups.
+  `duplicate()` for blocking wakeups, with `disconnect()` on each duplicate to
+  interrupt pending commands during cancellation and cleanup.
 - The built-in queue driver targets standalone Redis. Redis Cluster is not
   supported by the built-in driver.
 

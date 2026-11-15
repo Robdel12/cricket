@@ -1123,7 +1123,9 @@ configuration into an in-memory worker.
 The built-in Redis client accepts `redis://` and `rediss://` URLs, including ACL
 credentials and a numeric database path. `rediss://` verifies certificates by
 default; pass Node TLS options as `queues.redis.tls` when the deployment uses a
-private CA. An app-provided client must implement `duplicate()` so blocking
+private CA. An app-provided client must implement `duplicate()`. Each duplicate
+must provide `disconnect()` that immediately interrupts pending commands; a
+graceful `quit()` queued behind a blocking wait cannot support cancellation. Blocking
 wakeups never stall normal Redis commands. The built-in driver targets a
 standalone Redis primary; Redis Cluster is not supported by the built-in
 driver.
