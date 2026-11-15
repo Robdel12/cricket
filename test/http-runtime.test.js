@@ -40,6 +40,7 @@ describe('Cricket HTTP runtime', () => {
     let middlewarePaths = [];
     let policyPaths = [];
     let responseHeaderPaths = [];
+    let observations = [];
     let streamStarted = Promise.withResolvers();
     let releaseStream = Promise.withResolvers();
     let protocolHost = defineProtocolHost({
@@ -69,6 +70,7 @@ describe('Cricket HTTP runtime', () => {
         }
         res.statusCode = 200;
         res.setHeader('X-Policy', 'host value');
+        res.setHeader('Set-Cookie', 'session=protocol-secret; HttpOnly');
         res.end('success');
       }
     });
@@ -105,7 +107,12 @@ describe('Cricket HTTP runtime', () => {
         };
       },
       async setup() {
-        return { protocolHosts: [protocolHost] };
+        return { protocolHosts: [protocolHost], services: { marker: {} } };
+      },
+      observability: {
+        observe(event, context) {
+          observations.push({ event, context });
+        }
       }
     }), { logger() {} });
     let server = runtime.app.listen(0, '127.0.0.1');
@@ -168,10 +175,167 @@ describe('Cricket HTTP runtime', () => {
       assert.equal(policyPaths.length, 6);
       assert.equal(responseHeaderPaths.length, 6);
       assert.deepEqual(middlewarePaths, ['/ordinary']);
+
+      let terminal = observations
+        .map(({ event }) => event)
+        .filter(event => ['response.finished', 'response.closed'].includes(event.type));
+      assert.equal(terminal.length, 6, JSON.stringify(terminal.map(({ type, request }) => [type, request.method, request.path])));
+      let byRequest = new Map(terminal.map(event => [
+        `${event.request.method} ${event.request.path}`,
+        event
+      ]));
+      assert.equal(byRequest.get('GET /protocol/success').response.status, 200);
+      assert.equal(byRequest.get('GET /protocol/success').route, 'protocol:test-protocol');
+      assert.equal(byRequest.get('GET /protocol/success').response.body, 'opaque');
+      assert.deepEqual(byRequest.get('GET /protocol/success').response.cookies, ['session']);
+      assert.equal(byRequest.get('GET /protocol/denied').response.status, 401);
+      assert.equal(byRequest.get('GET /protocol/throw').response.status, 500);
+      assert.equal(byRequest.get('GET /protocol/stream').response.status, 200);
+      assert.equal(byRequest.get('GET /ordinary').response.status, 200);
+      assert.equal(byRequest.get('OPTIONS /protocol/success').response.status, 204);
+      assert.equal(
+        JSON.stringify(observations).includes('protocol-secret'),
+        false,
+        'observer events omit protocol response cookie values'
+      );
+      for (let { event, context } of observations) {
+        assert.equal(Object.isFrozen(event), true);
+        assert.equal(Object.isFrozen(context), true);
+        assert.deepEqual(Object.keys(context), ['logger', 'services']);
+        assert.equal(context.services, runtime.services);
+        assert.equal(typeof context.logger.child, 'function');
+        assert.equal('req' in context, false);
+        assert.equal('res' in context, false);
+        assert.equal('socket' in context, false);
+      }
     } finally {
       releaseStream.resolve();
       await runtime.cleanup();
       await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('observes native protocol client disconnects at the response close boundary', async () => {
+    let observations = [];
+    let streamStarted = Promise.withResolvers();
+    let releaseStream = Promise.withResolvers();
+    let responseClosed = Promise.withResolvers();
+    let protocolHost = defineProtocolHost({
+      name: 'disconnect-protocol',
+      paths: { prefixes: ['/protocol'], exact: [] },
+      matches(request) { return request.path.startsWith('/protocol/'); },
+      async handle({ res }) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.write('event: initial\n\n');
+        streamStarted.resolve();
+        await releaseStream.promise;
+        res.end('event: done\n\n');
+      }
+    });
+    let runtime = await createCricketRuntime(defineManualTestApp({
+      async setup() {
+        return { protocolHosts: [protocolHost] };
+      },
+      observability: {
+        observe(event) {
+          observations.push(event);
+          if (event.type === 'response.closed') responseClosed.resolve(event);
+        }
+      }
+    }), { logger() {} });
+    let server = runtime.app.listen(0, '127.0.0.1');
+
+    try {
+      await new Promise((resolve, reject) => {
+        server.once('listening', resolve);
+        server.once('error', reject);
+      });
+      let clientClosed = Promise.withResolvers();
+      let clientRequest = http.get(
+        `http://127.0.0.1:${server.address().port}/protocol/events`,
+        response => {
+          response.once('data', () => {
+            response.destroy();
+            clientClosed.resolve();
+          });
+          response.on('error', error => {
+            if (error.code !== 'ECONNRESET') clientClosed.reject(error);
+          });
+        }
+      );
+      clientRequest.on('error', clientClosed.reject);
+      await streamStarted.promise;
+      await clientClosed.promise;
+      let terminal = await responseClosed.promise;
+
+      assert.equal(terminal.response.status, 200);
+      assert.equal(terminal.response.body, 'opaque');
+      assert.equal(terminal.route, 'protocol:disconnect-protocol');
+      assert.deepEqual(
+        observations.filter(event => ['response.closed', 'response.finished'].includes(event.type))
+          .map(event => event.type),
+        ['response.closed']
+      );
+      releaseStream.resolve();
+    } finally {
+      releaseStream.resolve();
+      await runtime.cleanup();
+      await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('keeps observer request capabilities isolated between runtimes', async () => {
+    let observations = [];
+    let setupNumber = 0;
+    let protocolHost = defineProtocolHost({
+      name: 'isolation-protocol',
+      paths: { prefixes: ['/protocol'], exact: [] },
+      matches(request) { return request.path.startsWith('/protocol/'); },
+      async handle({ res }) {
+        res.statusCode = 200;
+        res.end('ok');
+      }
+    });
+    let app = defineManualTestApp({
+      async setup() {
+        setupNumber += 1;
+        return {
+          protocolHosts: [protocolHost],
+          services: { runtimeId: setupNumber }
+        };
+      },
+      observability: {
+        observe(event, context) {
+          observations.push({ event, context });
+        }
+      }
+    });
+    let firstRuntime = await createCricketRuntime(app, { logger() {} });
+    let secondRuntime = await createCricketRuntime(app, { logger() {} });
+
+    try {
+      let [firstResponse, secondResponse] = await Promise.all([
+        request(firstRuntime.app).get('/protocol/first'),
+        request(secondRuntime.app).get('/protocol/second')
+      ]);
+      assert.equal(firstResponse.status, 200);
+      assert.equal(secondResponse.status, 200);
+
+      let finished = observations.filter(({ event }) => event.type === 'response.finished');
+      let first = finished.find(({ event }) => event.request.path === '/protocol/first');
+      let second = finished.find(({ event }) => event.request.path === '/protocol/second');
+      assert.ok(first);
+      assert.ok(second);
+      assert.equal(first.context.services, firstRuntime.services);
+      assert.equal(second.context.services, secondRuntime.services);
+      assert.notEqual(first.context.services, second.context.services);
+      assert.notEqual(first.context.logger, second.context.logger);
+      assert.equal(Object.isFrozen(first.context), true);
+      assert.equal(Object.isFrozen(second.context), true);
+    } finally {
+      await firstRuntime.cleanup();
+      await secondRuntime.cleanup();
     }
   });
 
