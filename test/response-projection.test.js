@@ -96,6 +96,93 @@ let auth = { Authorization: 'Bearer fixture' };
 let currentHeaders = { ...auth, 'Comparison-Version': 'current' };
 
 describe('Canonical response data and public projections', () => {
+  it('validates and serializes the default response when status-specific errors are declared', async t => {
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/mixed-responses',
+      query: z.object({ mode: z.enum(['success', 'invalid', 'denied']).default('success') }),
+      response: {
+        schema: z.object({ connected: z.boolean(), internalSecret: z.string() }),
+        serializer: defineSerializer({
+          name: 'mixed.responses.public',
+          output: z.object({ connected: z.boolean() }),
+          serialize: value => ({ connected: value.connected })
+        })
+      },
+      responses: {
+        403: z.object({ error: z.string() })
+      },
+      handler({ input }) {
+        if (input.query.mode === 'denied') return respond(403, { error: 'forbidden' });
+        if (input.query.mode === 'invalid') return { connected: true };
+        return { connected: true, internalSecret: 'never returned' };
+      }
+    });
+    let createEndpoint = defineEndpoint({
+      method: 'post',
+      path: '/created-with-errors',
+      response: z.object({ created: z.boolean() }),
+      responses: { 400: z.object({ error: z.string() }) },
+      handler() {
+        return { created: true };
+      }
+    });
+    let runtime = await createTestRuntime(
+      defineCricketApp({
+        domains: [{ name: 'mixed-responses', endpoints: [endpoint, createEndpoint] }]
+      })
+    );
+    t.after(() => runtime.cleanup());
+
+    let success = await runtime.api.get('/mixed-responses');
+    assert.equal(success.status, 200);
+    assert.deepEqual(success.body, { connected: true });
+
+    let denied = await runtime.api.get('/mixed-responses?mode=denied');
+    assert.equal(denied.status, 403);
+    assert.deepEqual(denied.body, { error: 'forbidden' });
+
+    let invalid = await runtime.api.get('/mixed-responses?mode=invalid');
+    assert.equal(invalid.status, 500);
+    assert.equal(invalid.body.error.code, 'RESPONSE_CONTRACT_FAILED');
+
+    let created = await runtime.api.post('/created-with-errors');
+    assert.equal(created.status, 201);
+    assert.deepEqual(created.body, { created: true });
+  });
+
+  it('keeps response-only contracts active for explicit non-default success statuses', async t => {
+    let endpoint = defineEndpoint({
+      method: 'post',
+      path: '/post-response/:mode',
+      params: z.object({ mode: z.enum(['valid', 'invalid']) }),
+      response: {
+        schema: z.object({ connected: z.boolean(), internalSecret: z.string() }),
+        serializer: defineSerializer({
+          name: 'post.response.public',
+          output: z.object({ connected: z.boolean() }),
+          serialize: value => ({ connected: value.connected })
+        })
+      },
+      handler({ input }) {
+        if (input.params.mode === 'invalid') return ok({ connected: true });
+        return ok({ connected: true, internalSecret: 'never returned' });
+      }
+    });
+    let runtime = await createTestRuntime(
+      defineCricketApp({ domains: [{ name: 'post-response', endpoints: [endpoint] }] })
+    );
+    t.after(() => runtime.cleanup());
+
+    let success = await runtime.api.post('/post-response/valid');
+    assert.equal(success.status, 200);
+    assert.deepEqual(success.body, { connected: true });
+
+    let invalid = await runtime.api.post('/post-response/invalid');
+    assert.equal(invalid.status, 500);
+    assert.equal(invalid.body.error.code, 'RESPONSE_CONTRACT_FAILED');
+  });
+
   it('preserves legacy history and loads only requested current facts through real HTTP and SQLite', async t => {
     let { app, endpoint, loads, earlyVersions, handlerVersions } = comparisonApp();
     let runtime = await createTestRuntime(app);

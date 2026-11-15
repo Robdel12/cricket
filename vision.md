@@ -350,9 +350,12 @@ budgets, or bypass endpoint handling. Apps own setup and data policy.
 
 OpenAPI describes the HTTP API: validated requests, serialized responses,
 authentication methods, and headers. Rules enforce access, services handle data,
-and handlers return headers. Docs generation should fail when it can't describe
-a schema accurately. Recursive Zod schemas keep their structure through local
-component references; documentation must not weaken them to accept anything.
+and handlers return headers. Docs generation includes both the default response
+and declared status-specific responses, with an explicit status-specific
+definition taking precedence on a duplicate status. It should fail when it can't
+describe a schema accurately. Recursive Zod schemas keep their structure through
+local component references; documentation must not weaken them to accept
+anything.
 
 Exclude private model views from automatic components. Apps still review their
 endpoint responses before publishing. Generate frozen docs without changing
