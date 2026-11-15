@@ -3,6 +3,7 @@ import {
   payloadTooLarge
 } from '../errors.js';
 import { parseMultipartBody } from './multipart.js';
+import { proxyFacts } from './proxy.js';
 import { defaultMaxBodyBytes, recordRequestBodyBytes } from './body-bytes.js';
 
 let securityHeaderNames = [
@@ -110,13 +111,17 @@ function hostFrom(req, trustProxy) {
   return host;
 }
 
-function protocolFrom(req, trustProxy) {
-  return normalizeProtocol(
-    trustProxy ? singleHeaderValue(req, 'x-forwarded-proto', {
-      ambiguousMessage: 'Ambiguous x-forwarded-proto header',
-      rejectCommaSeparated: true
-    }) : undefined
-  ) ?? (req.socket?.encrypted ? 'https' : 'http');
+function protocolFrom(req, proxyTrusted) {
+  let forwarded = proxyTrusted ? singleHeaderValue(req, 'x-forwarded-proto', {
+    ambiguousMessage: 'Ambiguous x-forwarded-proto header',
+    rejectCommaSeparated: true
+  }) : undefined;
+  if (forwarded === undefined)
+    return req.socket?.encrypted ? 'https' : 'http';
+  let protocol = normalizeProtocol(forwarded.trim());
+  if (!protocol)
+    throw badRequest('Invalid x-forwarded-proto header');
+  return protocol;
 }
 
 function safeDecodeUriComponent(value) {
@@ -259,7 +264,7 @@ function sortedKeys(value) {
  * @param {string} [req.method] - HTTP method.
  * @param {string} [req.url] - Request URL.
  * @param {object} req.socket - Socket object for protocol detection.
- * @param {boolean} [options.trustProxy=false] - Whether to trust X-Forwarded-* headers.
+ * @param {false|{peers: string[]}} [options.trustProxy=false] - Explicit trusted proxy peers.
  * @returns {{
  *   body: undefined,
  *   cookies: object,
@@ -286,10 +291,12 @@ export function createBaseRequest(req, {
   assertSingleSecurityHeaders(req);
 
   let requestTarget = requestTargetFrom(req);
-  let host = hostFrom(req, trustProxy);
-  let protocol = protocolFrom(req, trustProxy);
+  let facts = proxyFacts(req, trustProxy);
+  let host = hostFrom(req, facts.proxyTrusted);
+  let protocol = protocolFrom(req, facts.proxyTrusted);
 
   return {
+    ...facts,
     body: undefined,
     cookies: parseCookieHeader(req.headers.cookie),
     file: undefined,

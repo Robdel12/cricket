@@ -8,6 +8,7 @@ import {
   loadDomains
 } from './domain.js';
 import { flattenRoutes } from './http/router.js';
+import { normalizeTrustProxy } from './http/proxy.js';
 import { collectApiVersionFamilies } from './api-version.js';
 import { frozenPlain } from './immutable.js';
 import { assertKnownOptions } from './options.js';
@@ -117,7 +118,8 @@ function freezeAppContract(contract) {
     endpoints: stable.endpoints,
     jobs: stable.jobs,
     models: stable.models,
-    plugins: stable.plugins
+    plugins: stable.plugins,
+    trustProxy: stable.trustProxy
   });
 
   return Object.freeze(stable);
@@ -135,7 +137,8 @@ function definedAppFor(app) {
     'endpoints',
     'jobs',
     'models',
-    'plugins'
+    'plugins',
+    'trustProxy'
   ].filter(key => app[key] !== definition[key]);
 
   if (replacedContracts.length > 0)
@@ -231,7 +234,7 @@ export function defineCricketApp(options = {}) {
   let models = hasExplicitModels ? options.models : collectedDomains.models;
   let allowedHosts = options.allowedHosts;
   let prefix = options.prefix ?? '';
-  let trustProxy = options.trustProxy ?? false;
+  let trustProxy = normalizeTrustProxy(options.trustProxy);
   let middleware = options.middleware ?? [];
   let database = normalizeDatabaseConfig(options.database);
 

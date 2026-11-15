@@ -194,6 +194,52 @@ work. Shutdown hooks receive the assembled runtime, including dependencies,
 services, lifecycle, and logger.
 
 
+## Configure trusted proxies
+
+Cricket ignores forwarding headers by default. If a reverse proxy terminates TLS,
+configure its verified socket addresses on the app:
+
+```js
+let app = defineCricketApp({
+  domains: './domains',
+  trustProxy: { peers: ['127.0.0.1', '::1'] },
+  allowedHosts: ['api.example.test']
+});
+```
+
+These loopback peers are an example for a proxy on the same machine. Use your
+actual deployment peers or CIDRs, restrict network access, and have the proxy
+overwrite `X-Forwarded-Host` and `X-Forwarded-Proto`. A private network range is
+not evidence that every caller on it is a trusted proxy. `trustProxy: true`, hop
+counts, hostnames, empty peer lists, and malformed IP/CIDR entries are rejected.
+Use `false` or omit the option for direct traffic.
+
+The plain request exposes `peerIp` (the native socket peer), `clientIp`, and
+`proxyTrusted` (whether that immediate peer is allowed). IPv4-mapped IPv6 becomes
+IPv4; other IPv6 addresses use compressed form. Unknown or scoped socket
+addresses produce null IP facts and cannot establish trust. Automatic request
+logs and test snapshots omit the peer/client IP fields.
+
+For an allowed peer, Cricket validates every comma-separated `X-Forwarded-For`
+hop, combining repeated physical headers in wire order. It walks from the socket
+peer right to left and stops at the first untrusted hop. Anything farther left
+cannot choose the client IP. Missing XFF leaves `clientIp` equal to `peerIp`.
+Invalid or empty hops return 400. `Forwarded` and `X-Real-IP` are ignored.
+
+Only allowed peers can supply `X-Forwarded-Host` and `X-Forwarded-Proto`. Each must
+be a single header value; repeated headers, comma lists, invalid authorities, and
+protocols other than HTTP/HTTPS return 400. Missing values fall back to the
+validated direct Host and socket TLS state. Untrusted peers' forwarding headers
+are ignored, including malformed values. `allowedHosts` still checks the
+resulting host.
+
+OIDC uses these same validated host, protocol, and IP facts, including HTTPS
+redirects and Secure cookies behind a trusted HTTP proxy. Configure trust only
+on the app; the OIDC host has no separate proxy setting. Its plain hook request
+keeps `ip` equal to `clientIp` and also includes `peerIp`, `proxyTrusted`,
+`protocol`, and `secure`. The existing hook `origin` remains the browser's Origin
+header for consent checks.
+
 ## Host OIDC inside Cricket
 
 When an app needs OAuth or OpenID Connect, it can keep the protocol engine inside

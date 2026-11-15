@@ -11,6 +11,11 @@ let requestFactsSchema = z.object({
   host: z.string(),
   origin: z.string(),
   ip: z.string().nullable(),
+  clientIp: z.string().nullable(),
+  peerIp: z.string().nullable(),
+  proxyTrusted: z.boolean(),
+  protocol: z.enum(['http', 'https']),
+  secure: z.boolean(),
   browserCredential: z.string().nullable()
 });
 
@@ -52,6 +57,11 @@ function requestFacts(ctx, browserCredentialCookie, { includeBrowserCredential =
     host: ctx.host,
     origin: ctx.get('origin'),
     ip: ctx.ip || null,
+    clientIp: ctx.request.clientIp,
+    peerIp: ctx.request.peerIp,
+    proxyTrusted: ctx.request.proxyTrusted,
+    protocol: ctx.protocol,
+    secure: ctx.secure,
     browserCredential: includeBrowserCredential && browserCredentialCookie
       ? ctx.cookies.get(browserCredentialCookie, { signed: false }) ?? null
       : null
@@ -274,9 +284,9 @@ export async function createOidcProviderHost({
     jwks_uri: 51200,
     sector_identifier_uri: 5120
   },
-  trustProxy = false,
   fetch,
-  logger
+  logger,
+  ...unsupportedOptions
 }) {
   let paths = z.object({
     providerMount: z.string().startsWith('/').regex(/^\/[A-Za-z0-9/_-]+$/),
@@ -332,7 +342,8 @@ export async function createOidcProviderHost({
     if (!Number.isSafeInteger(seconds) || seconds < 1)
       throw new Error(`OIDC host ${name} must be a positive integer`);
   }
-  if (typeof trustProxy !== 'boolean') throw new Error('OIDC host trustProxy must be a boolean');
+  if (Object.hasOwn(unsupportedOptions, 'trustProxy'))
+    throw new Error('Configure trustProxy peers on the Cricket app, not the OIDC host');
   if (browserCredentialCookie !== undefined && !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(browserCredentialCookie))
     throw new Error('OIDC host browserCredentialCookie must be a cookie name');
   clients = structuredClone(z.array(jsonValueSchema).parse(clients));
@@ -510,7 +521,7 @@ export async function createOidcProviderHost({
   };
 
   provider = new Provider(issuer, settings);
-  provider.proxy = trustProxy;
+  provider.proxy = false;
   provider.on('server_error', (_ctx, error) => {
     let facts = { name: error.name, code: error.code ?? null };
     try { logger?.error?.('OIDC provider request failed', facts); } catch {}
@@ -520,12 +531,24 @@ export async function createOidcProviderHost({
     if (hooks.onGrantRevoked) observeHook(hooks.onGrantRevoked, { grantId });
   });
 
-  let koaApp = new Koa({ proxy: trustProxy });
+  let koaApp = new Koa({ proxy: false });
   koaApp.keys = [...cookieKeys];
   let contextsByRequest = new WeakMap();
   let controlsByRequest = new WeakMap();
   koaApp.on('error', () => {});
   koaApp.use(async (ctx, next) => {
+    let { request } = controlsByRequest.get(ctx.req);
+    // Koa and the provider consume Cricket's validated transport facts. Their
+    // own blanket proxy parsers stay disabled, and native headers stay intact.
+    Object.defineProperties(ctx.request, {
+      host: { value: request.host },
+      protocol: { value: request.protocol },
+      ip: { value: request.clientIp },
+      clientIp: { value: request.clientIp },
+      peerIp: { value: request.peerIp },
+      proxyTrusted: { value: request.proxyTrusted },
+      ips: { value: [] }
+    });
     contextsByRequest.set(ctx.req, ctx);
     try {
       await next();
@@ -548,7 +571,8 @@ export async function createOidcProviderHost({
       ctx.body = { error: closed ? 'OIDC service is shutting down.' : 'OIDC service is starting.' };
       return;
     }
-    if (ctx.host !== originUrl.host) {
+    let authorityUrl = `${originUrl.protocol}//${ctx.host}`;
+    if (!URL.canParse(authorityUrl) || new URL(authorityUrl).host !== originUrl.host) {
       declineRequestBody();
       ctx.status = 421;
       ctx.body = { error: 'Use the configured OIDC origin.' };
@@ -761,10 +785,13 @@ export async function createOidcProviderHost({
         request.path === paths.authorizationMetadata ||
         interactionRoute(request.path, paths) !== null;
     },
-    async handle({ req, res, continueRequest, declineRequestBody }) {
-      controlsByRequest.set(req, { continueRequest, declineRequestBody });
-      await handler(req, res);
-      controlsByRequest.delete(req);
+    async handle({ req, res, request, continueRequest, declineRequestBody }) {
+      controlsByRequest.set(req, { request, continueRequest, declineRequestBody });
+      try {
+        await handler(req, res);
+      } finally {
+        controlsByRequest.delete(req);
+      }
       let ctx = contextsByRequest.get(req);
       if (ctx?.state.cricketProtocolError) throw ctx.state.cricketProtocolError;
     },

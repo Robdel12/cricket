@@ -380,7 +380,7 @@ describe('Cricket HTTP requests', () => {
     });
     let app = await createHttpApp({
       endpoints: [endpoint],
-      trustProxy: true,
+      trustProxy: { peers: ['127.0.0.1', '::1'] },
       context({ request: cricketRequest }) {
         return {
           user: cricketRequest.headers.authorization ? { id: 'user_123' } : undefined

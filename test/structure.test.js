@@ -361,6 +361,11 @@ describe('Cricket CLI', () => {
     assert.match(agents, /Historical serializers receive validated canonical data/);
     assert.match(agents, /Sunset dates only announce policy/);
     for (let guidance of [agents, cricketSkill]) {
+      assert.match(guidance, /trustProxy: false/);
+      assert.match(guidance, /request\.clientIp/);
+      assert.match(guidance, /request\.peerIp/);
+      assert.match(guidance, /request\.proxyTrusted/);
+      assert.match(guidance, /first\s+untrusted hop/);
       assert.match(guidance, /authMethods/);
       assert.match(guidance, /serializer: currentSerializer/);
       assert.match(guidance, /Recursive Zod schemas and `z.json\(\)` work/);

@@ -147,6 +147,14 @@ without version metadata leave version headers alone.
 Cricket provides its HTTP runtime. It should not wrap another web framework or pass
 foreign request/response objects through app code as an escape hatch.
 
+Proxy trust belongs to the native HTTP boundary. Defaults ignore forwarding;
+apps explicitly allow verified socket peers or CIDRs. Cricket validates authority
+and forwarded IP hops once, exposes plain peer/client facts, and stops the IP
+walk at the nearest untrusted hop. First-party protocol hosts consume those same
+facts, so a private Koa/provider mount cannot independently trust spoofed headers.
+Apps still own proxy deployment, header replacement, network access, and host
+allowlists. IP values stay out of automatic request snapshots.
+
 Handler, middleware, and fallback return values are domain bodies by default.
 Only explicit, function-shaped Cricket response helpers control status,
 headers, cookies, redirects, streaming, and cleanup. This keeps domain objects
