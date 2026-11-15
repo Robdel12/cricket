@@ -32,9 +32,11 @@ import {
   getResponseError,
   resolveHttpResponse,
   respond,
-  withHeaders
+  withHeaders,
+  withResponseCleanup
 } from '../response.js';
 import {
+  assertRequestBodySize,
   assertAllowedHost,
   completeRequestBody,
   createBaseRequest,
@@ -43,6 +45,7 @@ import {
 } from './request.js';
 import { createRuntimeLifecycle } from './lifecycle.js';
 import { createRequestTracker } from './requests.js';
+import { createFetchRequest } from './fetch.js';
 import {
   protocolHostDefinition,
   protocolHostsOverlap,
@@ -162,7 +165,7 @@ function setupDependenciesFor(setup, db) {
   };
 }
 
-function setupWithLifecycleCleanup(setup, lifecycleController, requests) {
+function setupWithLifecycleCleanup(setup, lifecycleController, requests, fetchShutdownController) {
   let cleaning;
   return {
     ...setup,
@@ -170,6 +173,8 @@ function setupWithLifecycleCleanup(setup, lifecycleController, requests) {
       if (cleaning) return cleaning;
       requests.stop();
       lifecycleController.shuttingDown();
+      if (!fetchShutdownController.signal.aborted)
+        fetchShutdownController.abort(new Error('Cricket runtime is shutting down'));
       cleaning = (async () => {
         let errors = [];
         for (let cleanup of [requests.idle, setup.cleanup]) {
@@ -618,7 +623,9 @@ function writeObservedResponse(writer, response, {
   requestId,
   route,
   timing,
-  maxBodyBytes
+  maxBodyBytes,
+  declineRequestBody,
+  skipRequestDrain
 }) {
   let onTerminal = async kind => {
     let finished = kind === 'finished';
@@ -636,7 +643,9 @@ function writeObservedResponse(writer, response, {
     await replay?.emit({ ...event, type: `response.${kind}` });
   };
 
-  let write = () => writer.write(response, { onTerminal, maxBodyBytes });
+  let write = () => writer.write(response, {
+    onTerminal, maxBodyBytes, declineRequestBody, skipRequestDrain
+  });
   if (timing)
     timing.time('responseMs', write);
   else
@@ -713,9 +722,36 @@ function createRuntimeHandler({
   services,
   middleware,
   protocolHosts,
-  requests
+  requests,
+  fetchShutdownSignal
 }) {
   let closingConnections = new WeakMap();
+
+  function createFetchAbortState(req, res) {
+    let controller = new AbortController();
+    let abort = reason => {
+      if (!controller.signal.aborted) controller.abort(reason);
+    };
+    let onRequestAbort = () => abort(new Error('HTTP request was aborted'));
+    let onResponseClose = () => {
+      if (!res.writableFinished) abort(new Error('HTTP response was closed'));
+    };
+    let onShutdown = () => abort(fetchShutdownSignal.reason ?? new Error('Cricket runtime is shutting down'));
+    req.once('aborted', onRequestAbort);
+    req.once('error', onRequestAbort);
+    res.once('close', onResponseClose);
+    fetchShutdownSignal.addEventListener('abort', onShutdown, { once: true });
+    if (req.aborted || res.destroyed) onRequestAbort();
+    return {
+      signal: controller.signal,
+      dispose() {
+        req.off('aborted', onRequestAbort);
+        req.off('error', onRequestAbort);
+        res.off('close', onResponseClose);
+        fetchShutdownSignal.removeEventListener('abort', onShutdown);
+      }
+    };
+  }
 
   function markConnectionClosing(req) {
     if (req.socket)
@@ -744,6 +780,7 @@ function createRuntimeHandler({
     let route;
     let routeEndpoint;
     let apiVersionNegotiation;
+    let skipFetchRequestDrain = false;
 
     async function reportFailure(error, response, handled = false) {
       await reportRequestError(appContract, {
@@ -769,9 +806,13 @@ function createRuntimeHandler({
     }
 
     function writeResponse(response, observation) {
+      let declineRequestBody = expectContinue && !continued;
+      if (declineRequestBody) declineContinue();
       writeObservedResponse(writer, response, {
         ...observation,
-        maxBodyBytes: maxBodyBytesFor(routeEndpoint)
+        maxBodyBytes: maxBodyBytesFor(routeEndpoint),
+        declineRequestBody,
+        skipRequestDrain: skipFetchRequestDrain
       });
       completionContext.response = response;
     }
@@ -978,7 +1019,53 @@ function createRuntimeHandler({
             })
           );
 
+          if (routeEndpoint.fetch)
+            assertRequestBodySize(matchedRequest, maxBodyBytesFor(routeEndpoint));
+
           writeContinue();
+
+          if (routeEndpoint.fetch) {
+            let abortState = createFetchAbortState(req, res);
+            let bridge;
+            try {
+              bridge = createFetchRequest(req, matchedRequest, {
+                maxBodyBytes: maxBodyBytesFor(routeEndpoint),
+                signal: abortState.signal
+              });
+              observedRequest = matchedRequest;
+              let response = await routeEndpoint.handleFetch(
+                bridge.request,
+                matchedRequest,
+                contextAfterBeforeBodyRules,
+                {
+                  timing,
+                  onClose: abortState.dispose
+                }
+              );
+              let bodyFailure = bridge.failure();
+              if (bodyFailure) {
+                response.body?.destroy();
+                await response.onClose?.();
+                throw bodyFailure;
+              }
+              skipFetchRequestDrain = bridge.hasBody;
+              let responseCleanup = response.onClose;
+              return applyDeprecationHeaders(withResponseCleanup(response, async () => {
+                try {
+                  await responseCleanup?.();
+                } finally {
+                  bridge.cleanup();
+                  abortState.dispose();
+                  if (bridge.hasBody && !req.complete && !req.destroyed)
+                    req.socket?.destroy();
+                }
+              }), routeEndpoint.deprecation);
+            } catch (error) {
+              bridge?.cleanup();
+              abortState.dispose();
+              throw error;
+            }
+          }
 
           let parsedRequest;
           try {
@@ -1140,6 +1227,7 @@ export async function createCricketRuntime(cricketApp, {
 } = {}) {
   let lifecycleController = createRuntimeLifecycle();
   let requests = createRequestTracker();
+  let fetchShutdownController = new AbortController();
   let { lifecycle } = lifecycleController;
   let appContract = await resolveCricketApp(cricketApp, {
     baseUrl
@@ -1167,7 +1255,7 @@ export async function createCricketRuntime(cricketApp, {
           trace: createNoopTrace()
         }) : undefined;
     setup = setupDependenciesFor(normalizeSetupResult(setupResult), db);
-    setup = setupWithLifecycleCleanup(setup, lifecycleController, requests);
+    setup = setupWithLifecycleCleanup(setup, lifecycleController, requests, fetchShutdownController);
   } catch (error) {
     let errors = [error];
     try {
@@ -1247,7 +1335,8 @@ export async function createCricketRuntime(cricketApp, {
       services,
       middleware,
       protocolHosts,
-      requests
+      requests,
+      fetchShutdownSignal: fetchShutdownController.signal
     });
     let app = Object.assign(handle, {
       handle,
@@ -1270,7 +1359,7 @@ export async function createCricketRuntime(cricketApp, {
     };
 
     Object.defineProperty(runtime, lifecycleControllerKey, {
-      value: { ...lifecycleController, requests }
+      value: { ...lifecycleController, requests, fetchShutdownController }
     });
     lifecycleController.ready();
 
@@ -1358,6 +1447,8 @@ export async function startCricketApp(cricketApp, {
     let controller = runtime[lifecycleControllerKey];
     controller.requests.stop();
     controller.shuttingDown(signal);
+    if (!controller.fetchShutdownController.signal.aborted)
+      controller.fetchShutdownController.abort(new Error('Cricket runtime is shutting down'));
     let closing = closeServer(server, { closeConnections });
     stopping = Promise.resolve().then(async () => {
       let errors = [];

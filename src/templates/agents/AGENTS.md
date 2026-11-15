@@ -104,6 +104,15 @@ the same validated facts and keeps hook `request.ip` equal to `clientIp`; it has
 no separate proxy option. Host allowlists and network access remain app policy.
 Automatic request snapshots omit the peer/client IP fields.
 
+For an integration that already uses the Web Fetch API, define a domain
+endpoint with `fetch(request, context)`. Cricket keeps Node request/response
+objects private and streams the response through its HTTP runtime. Declare
+allowed statuses and media types with `fetchResponses`; it documents wire
+formats and enforces status/media without parsing or buffering the body. Fetch
+endpoints do not accept parsed body schemas, response schemas, or serializers.
+Use the ordinary endpoint rules for admission and honor `request.signal` on
+disconnect or shutdown.
+
 Routes explicitly compose request schemas, rules, handlers, serializers, and
 response schemas. Request validation errors may be descriptive to clients.
 Response, serializer, and normalizer contract details are internal: inspect

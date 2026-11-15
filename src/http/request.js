@@ -445,6 +445,10 @@ function assertContentLength(request, maxBytes) {
     });
 }
 
+export function assertRequestBodySize(request, maxBytes) {
+  assertContentLength(request, maxBytes);
+}
+
 /**
  * Read the request body from a Node HTTP request stream.
  *

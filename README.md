@@ -590,6 +590,58 @@ export let createProject = defineEndpoint({
 Definition builders reject unknown app and endpoint options so misspelled
 wiring fails immediately instead of becoming unused metadata.
 
+### Fetch endpoints
+
+Use `fetch` for a handler that already speaks the Web Fetch API. Cricket keeps
+the Node socket bridge private, runs normal route matching and access rules,
+and passes a standard `Request` plus the usual endpoint context. The handler
+must return a standard `Response`.
+
+```js
+import { defineEndpoint } from '@robdel12/cricket';
+
+export let stream = defineEndpoint({
+  method: 'post',
+  path: '/stream',
+  maxBodyBytes: 1024 * 1024,
+  fetchResponses: {
+    200: {
+      description: 'JSON or event stream',
+      contentTypes: ['application/json', 'text/event-stream']
+    }
+  },
+  fetch(request, { request: cricketRequest, services }) {
+    return services.stream.handle(request, {
+      requestId: cricketRequest.id,
+      host: cricketRequest.host,
+      origin: cricketRequest.origin
+    });
+  }
+});
+```
+
+Fetch request bodies stay streamed and are limited by `maxBodyBytes` (10 MiB
+by default). The Request body remains available through the response stream, so
+a handler can return a Response that streams that body. Cricket applies
+backpressure between the Web stream and the Node response, preserves repeated
+`Set-Cookie` headers, and cancels the Fetch signal on disconnect or shutdown.
+If an upload is still incomplete when the response finishes, Cricket closes
+that connection instead of racing a second reader against the Fetch body.
+Every Fetch endpoint declares statuses in `fetchResponses`. It lists supported
+media types and adds them to OpenAPI without claiming a body schema. Cricket
+checks the status and declared content type without buffering or parsing the
+response body. Fetch endpoints reject parsed `response` and `responses`
+schemas; use `fetchResponses` for this transport contract.
+
+Use one `fetchResponses` entry per status and list its media types when Cricket
+should check them. An empty entry such as `204: {}` checks only the status and
+adds no response content to OpenAPI. This also lets a protocol library own its
+response content types, but Cricket then cannot validate or document them.
+
+Fetch endpoints reject parsed `body` and `requestBody` definitions. Their input
+stream has no Cricket body schema or OpenAPI request-body entry; the protocol
+library owns its input format and validation.
+
 ### Endpoint API versions
 
 API versioning is endpoint-owned and optional. A shared immutable version
