@@ -551,7 +551,10 @@ describe('Cricket jobs: real Redis', () => {
     let job = defineJob({
       name: 'reports.localPartitionConcurrency',
       input: z.object({ reportId: z.string(), accountId: z.string() }),
-      queue: redisQueue({ name: 'reports' }),
+      queue: redisQueue({
+        name: 'reports',
+        priority: ({ input }) => input.reportId.endsWith('-first') ? 2 : 1
+      }),
       concurrency: concurrency.partition({
         key: ({ input }) => input.accountId,
         limit: 1
@@ -579,13 +582,18 @@ describe('Cricket jobs: real Redis', () => {
     });
 
     try {
+      // Tie timestamps and reverse IDs so this scenario relies on its declared priority.
       for (let [reportId, accountId] of [
         ['a-first', 'account-a'],
         ['a-second', 'account-a'],
         ['b-first', 'account-b'],
         ['b-second', 'account-b']
-      ])
-        await worker.jobs.enqueue(job, { reportId, accountId });
+      ]) {
+        await worker.jobs.enqueue(job, { reportId, accountId }, {
+          now: () => new Date('2026-06-19T12:00:00.000Z'),
+          createId: () => `jobenv_${reportId.endsWith('-first') ? 'z' : 'a'}_${reportId}`
+        });
+      }
 
       let running = worker.run({ signal: controller.signal, concurrency: 4 });
       await Promise.all([started.get('a-first').promise, started.get('b-first').promise]);

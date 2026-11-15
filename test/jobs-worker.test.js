@@ -93,7 +93,10 @@ describe('Cricket jobs: worker', () => {
     let job = defineJob({
       name: 'reports.partitionedConcurrency',
       input: z.object({ id: z.string(), organization: z.string() }),
-      queue: redisQueue({ name: 'partitioned-concurrency' }),
+      queue: redisQueue({
+        name: 'partitioned-concurrency',
+        priority: ({ input }) => input.id === 'a-first' ? 2 : 1
+      }),
       concurrency: concurrency.partition({
         key: ({ input }) => `organization:${input.organization}`,
         limit: 1
@@ -119,9 +122,17 @@ describe('Cricket jobs: worker', () => {
     let controller = new AbortController();
 
     try {
-      await worker.jobs.enqueue(job, { id: 'a-first', organization: 'a' });
-      await worker.jobs.enqueue(job, { id: 'a-second', organization: 'a' });
-      await worker.jobs.enqueue(job, { id: 'b-first', organization: 'b' });
+      // Tie timestamps and reverse IDs so this scenario relies on its declared priority.
+      for (let [id, organization] of [
+        ['a-first', 'a'],
+        ['a-second', 'a'],
+        ['b-first', 'b']
+      ]) {
+        await worker.jobs.enqueue(job, { id, organization }, {
+          now: () => new Date('2026-06-19T12:00:00.000Z'),
+          createId: () => `jobenv_${id === 'a-second' ? 'a' : 'z'}_${id}`
+        });
+      }
       let running = worker.run({ signal: controller.signal, concurrency: 3 });
       await Promise.all([started.get('a-first').promise, started.get('b-first').promise]);
       assert.equal(activeByOrganization.get('a'), 1);
