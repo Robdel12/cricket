@@ -283,6 +283,7 @@ describe('Cricket OIDC provider host', () => {
             return withHeaders(respond(204), {
               'Access-Control-Allow-Origin': trustedOrigin,
               'Access-Control-Allow-Methods': 'POST, OPTIONS',
+              'X-App-Preflight': 'handled',
               Vary: 'Origin'
             });
         }
@@ -295,11 +296,12 @@ describe('Cricket OIDC provider host', () => {
       assert.equal(accepted.status, 204);
       assert.equal(accepted.headers.get('access-control-allow-origin'), trustedOrigin);
       assert.equal(accepted.headers.get('access-control-allow-methods'), 'POST, OPTIONS');
+      assert.equal(accepted.headers.get('x-app-preflight'), 'handled');
       assert.deepEqual(admitted, []);
       let declined = await request(host.origin, '/oauth/token', {
         method: 'OPTIONS', headers: { origin: 'https://untrusted.example.test', 'access-control-request-method': 'POST' }
       });
-      assert.equal(declined.headers.get('access-control-allow-origin'), null);
+      assert.equal(declined.headers.get('x-app-preflight'), null);
       assert.equal(admitted.length, 1, 'unhandled preflight reaches the provider host');
     } finally {
       await host.close();
