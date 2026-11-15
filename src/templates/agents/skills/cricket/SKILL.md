@@ -77,7 +77,8 @@ so provider-owned checks and headers keep precedence. Hosts may reserve headers
 when a missing value represents a denial. `requestPolicy({ request
 })` may return `undefined` or an explicit Cricket response before protocol-host
 dispatch and ordinary middleware; keep it narrow, such as for trusted-origin
-preflight, and leave route authorization to rules.
+preflight, and leave route authorization to rules. The app owns any response
+it returns here, including CORS; provider checks apply only after pass-through.
 
 For file streams with a known byte length, set `Content-Length` through
 `withHeaders`. Cricket checks the byte count, keeps backpressure, and closes

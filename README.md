@@ -370,7 +370,9 @@ It returns `undefined` to continue, or an explicit Cricket response to end the
 request. Use it for early shared decisions such as trusted-origin preflight.
 Returning a response skips protocol dispatch and ordinary middleware for that
 request; it is not a replacement for route authorization or general middleware.
-Provider paths retain Provider-owned authentication and CORS checks. The MCP
+The app owns any preflight response it returns, including its CORS decision.
+Provider authentication and CORS checks apply only to requests passed through
+to the provider. The MCP
 Fetch transport remains an ordinary app endpoint and uses the same runtime
 admission and shutdown lifecycle. Cricket waits for accepted HTTP requests
 before closing the host; observer hooks such as `onGrantRevoked` are tracked and

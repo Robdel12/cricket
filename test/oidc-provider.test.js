@@ -270,6 +270,42 @@ describe('Cricket OIDC provider host', () => {
     }
   });
 
+  it('lets app preflight policy handle provider paths before OIDC admission', async () => {
+    let admitted = [];
+    let trustedOrigin = 'https://console.example.test';
+    let host = await startHost({}, {
+      authorizeRequest({ route }) { admitted.push(route); }
+    }, {
+      appOptions: {
+        requestPolicy({ request }) {
+          if (request.method === 'OPTIONS' && request.path === '/oauth/token' &&
+              request.headers.origin === trustedOrigin)
+            return withHeaders(respond(204), {
+              'Access-Control-Allow-Origin': trustedOrigin,
+              'Access-Control-Allow-Methods': 'POST, OPTIONS',
+              Vary: 'Origin'
+            });
+        }
+      }
+    });
+    try {
+      let accepted = await request(host.origin, '/oauth/token', {
+        method: 'OPTIONS', headers: { origin: trustedOrigin, 'access-control-request-method': 'POST' }
+      });
+      assert.equal(accepted.status, 204);
+      assert.equal(accepted.headers.get('access-control-allow-origin'), trustedOrigin);
+      assert.equal(accepted.headers.get('access-control-allow-methods'), 'POST, OPTIONS');
+      assert.deepEqual(admitted, []);
+      let declined = await request(host.origin, '/oauth/token', {
+        method: 'OPTIONS', headers: { origin: 'https://untrusted.example.test', 'access-control-request-method': 'POST' }
+      });
+      assert.equal(declined.headers.get('access-control-allow-origin'), null);
+      assert.equal(admitted.length, 1, 'unhandled preflight reaches the provider host');
+    } finally {
+      await host.close();
+    }
+  });
+
   it('applies app response headers and preflight policy to OIDC protocol responses', async () => {
     let host = await startHost({}, {
       authorizeRequest({ route }) {
