@@ -633,8 +633,14 @@ checks the status and declared content type without buffering or parsing the
 response body. Fetch endpoints reject parsed `response` and `responses`
 schemas; use `fetchResponses` for this transport contract.
 
-Use one `fetchResponses` entry per status and list the media types that status
-can return.
+Use one `fetchResponses` entry per status and list its media types when Cricket
+should check them. An empty entry such as `204: {}` checks only the status and
+adds no response content to OpenAPI. This also lets a protocol library own its
+response content types, but Cricket then cannot validate or document them.
+
+Fetch endpoints reject parsed `body` and `requestBody` definitions. Their input
+stream has no Cricket body schema or OpenAPI request-body entry; the protocol
+library owns its input format and validation.
 
 ### Endpoint API versions
 
