@@ -121,6 +121,7 @@ export async function createRedisQueueDriver({
   let ownsClient = !client;
   let redis = client ?? await createRedisSocketClient(url, tlsOptions);
   let waitRedis;
+  let closed = false;
 
   async function createWaitClient() {
     if (ownsClient)
@@ -364,6 +365,24 @@ export async function createRedisQueueDriver({
   }
 
   return {
+    /**
+     * PING the existing command connection without reconnecting or reading jobs.
+     * This does not check the blocking-wait connection or worker progress.
+     * @returns {Promise<{status: 'connected'|'disconnected'|'closed'}>} Frozen transport fact.
+     */
+    async checkConnection() {
+      if (closed)
+        return frozenPlain({ status: 'closed' });
+
+      try {
+        let reply = await callRedis('PING');
+        let status = reply === 'PONG' ? 'connected' : 'disconnected';
+        return frozenPlain({ status: closed ? 'closed' : status });
+      } catch {
+        return frozenPlain({ status: closed ? 'closed' : 'disconnected' });
+      }
+    },
+
     async enqueue(envelope) {
       return await enqueueEnvelope(envelope);
     },
@@ -749,6 +768,7 @@ export async function createRedisQueueDriver({
     },
 
     async cleanup() {
+      closed = true;
       try {
         await disconnectWaitClient();
       } finally {

@@ -397,6 +397,11 @@ describe('Cricket CLI', () => {
     assert.match(jobsSkill, /cronSchedule/);
     assert.match(jobsSkill, /createCricketJobs/);
     assert.match(jobsSkill, /startCricketWorker/);
+    for (let guidance of [agents, jobsSkill]) {
+      assert.match(guidance, /driver\.checkConnection\(\)/);
+      assert.match(guidance, /'connected' \| 'disconnected' \| 'closed'/);
+      assert.match(guidance, /blocking-wait/);
+    }
     assert.match(jobsSkill, /jobFailure/);
     assert.match(jobsSkill, /cricket_jobs/);
     assert.match(jobsSkill, /Redis coordinates hot execution/);

@@ -195,6 +195,12 @@ Apps may read lifecycle state, but product health remains app responsibility. A 
 runtime can say it is starting, ready, shutting down, or stopped. It should not
 decide whether your product is healthy enough to receive traffic.
 
+Queue connection checks follow that boundary. The Redis driver's explicit
+`checkConnection()` sends `PING` on its existing command connection and reports
+`connected`, `disconnected`, or `closed` after cleanup begins. It neither opens
+another client nor treats a responding Redis server as evidence of worker
+progress. The app owns ledger, capacity, blocking-wait, and readiness checks.
+
 The HTTP runtime owns an accepted request until its awaited application work,
 response transport, stream pipeline, response cleanup, and terminal observers
 settle. A disconnected socket does not finish a handler or cancel a write;
