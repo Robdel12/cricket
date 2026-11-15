@@ -36,6 +36,8 @@ let appOptionKeys = new Set([
   'plugins',
   'prefix',
   'authMethods',
+  'requestPolicy',
+  'responseHeaders',
   'services',
   'setup',
   'trustProxy',
@@ -119,7 +121,9 @@ function freezeAppContract(contract) {
     jobs: stable.jobs,
     models: stable.models,
     plugins: stable.plugins,
-    trustProxy: stable.trustProxy
+    trustProxy: stable.trustProxy,
+    requestPolicy: stable.requestPolicy,
+    responseHeaders: stable.responseHeaders
   });
 
   return Object.freeze(stable);
@@ -138,7 +142,9 @@ function definedAppFor(app) {
     'jobs',
     'models',
     'plugins',
-    'trustProxy'
+    'trustProxy',
+    'requestPolicy',
+    'responseHeaders'
   ].filter(key => app[key] !== definition[key]);
 
   if (replacedContracts.length > 0)
@@ -206,12 +212,20 @@ function validateResolvedDomains(domains) {
  * @param {'domains'|'manual'} [options.architecture='domains'] - Manual is a migration escape hatch.
  * @param {string|URL|object[]} [options.domains] - Domain root or inline domains. Required unless architecture is manual.
  * @param {object[]} [options.plugins=[]] - Explicit `defineCricketPlugin` descriptors contributing domains.
+ * @param {(request: object) => object} [options.responseHeaders]
+ *   Default headers for normalized requests.
+ * @param {(input: {request: object}) => object|undefined} [options.requestPolicy]
+ *   Early response policy.
  * @returns {object} Normalized Cricket app contract.
  */
 export function defineCricketApp(options = {}) {
   assertKnownOptions(options, appOptionKeys, 'defineCricketApp');
   if (options.onError !== undefined && typeof options.onError !== 'function')
     throw new Error('defineCricketApp onError must be a function');
+  if (options.requestPolicy !== undefined && typeof options.requestPolicy !== 'function')
+    throw new Error('defineCricketApp requestPolicy must be a function');
+  if (options.responseHeaders !== undefined && typeof options.responseHeaders !== 'function')
+    throw new Error('defineCricketApp responseHeaders must be a function');
 
   let architecture = architectureFor(options);
   let domains = options.domains ?? [];

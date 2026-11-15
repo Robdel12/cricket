@@ -1,5 +1,6 @@
 import { Readable, Transform } from 'node:stream';
 import { finished, pipeline } from 'node:stream/promises';
+import { isPlainObject } from '../immutable.js';
 import {
   defaultMaxBodyBytes,
   recordRequestBodyBytes,
@@ -424,15 +425,24 @@ function assertValidHeaders(headers) {
   }
 }
 
-function prepareResponse(response) {
-  let headers = {};
+export function normalizeResponseHeaders(headers = {}) {
+  if (!isPlainObject(headers))
+    throw new Error('Response headers must be a plain object');
 
-  if (response?.headers) {
-    for (let [name, value] of Object.entries(response.headers)) {
-      if (value !== undefined)
-        headers[name.toLowerCase()] = value;
-    }
+  let normalized = {};
+  for (let [name, value] of Object.entries(headers)) {
+    if (value !== undefined)
+      normalized[name.toLowerCase()] = Array.isArray(value) ? [...value] : value;
   }
+  assertValidHeaders(normalized);
+  return Object.freeze(Object.fromEntries(Object.entries(normalized).map(([name, value]) => [
+    name,
+    Array.isArray(value) ? Object.freeze(value) : value
+  ])));
+}
+
+function prepareResponse(response) {
+  let headers = { ...normalizeResponseHeaders(response?.headers ?? {}) };
 
   if (response?.cookies) {
     for (let cookie of response.cookies)
