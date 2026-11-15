@@ -150,6 +150,37 @@ function responseSchemaFrom(definition) {
   return definition.schema ?? definition.body;
 }
 
+function normalizeResponseDefinition(definition, method, path, label) {
+  if (!isPlainObject(definition) || definition.type || definition.properties) return definition;
+
+  let { contentType, contentTypes } = definition;
+  if (contentTypes === undefined) return definition;
+  if (contentType !== undefined)
+    throw new Error(
+      `${method} ${path} ${label} cannot specify both contentType and contentTypes`
+    );
+  if (
+    !Array.isArray(contentTypes) ||
+    !contentTypes.length ||
+    contentTypes.some(type =>
+      typeof type !== 'string' || !/^[\w!#$&^_.+-]+\/[\w!#$&^_.+-]+$/.test(type)
+    ) ||
+    new Set(contentTypes).size !== contentTypes.length
+  )
+    throw new Error(`${method} ${path} ${label} contentTypes must be unique media types`);
+
+  return { ...definition, contentTypes: [...contentTypes] };
+}
+
+function normalizeResponseDefinitions(responses, method, path) {
+  if (!isPlainObject(responses)) return responses;
+
+  return Object.fromEntries(Object.entries(responses).map(([status, definition]) => [
+    status,
+    normalizeResponseDefinition(definition, method, path, `response ${status}`)
+  ]));
+}
+
 function assertResponseSerializer(definition, label) {
   let serializer = definition?.serializer;
   if (serializer === undefined) return;
@@ -500,13 +531,20 @@ export function defineEndpoint(config) {
   if (traceName !== undefined && typeof traceName !== 'string')
     throw new Error(`${normalizedMethod} ${path} traceName must be a string`);
   assertHttpDocumentation({ headers, requestBody, rawBody, multipart, auth });
-  assertResponseSerializer(response, `${normalizedMethod} ${path} response`);
-  for (let [status, definition] of Object.entries(responses ?? {}))
+  let normalizedResponse = normalizeResponseDefinition(
+    response,
+    normalizedMethod,
+    path,
+    'response'
+  );
+  let normalizedResponses = normalizeResponseDefinitions(responses, normalizedMethod, path);
+  assertResponseSerializer(normalizedResponse, `${normalizedMethod} ${path} response`);
+  for (let [status, definition] of Object.entries(normalizedResponses ?? {}))
     assertResponseSerializer(definition, `${normalizedMethod} ${path} response ${status}`);
   assertApiVersions(apiVersions, normalizedMethod, path, {
     body,
-    response,
-    responses
+    response: normalizedResponse,
+    responses: normalizedResponses
   });
   let normalizedFetchResponses = normalizeFetchResponses(fetchResponses, normalizedMethod, path);
 
@@ -528,8 +566,8 @@ export function defineEndpoint(config) {
     ...(headers === undefined ? {} : { headers }),
     ...(auth === undefined ? {} : { auth: frozenPlain(auth) }),
     ...(requestBody === undefined ? {} : { requestBody: frozenPlain(requestBody) }),
-    response: frozenPlain(response),
-    responses: frozenPlain(responses),
+    response: frozenPlain(normalizedResponse),
+    responses: frozenPlain(normalizedResponses),
     ...(normalizedFetchResponses ? { fetchResponses: frozenPlain(normalizedFetchResponses) } : {}),
     beforeBodyRules: Object.freeze([...beforeBodyRules]),
     rules: Object.freeze([...rules]),

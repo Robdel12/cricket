@@ -1572,9 +1572,12 @@ Describe `authorization` through authentication methods, and `accept`/`content-t
 through content types.
 
 Response definitions accept `schema` (or `body`), `serializer`, `description`,
-`contentType`, `headers`, and `example`, including under status-specific `responses`. Each
-header needs a schema and can have a description or example. Return its actual
-value with `withHeaders`. HEAD, 204, 205, and 304 responses have no documented body.
+`contentType`, `contentTypes`, `headers`, and `example`, including under
+status-specific `responses`. Use `contentType` for one media type or a non-empty,
+unique `contentTypes` list when the same response schema is served with several
+media types. Set one or the other. Each header needs a schema and can have a
+description or example. Return its actual value with `withHeaders`. HEAD, 204,
+205, and 304 responses have no documented body.
 
 ### Describe custom types
 
@@ -1583,8 +1586,12 @@ let BinaryFile = z.instanceof(Buffer).meta({
   jsonSchema: { type: 'string', format: 'binary' }
 });
 
-// The handler also sets this Content-Type with withHeaders.
-let response = { schema: BinaryFile, contentType: 'application/octet-stream' };
+// For one response body served as PNG or with the legacy generic media type.
+let response = {
+  schema: BinaryFile,
+  contentTypes: ['image/png', 'application/octet-stream']
+};
+// The handler still sets the actual Content-Type with withHeaders.
 ```
 
 Cricket documents Zod input types for requests and output types for responses.

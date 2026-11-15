@@ -96,6 +96,11 @@ Cricket schema or OpenAPI request-body entry. Fetch endpoints
 do not accept parsed response schemas because Cricket does not buffer their
 response bodies. Do not expose Node request/response objects to the app.
 
+For a normal response schema served with several media types, declare
+`contentTypes: ['image/png', 'application/octet-stream']` instead of `contentType`.
+Use the same binary schema for each format and return the actual header with
+`withHeaders`. This metadata does not change runtime stream or header handling.
+
 Use framework errors such as `badRequest` for invalid input. Response, serializer,
 and normalizer contract details stay internal. Configure app `onError` once for
 HTTP reporting, and use `withError(response, error)` when a catch returns a safe
