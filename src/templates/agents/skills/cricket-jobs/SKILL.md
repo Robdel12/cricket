@@ -54,7 +54,7 @@ Use this when work leaves the request path but should keep Cricket's contract sh
   blocking-wait connection, claim loop, worker progress, ledger, or capacity.
   Product health remains app-owned. Custom and test drivers do not automatically
   provide this Redis-specific operation.
-- Job `run` functions receive `input`, `context`, `services`, `logger`, `trace`, `lifecycle`, `jobs`, and `progress`. They should not receive Redis clients.
+- Job `run` functions receive `input`, `context`, `envelope`, `attempt`, `services`, `logger`, `trace`, `lifecycle`, `jobs`, and `progress`. Use `envelope.id` and `attempt` when a product write must belong to the same attempt as its failure handler.
 - Enqueue with `runAt` or `delayMs` for one-off delayed work.
 - Run app-owned cleanup in bounded batches. Call `jobs.removeFinished(ids)`
   before deleting `cricket_jobs` rows, then delete only `removed` and `missing`

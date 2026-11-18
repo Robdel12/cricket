@@ -134,6 +134,22 @@ export let ${camelName}Jobs = [
 `;
 }
 
+function machineTemplate({ camelName, fileStem }) {
+  return `import { createMachine, defineMachine, z } from '@robdel12/cricket';
+
+export let ${camelName}Machine = defineMachine(createMachine({
+  id: '${fileStem}',
+  version: '1',
+  schemas: { events: { '${fileStem}.completed': z.object({}) } },
+  initial: 'pending',
+  states: {
+    pending: { on: { '${fileStem}.completed': { target: 'completed' } } },
+    completed: { type: 'final' }
+  }
+}));
+`;
+}
+
 function testTemplate({ fileStem }) {
   return `import { describe, it } from 'node:test';
 
@@ -152,6 +168,7 @@ let templates = {
   rules: rulesTemplate,
   routes: routesTemplate,
   jobs: jobsTemplate,
+  machine: machineTemplate,
   test: testTemplate
 };
 

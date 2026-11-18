@@ -796,6 +796,8 @@ describe('Cricket jobs: real Redis', () => {
         };
       },
       async run({
+        envelope,
+        attempt,
         logger,
         progress
       }) {
@@ -804,7 +806,7 @@ describe('Cricket jobs: real Redis', () => {
         secondStarted.resolve();
         await finishSecond.promise;
 
-        return { status: 'completed' };
+        return { status: 'completed', envelopeId: envelope.id, attempt };
       }
     });
     let worker = await startCricketWorker(defineManualTestApp({
@@ -870,7 +872,7 @@ describe('Cricket jobs: real Redis', () => {
       assert.deepEqual(active.progress.map(entry => entry.progress.phase), ['second']);
 
       finishSecond.resolve();
-      assert.deepEqual(await draining, [{ status: 'completed' }]);
+      assert.deepEqual(await draining, [{ status: 'completed', envelopeId: first.envelope.id, attempt: 2 }]);
     } finally {
       finishSecond.resolve();
       await admin.quit();

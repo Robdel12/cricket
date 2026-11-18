@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import {
   collectEndpoints,
   collectJobs,
+  collectMachines,
   collectModels,
   loadDomains
 } from './domain.js';
@@ -168,6 +169,7 @@ function freezeAppContract(contract) {
     'domains',
     'endpoints',
     'jobs',
+    'machines',
     'middleware',
     'models',
     'plugins'
@@ -184,6 +186,7 @@ function freezeAppContract(contract) {
     domains: stable.domains,
     endpoints: stable.endpoints,
     jobs: stable.jobs,
+    machines: stable.machines,
     models: stable.models,
     plugins: stable.plugins,
     trustProxy: stable.trustProxy,
@@ -206,6 +209,7 @@ function definedAppFor(app) {
     'domains',
     'endpoints',
     'jobs',
+    'machines',
     'models',
     'plugins',
     'trustProxy',
@@ -311,10 +315,12 @@ export function defineCricketApp(options = {}) {
   let collectedDomains = compositionDomains ? {
     endpoints: collectEndpoints(compositionDomains),
     jobs: collectJobs(compositionDomains),
+    machines: collectMachines(compositionDomains),
     models: collectModels(compositionDomains)
   } : {};
   let endpoints = hasExplicitEndpoints ? options.endpoints : collectedDomains.endpoints;
   let jobs = hasExplicitJobs ? options.jobs : collectedDomains.jobs;
+  let machines = collectedDomains.machines;
   let models = hasExplicitModels ? options.models : collectedDomains.models;
   let allowedHosts = options.allowedHosts;
   let prefix = options.prefix ?? '';
@@ -338,6 +344,7 @@ export function defineCricketApp(options = {}) {
     ...(requestBodyLimits === undefined ? {} : { requestBodyLimits }),
     ...(endpoints === undefined ? {} : { endpoints }),
     ...(jobs === undefined ? {} : { jobs }),
+    ...(machines === undefined ? {} : { machines }),
     ...(models === undefined ? {} : { models })
   });
 
@@ -376,6 +383,7 @@ export async function resolveCricketApp(app, {
     domains,
     endpoints,
     jobs: hasExplicitJobs ? definedApp.jobs : collectJobs(domains),
+    machines: collectMachines(domains),
     models: hasExplicitModels ? definedApp.models : collectModels(domains)
   });
 }

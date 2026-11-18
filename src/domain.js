@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { isJobContract } from './jobs/define-job.js';
+import { isMachineContract } from './machine.js';
 
 export let domainFileTypes = [
   'model',
@@ -12,7 +13,8 @@ export let domainFileTypes = [
   'service',
   'rules',
   'routes',
-  'jobs'
+  'jobs',
+  'machine'
 ];
 
 function toArray(value) {
@@ -205,6 +207,7 @@ async function loadDomainFolder(domainPath) {
   let models = collectModuleContracts(modules.model, isModelContract);
   let endpoints = collectModuleContracts(modules.routes, isEndpointContract);
   let jobs = collectModuleContracts(modules.jobs, isJobContract);
+  let machines = collectModuleContracts(modules.machine, isMachineContract);
   let services = serviceFactoriesForModules(modules.service, {
     camelName,
     pascalName
@@ -217,6 +220,7 @@ async function loadDomainFolder(domainPath) {
     models,
     endpoints,
     jobs,
+    machines,
     validations: mergeModuleExports(modules.validations, 'validations', { camelName }),
     normalizers: mergeModuleExports(modules.normalizers, 'normalizers', { camelName }),
     rules: mergeModuleExports(modules.rules, 'rules', { camelName }),
@@ -310,6 +314,20 @@ export function collectJobs(domains) {
   return domains.flatMap(domain =>
     toArray(domain.jobs ?? domain.job).filter(isJobContract)
   );
+}
+
+export function collectMachines(domains) {
+  let machines = new Map();
+  for (let domain of domains) {
+    for (let machine of toArray(domain.machines)) {
+      if (!isMachineContract(machine))
+        throw new Error(`Cricket domain ${domain.name} machines must come from defineMachine`);
+      if (machines.has(machine.id))
+        throw new Error(`Cricket app has duplicate machine id ${machine.id}`);
+      machines.set(machine.id, machine);
+    }
+  }
+  return [...machines.values()];
 }
 
 /**

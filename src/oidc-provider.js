@@ -4,6 +4,7 @@ import mount from 'koa-mount';
 import { z } from 'zod';
 import { mergeDefaultHeaders } from './http/headers.js';
 import { readRequestBody } from './http/request.js';
+import { isJsonValue } from './immutable.js';
 import { defineProtocolHost } from './protocol-host.js';
 
 let requestFactsSchema = z.object({
@@ -30,26 +31,6 @@ let interactionSchema = jsonValueSchema.pipe(z.object({
   prompt: z.object({ name: z.string(), details: z.record(z.string(), jsonValueSchema) }),
   result: jsonRecordSchema.nullable()
 }).strict());
-
-function isJsonValue(value, ancestors = new Set()) {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
-  if (typeof value === 'number') return Number.isFinite(value);
-  if (typeof value !== 'object' || ancestors.has(value)) return false;
-  if (Array.isArray(value)) {
-    ancestors.add(value);
-    let valid = value.every(item => isJsonValue(item, ancestors));
-    ancestors.delete(value);
-    return valid;
-  }
-  let prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) return false;
-  if (Reflect.ownKeys(value).some(key => typeof key !== 'string' || !Object.prototype.propertyIsEnumerable.call(value, key)))
-    return false;
-  ancestors.add(value);
-  let valid = Object.values(value).every(item => isJsonValue(item, ancestors));
-  ancestors.delete(value);
-  return valid;
-}
 
 function requestFacts(ctx, browserCredentialCookie, { includeBrowserCredential = false } = {}) {
   return requestFactsSchema.parse({

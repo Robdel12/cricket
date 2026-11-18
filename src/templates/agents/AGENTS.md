@@ -16,7 +16,7 @@ Cricket provides the architecture. Your app defines the behavior.
 First-class means scaffolded, documented, inspectable, and agent-readable. It does not mean Cricket takes over auth policy, table design, product data policy, local tooling, or deployment.
 
 Domains are Cricket's required default architecture, not optional organization.
-Do not register product `endpoints`, `jobs`, or `models` directly on
+Do not register product `endpoints`, `jobs`, `machines`, or `models` directly on
 `defineCricketApp`. `architecture: 'manual'` is only a migration escape hatch
 for existing or embedded applications. Treat manual mode as visible tech debt,
 do not introduce it in a fresh app, and remove it when the migration reaches a
@@ -37,7 +37,7 @@ schema. Navigation does not grant API access.
 
 Cricket definition builders return stable contracts and reject unknown app or
 endpoint options. Compose new definitions instead of mutating existing apps,
-endpoints, rules, models, serializers, normalizers, or jobs after construction.
+endpoints, rules, models, serializers, normalizers, machines, or jobs after construction.
 
 Setup returns `undefined` or `{ dependencies, services, protocolHosts, cleanup }`. It receives
 the app, database, lifecycle, logger, and a no-op startup trace. Service and
@@ -45,7 +45,8 @@ middleware initialization receive dependencies, lifecycle, and logger before
 requests exist. Request context, rules, and handlers receive services,
 lifecycle, dependencies, and request-scoped logger and trace capabilities. Job
 `run` and failure handlers receive services, lifecycle, logger, trace, jobs,
-and progress. Recovery receives evidence, time, logger, and trace for a pure
+and progress. Job execution and failure handlers share `envelope` and
+`attempt` for app-owned writes. Recovery receives evidence, time, logger, and trace for a pure
 decision. Shutdown hooks receive the assembled runtime. Product health checks
 may read `lifecycle`, but they still own database, worker, and deploy readiness.
 
@@ -71,6 +72,7 @@ instead of attaching another `listening` listener.
 - `*.service.js` owns data and integration operations.
 - `*.rules.js` owns auth, existence, ownership, and business preconditions.
 - `*.routes.js` owns endpoint contracts.
+- `*.machine.js` owns product states and transitions.
 - `*.jobs.js` owns background job contracts for validated asynchronous work.
 - `*.test.js` tests endpoint behavior through HTTP and job behavior through the worker boundary.
 
@@ -167,6 +169,21 @@ components exclude views containing private fields. Review endpoint responses
 and examples before publishing; generate docs without starting services.
 Recursive Zod schemas and `z.json()` work in generated OpenAPI. Keep their
 validation intact; generated component names are internal.
+
+## Domain Machines
+
+Import `createMachine` and `defineMachine` from `@robdel12/cricket`. Wrap a native
+XState v6 chart with a stable `id`, `version`, and Zod `schemas.events`. A service
+calls `await machine.transition(snapshot, event)` and handles
+`kind: 'unhandled'` as a product outcome. The machine parses the event, so
+shared schemas must accept values already parsed by a route or job. Keep
+authorization in rules and pass trusted facts explicitly.
+
+Load state from app-owned rows or restore a versioned checkpoint using
+`machine.restore`. Keep transition callbacks pure. Commit accepted changes
+and any durable intent in the same transaction. Machine emissions are plain
+facts. Use jobs for delays or external work, and send job results through the
+same service.
 
 ## Jobs
 
