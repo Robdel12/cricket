@@ -374,6 +374,10 @@ describe a schema accurately. Recursive Zod schemas keep their structure through
 local component references; documentation must not weaken them to accept
 anything.
 
+Numeric path, query, and header parameters document their typed values and
+constraints. OpenAPI serializes those values as text. Request body schemas
+describe the input itself, so coercions there need an explicit contract.
+
 A normal response can document one schema under several exact media types using
 `contentTypes`. The list is immutable by copy and excludes the singular
 `contentType` option. Handlers still return the actual header and body; documentation
