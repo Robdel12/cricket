@@ -1667,9 +1667,11 @@ Add a known output type with `.pipe(...)` or describe the sent value with
 `jsonSchema` metadata, as above. This metadata doesn't change validation or
 serialization, so check it against a real HTTP response.
 
-Input coercion also needs metadata because JavaScript accepts more than the
-resulting type suggests. For a numeric query parameter, use
-`z.coerce.number().meta({ jsonSchema: { type: 'number' } })`.
+OpenAPI describes `z.coerce.number()` in path, query, and header parameters
+with its numeric type, bounds, and default. Clients send those values as text.
+For example, `z.coerce.number().int().min(1).max(100).default(25)` documents an
+optional integer parameter with a default of 25. Coercion in request bodies
+needs `jsonSchema` metadata that describes the supported input values.
 
 ### Describe uploads and raw bodies
 

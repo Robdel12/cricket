@@ -42,7 +42,7 @@ let unrepresentableTypes = new Set([
  * @param {'input'|'output'} io
  * @returns {object} Zod JSON Schema conversion options.
  */
-function cricketJsonSchemaOptions(io) {
+function cricketJsonSchemaOptions({ io, parameter }) {
   return {
     io,
     unrepresentable: 'any',
@@ -64,7 +64,8 @@ function cricketJsonSchemaOptions(io) {
         jsonSchema.format = 'date-time';
         return;
       }
-      if (io === 'input' && definition.coerce) {
+      // OpenAPI serializes numeric parameters as text and documents their numeric constraints.
+      if (io === 'input' && definition.coerce && !(parameter && definition.type === 'number')) {
         jsonSchema['x-cricket-unrepresentable'] = `${definition.type} coercion`;
         return;
       }
@@ -118,12 +119,12 @@ function assertRepresentable(schema, io) {
  * @param {any} schema
  * @returns {any}
  */
-export function toJsonSchema(schema, { io = 'input' } = {}) {
+export function toJsonSchema(schema, { io = 'input', parameter = false } = {}) {
   if (!schema) return undefined;
 
   if (!isZodSchema(schema)) return schema;
 
-  let { $schema, ...result } = z.toJSONSchema(schema, cricketJsonSchemaOptions(io));
+  let { $schema, ...result } = z.toJSONSchema(schema, cricketJsonSchemaOptions({ io, parameter }));
   assertRepresentable(result, io);
   return result;
 }

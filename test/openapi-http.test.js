@@ -140,6 +140,7 @@ describe('Public HTTP contracts and generated OpenAPI', () => {
     assert.throws(() => generateOpenApi({ endpoints: [endpoint({ auth: [{ missing: [] }] })] }), /Unknown auth method/);
     assert.throws(() => generateOpenApi({ endpoints: [endpoint({ response: z.string().transform(Number) })] }), /Cannot describe transform/);
     assert.throws(() => generateOpenApi({ endpoints: [endpoint({ query: z.object({ count: z.preprocess(Number, z.number()) }) })] }), /Cannot describe pipe/);
+    assert.throws(() => generateOpenApi({ endpoints: [endpoint({ query: z.object({ include: z.coerce.boolean() }) })] }), /Cannot describe boolean coercion/);
     let documented = endpoint({ response: { schema: z.instanceof(Buffer).meta({ jsonSchema: { type: 'string', format: 'binary' } }), contentType: 'application/octet-stream' } });
     assert.equal(generateOpenApi({ endpoints: [documented] }).paths['/items/{id}'].get.responses[200].content['application/octet-stream'].schema.format, 'binary');
     assert.throws(() => generateOpenApi({ endpoints: [endpoint({ requestBody: { description: 'Missing schema' } })] }), /documentation needs body/);
@@ -147,6 +148,41 @@ describe('Public HTTP contracts and generated OpenAPI', () => {
     assert.throws(() => endpoint({ security: [] }), /[Uu]nknown|[Uu]nsupported/);
     assert.throws(() => defineManualTestApp({ securitySchemes: {} }), /[Uu]nknown|[Uu]nsupported/);
     assert.throws(() => endpoint({ headers: z.object({ 'X-Uppercase': z.string() }) }), /lowercase/);
+  });
+
+  it('documents numeric parameters and preserves their URL validation and defaults', async t => {
+    let endpoint = defineEndpoint({
+      method: 'get', path: '/items/:id',
+      params: z.object({ id: z.coerce.number().int().min(1) }),
+      query: z.object({ limit: z.coerce.number().int().min(1).max(50).default(25) }),
+      headers: z.object({ 'x-revision': z.coerce.number().min(0).optional() }),
+      handler: ({ input }) => ok({ id: input.params.id, limit: input.query.limit, revision: input.headers['x-revision'] })
+    });
+    let app = defineManualTestApp({ endpoints: [endpoint] });
+    let { parameters } = createOpenApiFromContract(app).paths['/items/{id}'].get;
+    let [id, limit, revision] = parameters;
+    assert.equal(id.in, 'path');
+    assert.equal(id.required, true);
+    assert.equal(id.schema.type, 'integer');
+    assert.equal(id.schema.minimum, 1);
+    assert.deepEqual(limit, {
+      name: 'limit', in: 'query', required: false,
+      schema: { type: 'integer', minimum: 1, maximum: 50, default: 25 }
+    });
+    assert.deepEqual(revision, {
+      name: 'x-revision', in: 'header', required: false,
+      schema: { type: 'number', minimum: 0 }
+    });
+
+    let runtime = await createTestRuntime(app);
+    t.after(() => runtime.cleanup());
+    let defaults = await runtime.api.get('/items/12');
+    assert.equal(defaults.status, 200);
+    assert.deepEqual(defaults.body, { id: 12, limit: 25 });
+    let supplied = await runtime.api.get('/items/12?limit=50', { headers: { 'x-revision': '3.5' } });
+    assert.equal(supplied.status, 200);
+    assert.deepEqual(supplied.body, { id: 12, limit: 50, revision: 3.5 });
+    assert.equal((await runtime.api.get('/items/12?limit=51')).status, 422);
   });
 
   it('documents streamed responses for multiple media types and preserves raw bytes', async t => {

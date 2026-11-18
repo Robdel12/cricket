@@ -72,7 +72,7 @@ function createSchemaConverter(models) {
 }
 
 function schemaProperties(schema, source, convert) {
-  let jsonSchema = convert(schema, { inline: true });
+  let jsonSchema = convert(schema, { inline: true, parameter: true });
 
   if (!jsonSchema) return [];
 

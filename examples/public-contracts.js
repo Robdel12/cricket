@@ -12,7 +12,7 @@ let showReport = defineEndpoint({
   summary: 'Read a report',
   auth: [{ bearer: [] }],
   params: z.object({ id: z.string() }),
-  headers: z.object({ 'x-client-version': z.string().optional() }),
+  headers: z.object({ 'x-client-version': z.coerce.number().int().min(1).optional() }),
   rules: [requireUser],
   responses: {
     200: {
