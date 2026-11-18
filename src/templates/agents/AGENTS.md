@@ -45,7 +45,8 @@ middleware initialization receive dependencies, lifecycle, and logger before
 requests exist. Request context, rules, and handlers receive services,
 lifecycle, dependencies, and request-scoped logger and trace capabilities. Job
 `run` and failure handlers receive services, lifecycle, logger, trace, jobs,
-and progress. Recovery receives evidence, time, logger, and trace for a pure
+and progress. Job execution and failure handlers share `envelope` and
+`attempt` for app-owned writes. Recovery receives evidence, time, logger, and trace for a pure
 decision. Shutdown hooks receive the assembled runtime. Product health checks
 may read `lifecycle`, but they still own database, worker, and deploy readiness.
 

@@ -190,7 +190,9 @@ app service composer, and middleware initialization receive dependencies,
 lifecycle, and logger before requests exist. Request context, rules, and
 handlers receive the request logger and trace plus services, lifecycle, and
 setup dependencies. Job `run` and failure handlers receive services, lifecycle,
-logger, trace, jobs, and progress. Recovery receives execution evidence, time,
+logger, trace, jobs, and progress. Both also receive the `envelope` and
+one-based `attempt`, so a service can fence durable writes by the same queue
+attempt during execution and failure handling. Recovery receives execution evidence, time,
 logger, and trace because it returns a pure decision rather than doing product
 work. Shutdown hooks receive the assembled runtime, including dependencies,
 services, lifecycle, and logger.

@@ -723,6 +723,8 @@ export async function startCricketWorker(cricketApp, {
       let result = await trace.span(`job.run ${job.name}`, {}, () => job.run({
         input: envelope.input,
         context: envelope.context,
+        envelope,
+        attempt: claim.attempt,
         services: runtime.services,
         logger,
         trace,

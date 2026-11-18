@@ -240,6 +240,7 @@ describe('Cricket jobs: failure', () => {
 
   it('runs exhausted failure handlers after Cricket marks final failures', async () => {
     let productEvents = [];
+    let executions = [];
     let job = defineJob({
       name: 'reports.exhaust',
       input: z.object({
@@ -250,15 +251,17 @@ describe('Cricket jobs: failure', () => {
         idempotencyKey: ({ input }) => input.reportId
       }),
       failure: jobFailure({
-        async exhausted({ input, attempt, failure, services }) {
+        async exhausted({ input, envelope, attempt, failure, services }) {
           productEvents.push(services.reports.markFailed({
             reportId: input.reportId,
+            envelopeId: envelope.id,
             attempt,
             reason: failure.message
           }));
         }
       }),
-      async run() {
+      async run({ envelope, attempt }) {
+        executions.push({ envelopeId: envelope?.id, attempt });
         throw new Error('renderer offline');
       }
     });
@@ -284,7 +287,7 @@ describe('Cricket jobs: failure', () => {
     });
 
     try {
-      await worker.jobs.enqueue(job, {
+      let enqueued = await worker.jobs.enqueue(job, {
         reportId: 'report_exhausted'
       });
 
@@ -296,10 +299,12 @@ describe('Cricket jobs: failure', () => {
           }
         }
       ]);
+      assert.deepEqual(executions, [{ envelopeId: enqueued.envelope.id, attempt: 1 }]);
       assert.deepEqual(productEvents, [
         {
           status: 'failed',
           reportId: 'report_exhausted',
+          envelopeId: enqueued.envelope.id,
           attempt: 1,
           reason: 'renderer offline'
         }

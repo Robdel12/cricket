@@ -13,7 +13,9 @@ export let reindexProject = defineJob({
     indexed: z.boolean()
   }),
   queue: redisQueue({ name: 'project-maintenance' }),
-  async run({ input, services }) {
-    return await services.projects.refreshIndex(input);
+  async run({ input, envelope, attempt, services, trace }) {
+    return await trace.span('projects.refreshIndex', { envelopeId: envelope.id, attempt }, () =>
+      services.projects.refreshIndex(input)
+    );
   }
 });

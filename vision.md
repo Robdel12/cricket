@@ -200,7 +200,8 @@ them, not imply one universal bag:
 - Request context, rules, and handlers receive services, lifecycle, setup
   dependencies, and request-scoped logger and trace capabilities.
 - Job `run` and failure handlers receive services, lifecycle, logger, trace,
-  jobs, and progress. Recovery receives evidence, time, logger, and trace for a
+  jobs, progress, and the same envelope and attempt identity for app-owned
+  writes. Recovery receives evidence, time, logger, and trace for a
   pure decision.
 - Shutdown hooks receive the assembled runtime rather than a synthetic request
   or job trace.
