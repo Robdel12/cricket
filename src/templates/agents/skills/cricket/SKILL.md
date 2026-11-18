@@ -17,7 +17,7 @@ Start with `pnpm cricket check api/index.js`, then inspect the app, read
 - Keep data plain: no model instances, hidden mutation, or ORM lifecycle.
 - Treat Cricket definitions as immutable values. Compose a new definition when
   behavior changes; do not mutate apps, endpoints, rules, models, serializers,
-  normalizers, or jobs after construction.
+  normalizers, machines, or jobs after construction.
 - Put contracts at real boundaries: requests, responses, source payloads, jobs, and database rows.
 - Compose small functions. Keep side effects in services, handlers, jobs, middleware, migrations, or external clients.
 - Preserve predictable files. Agents should be able to guess where behavior lives.
@@ -27,7 +27,7 @@ Start with `pnpm cricket check api/index.js`, then inspect the app, read
 - Cricket provides the architecture, HTTP runtime, job runtime, logger, trace, and read-only runtime lifecycle. The app defines product behavior, auth policy, data work, worker entrypoints, product health, and deployment.
 - First-party protocol integrations such as `@robdel12/cricket/oidc-provider` return an opaque `protocolHost` from setup. Bind plain policy hooks in the app service composer after domains exist. Cricket owns the protocol engine and HTTP routing; the app owns clients, account/session rules, consent, persistence, and UI. Do not pass raw requests/responses or Koa contexts into app code, or start a second server.
 - `runtime.requests.pause()` closes application admission and returns an independent `idle({ signal })` / `resume()` hold. Idle joins accepted HTTP work through stream/async cleanup, including disconnected clients. Keep control operations outside the paused runtime and stop app-owned jobs separately. Standalone startup resolves after listening and exposes `origin`; terminal cleanup cannot be resumed.
-- Domains are required by default. Do not register product endpoints, jobs, or models directly on `defineCricketApp`.
+- Domains are required by default. Do not register product endpoints, jobs, machines, or models directly on `defineCricketApp`.
 - `architecture: 'manual'` is a migration escape hatch and visible tech debt. Never introduce it in a fresh app; move existing manual contracts into domains and remove the mode at a deliberate cutover.
 - Packages can export named domains with `defineCricketPlugin`; apps add them through `plugins`. Use `definePluginSchema` for Zod input/output contracts on required app service methods. Cricket checks those methods at runtime setup and validates calls. The app owns auth, product data access, and migrations.
 - Keep browser UI and styles in separate package exports, imported through the app's frontend build. Do not add CSS paths to plugin descriptors. The app owns routing and API clients. Custom product pages use ordinary domains and their own Zod contracts, without a shared row schema. Navigation does not grant API access.
@@ -61,7 +61,8 @@ Scaffold `--with machine` and use `cricket inspect` to see the loaded chart.
 Services explicitly call `await machine.transition(snapshot, event)` within
 their transaction. Resolve state from app rows or use `machine.persist` and
 `machine.restore` for versioned JSON checkpoints. Keep guards and context
-updates pure. An unhandled event is a product outcome. Commit emitted intent
+updates pure. The machine parses the event, so shared schemas must accept
+values already parsed by a route or job. An unhandled event is a product outcome. Commit emitted intent
 alongside accepted state when delivery must survive a crash, then use Cricket
 Jobs to deliver it or schedule a future event.
 

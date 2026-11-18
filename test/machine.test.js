@@ -148,6 +148,44 @@ test('rejects unsupported saved work before hydrating a child actor', async () =
   assert.equal(initialized, 0);
 });
 
+test('restores parsed context and preserves JSON keys in checkpoints and emitted facts', async () => {
+  let info = JSON.parse('{"__proto__":{"source":"report"}}');
+  let contract = defineMachine(createMachine({
+    id: 'review.amount',
+    version: '1',
+    schemas: {
+      context: z.object({ amount: z.coerce.number(), info: z.unknown() }),
+      events: { '*': z.object({}) }
+    },
+    context: { amount: 2, info },
+    initial: 'pending',
+    states: {
+      pending: {
+        on: {
+          '*': ({ context }, enqueue) => {
+            if (context.amount === 2) {
+              enqueue.emit({ type: 'review.accepted', info: context.info });
+              return { target: 'accepted' };
+            }
+          }
+        }
+      },
+      accepted: {}
+    }
+  }));
+
+  let { snapshot } = await contract.initial();
+  let checkpoint = await contract.persist(snapshot);
+  assert.deepEqual(checkpoint.context.info, info);
+  let restored = await contract.restore({ ...checkpoint, context: { amount: '2', info } });
+  for (let invalid of [{ type: ' ' }, Object.assign([], { type: 'review.finish' })]) {
+    await assert.rejects(contract.transition(restored, invalid), { code: 'VALIDATION_FAILED' });
+  }
+  let accepted = await contract.transition(restored, { type: 'review.finish' });
+  assert.equal(accepted.snapshot.value, 'accepted');
+  assert.deepEqual(accepted.emitted, [{ type: 'review.accepted', info }]);
+});
+
 test('resolves plugin machines and rejects duplicate IDs across domains', async () => {
   let pluginMachine = definePluginMachine(reportPublication.machine);
   let plugin = defineCricketPlugin({

@@ -16,7 +16,7 @@ Cricket provides the architecture. Your app defines the behavior.
 First-class means scaffolded, documented, inspectable, and agent-readable. It does not mean Cricket takes over auth policy, table design, product data policy, local tooling, or deployment.
 
 Domains are Cricket's required default architecture, not optional organization.
-Do not register product `endpoints`, `jobs`, or `models` directly on
+Do not register product `endpoints`, `jobs`, `machines`, or `models` directly on
 `defineCricketApp`. `architecture: 'manual'` is only a migration escape hatch
 for existing or embedded applications. Treat manual mode as visible tech debt,
 do not introduce it in a fresh app, and remove it when the migration reaches a
@@ -175,8 +175,9 @@ validation intact; generated component names are internal.
 Import `createMachine` and `defineMachine` from `@robdel12/cricket`. Wrap a native
 XState v6 chart with a stable `id`, `version`, and Zod `schemas.events`. A service
 calls `await machine.transition(snapshot, event)` and handles
-`kind: 'unhandled'` as a product outcome. Keep authorization in rules and pass
-trusted facts explicitly.
+`kind: 'unhandled'` as a product outcome. The machine parses the event, so
+shared schemas must accept values already parsed by a route or job. Keep
+authorization in rules and pass trusted facts explicitly.
 
 Load state from app-owned rows or restore a versioned checkpoint using
 `machine.restore`. Keep transition callbacks pure. Commit accepted changes

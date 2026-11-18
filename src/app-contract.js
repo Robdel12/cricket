@@ -183,7 +183,6 @@ function appContractFromResolvedApp(resolvedApp) {
     plugins: resolvedApp.plugins ?? [],
     endpoints: resolvedApp.endpoints ?? [],
     jobs: resolvedApp.jobs ?? [],
-    machines: resolvedApp.machines ?? [],
     models: resolvedApp.models ?? []
   };
 }

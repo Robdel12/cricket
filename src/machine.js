@@ -1,4 +1,5 @@
 import {
+  StateMachine,
   eventSchema,
   initialTransition,
   isUnhandled,
@@ -8,10 +9,10 @@ import { restoreActor, snapshotSchema } from 'xstate/persist';
 import { z } from 'zod';
 
 import { validationFailed } from './errors.js';
-import { frozenPlain, isPlainObject } from './immutable.js';
+import { frozenPlain, isJsonValue, isPlainObject } from './immutable.js';
 
 let machineContract = Symbol.for('@robdel12/cricket.machine');
-let json = z.json();
+let json = z.custom(isJsonValue, { message: 'Expected a plain JSON value' });
 
 export function isMachineContract(value) {
   return value?.[machineContract] === true;
@@ -81,14 +82,14 @@ function resultFor(machine, [snapshot, effects]) {
  * @param {import('xstate').AnyStateMachine} machine
  */
 export function defineMachine(machine) {
-  if (typeof machine?.resolveState !== 'function' ||
-      typeof machine.getPersistedSnapshot !== 'function' ||
-      !isName(machine.config?.id) || !isName(machine.version))
-    throw new Error('defineMachine requires an XState v6 machine with an explicit id and version');
+  if (!(machine instanceof StateMachine) || !isName(machine.config.id) || !isName(machine.version))
+    throw new Error('defineMachine requires a chart from createMachine exported by Cricket with an explicit id and version');
 
   let events = machine.schemas?.events;
   if (!isPlainObject(events) || !Object.keys(events).length ||
-      Object.values(events).some(schema => typeof schema?.['~standard']?.validate !== 'function'))
+      Object.entries(events).some(([name, schema]) =>
+        !isName(name) || typeof schema?.['~standard']?.validate !== 'function'
+      ))
     throw new Error(`Machine ${machine.id} requires runtime schemas for its public events`);
   if (Object.keys(events).some(isReservedEvent))
     throw new Error(`Machine ${machine.id} cannot declare reserved XState events as public events`);
@@ -106,8 +107,8 @@ export function defineMachine(machine) {
 
   async function transition(snapshot, event) {
     assertSnapshot(machine, snapshot);
-    if (isReservedEvent(event?.type))
-      throw validationFailed({ issues: [{ path: ['type'], message: 'Expected a product event' }] });
+    if (!isPlainObject(event) || !Object.hasOwn(event, 'type') || !isName(event.type) || isReservedEvent(event.type))
+      throw validationFailed({ issues: [{ path: ['type'], message: 'Expected a product event with a non-empty type' }] });
     let parsed = await parseStandard(publicEventSchema, event, validationFailed);
     let result = transitionMachine(machine, snapshot, parsed);
     if (isUnhandled(snapshot, result))
@@ -125,12 +126,12 @@ export function defineMachine(machine) {
   }
 
   async function restore(checkpoint) {
-    let data = json.parse(checkpoint);
+    let data = structuredClone(json.parse(checkpoint));
     if (data?.machine?.id !== machine.id || data.machine.version !== machine.version)
       throw new Error(`Expected a checkpoint for machine ${machine.id} version ${machine.version}`);
-    await parseStandard(persistedSchema, data, invalidCheckpoint);
-    assertNoPendingWork(machine, data);
-    let snapshot = restoreActor(machine, data).getSnapshot();
+    let parsed = await parseStandard(persistedSchema, data, invalidCheckpoint);
+    assertNoPendingWork(machine, parsed);
+    let snapshot = restoreActor(machine, parsed).getSnapshot();
     assertSnapshot(machine, snapshot);
     return snapshot;
   }

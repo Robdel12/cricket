@@ -993,8 +993,9 @@ job finishes. Both events can go through the same domain service.
 Put `defineMachine(createMachine(config))` in a domain-local `*.machine.js`
 file. Both functions are available from `@robdel12/cricket`, which ships
 XState v6. Give the native chart an explicit `id`, `version`, and
-`schemas.events` map. Import the event payload schemas from
-`*.validations.js` when routes or workers share them. The
+`schemas.events` map. Import event payload schemas from `*.validations.js`
+when routes or workers share them. The machine parses each event, so shared
+schemas must accept the values the route or worker has already parsed. The
 [report publication example](examples/report-publication.js) shows a native
 chart that emits a request for follow-up work.
 
@@ -1018,12 +1019,13 @@ let result = await reportPublication.transition(snapshot, {
   payloads throw Cricket's `VALIDATION_FAILED` error.
 - `await machine.persist(snapshot)` produces a plain, immutable JSON
   checkpoint. `await machine.restore(checkpoint)` validates the chart ID,
-  version, state, and declared context schema before restoring it. Use
+  version and state, and parses the context with the declared schema. Use
   `machineVersions` from `@robdel12/cricket` to migrate checkpoints when changing
   a stored chart's version.
 
 Keep the chart's transition callbacks and guards pure. Treat native XState
-snapshots as read-only values and use serializers for HTTP responses. Cricket
+charts, their config, and their snapshots as read-only values. Use serializers
+for HTTP responses. Cricket
 returns JSON events requested with `enqueue.emit(...)` as immutable data.
 Use Cricket Jobs for delays and external work. The transition API rejects
 effects that require a running actor, including timers and child actors.
