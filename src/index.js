@@ -26,6 +26,9 @@ export {
   z
 } from 'zod';
 
+export { createMachine, machineVersions } from 'xstate';
+export { defineMachine } from './machine.js';
+
 export {
   defineEndpoint,
   deprecateEndpoint

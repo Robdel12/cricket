@@ -68,7 +68,7 @@ describe('Cricket CLI', () => {
       'project-board',
       root,
       '--with',
-      'model,validations,serializers,service,rules,routes,jobs,test'
+      'model,validations,serializers,service,rules,routes,jobs,machine,test'
     ]);
 
     assert.match(result.stdout, /Created projectBoard domain/);
@@ -85,6 +85,7 @@ describe('Cricket CLI', () => {
       'input.validations.js',
       'output.serializers.js',
       'project-board.jobs.js',
+      'project-board.machine.js',
       'schema.model.js'
     ]);
 
@@ -134,6 +135,20 @@ describe('Cricket CLI', () => {
 
     assert.match(test, /describe\('project-board behavior'/);
     assert.match(test, /it\.todo\('tests behavior through the HTTP or worker boundary'\)/);
+
+    let packages = path.join(root, 'node_modules', '@robdel12');
+    let appPath = path.join(root, 'app.js');
+    await fs.mkdir(packages, { recursive: true });
+    await fs.symlink(process.cwd(), path.join(packages, 'cricket'), 'dir');
+    await fs.writeFile(appPath, `
+      import { defineCricketApp } from '@robdel12/cricket';
+      export let app = defineCricketApp({ domains: './project-board' });
+    `);
+
+    let inspected = await execFileAsync(process.execPath, ['bin/cricket.js', 'inspect', appPath]);
+    assert.match(inspected.stdout, /machine: project-board \(v1\)/);
+    assert.match(inspected.stdout, /states: pending, completed/);
+    assert.match(inspected.stdout, /events: project-board\.completed/);
   });
 
   it('requires a deliberate domain file selection', async () => {
@@ -177,6 +192,7 @@ describe('Cricket CLI', () => {
       'input.validations.js',
       'output.serializers.js',
       'project.jobs.js',
+      'project.machine.js',
       'schema.model.js',
       'source.normalizers.js'
     ]);
@@ -332,6 +348,7 @@ describe('Cricket CLI', () => {
     assert.match(agents, /Jobs/);
     assert.match(agents, /\*\.normalizers\.js/);
     assert.match(agents, /\*\.jobs\.js/);
+    assert.match(agents, /\*\.machine\.js/);
     assert.match(agents, /api\/middleware/);
     assert.match(agents, /api\/services/);
     assert.match(agents, /api\/workers/);
@@ -388,6 +405,7 @@ describe('Cricket CLI', () => {
     assert.match(cricketSkill, /Historical serializers receive validated canonical data/);
     assert.match(cricketSkill, /Sunset dates only announce policy/);
     assert.match(cricketSkill, /\*\.jobs\.js/);
+    assert.match(cricketSkill, /defineMachine/);
     assert.match(cricketSkill, /OpenAPI/);
     assert.match(cricketSkill, /contentTypes/);
     assert.match(cricketSkill, /cricket-jobs/);

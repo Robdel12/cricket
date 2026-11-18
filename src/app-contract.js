@@ -183,6 +183,7 @@ function appContractFromResolvedApp(resolvedApp) {
     plugins: resolvedApp.plugins ?? [],
     endpoints: resolvedApp.endpoints ?? [],
     jobs: resolvedApp.jobs ?? [],
+    machines: resolvedApp.machines ?? [],
     models: resolvedApp.models ?? []
   };
 }
@@ -265,6 +266,9 @@ export function createAppMap(contract) {
       serializers: functionKeysFor(domain.serializers),
       endpoints: toArray(domain.endpoints ?? domain.endpoint).length,
       jobs: jobCountFor(domain),
+      machines: toArray(domain.machines).map(({ id, version, states, events }) => ({
+        id, version, states, events
+      })),
       services: serviceKeysFor(domain)
     })),
     plugins: plugins.map(plugin => ({
@@ -362,6 +366,11 @@ export function formatAppMap(appMap) {
     lines.push(`    serializers: ${domain.serializers.join(', ') || 'none'}`);
     lines.push(`    endpoints: ${domain.endpoints}`);
     lines.push(`    jobs: ${domain.jobs}`);
+    for (let machine of domain.machines) {
+      lines.push(`    machine: ${machine.id} (v${machine.version})`);
+      lines.push(`      states: ${machine.states.join(', ') || 'none'}`);
+      lines.push(`      events: ${machine.events.join(', ')}`);
+    }
     lines.push(`    services: ${domain.services.join(', ') || 'none'}`);
   }
 

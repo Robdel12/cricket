@@ -17,6 +17,9 @@ importers:
       knex:
         specifier: ^3.2.10
         version: 3.2.10(sqlite3@6.0.1)
+      xstate:
+        specifier: 6.0.0-beta.3
+        version: 6.0.0-beta.3
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -679,6 +682,10 @@ packages:
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
 
+  xstate@6.0.0-beta.3:
+    resolution: {integrity: sha512-b6C6SQ9cern6sD531uHcwOH94lBL+701Jd/VRSkzT8oAV1AKTT9oXFZtvC5DajUU4+8gmTLBTMHjZjd0VrsmAg==}
+    hasBin: true
+
   yallist@5.0.0:
     resolution: {integrity: sha512-YgvUTfwqyc7UXVMrB+SImsVYSmTS8X/tSrtdNZMImM+n7+QTriRXyXim0mBrTXNeqzVF0KWGgHPeiyViFFrNDw==}
     engines: {node: '>=18'}
@@ -1328,6 +1335,8 @@ snapshots:
     optional: true
 
   wrappy@1.0.2: {}
+
+  xstate@6.0.0-beta.3: {}
 
   yallist@5.0.0: {}
 

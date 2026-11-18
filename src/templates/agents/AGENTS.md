@@ -37,7 +37,7 @@ schema. Navigation does not grant API access.
 
 Cricket definition builders return stable contracts and reject unknown app or
 endpoint options. Compose new definitions instead of mutating existing apps,
-endpoints, rules, models, serializers, normalizers, or jobs after construction.
+endpoints, rules, models, serializers, normalizers, machines, or jobs after construction.
 
 Setup returns `undefined` or `{ dependencies, services, protocolHosts, cleanup }`. It receives
 the app, database, lifecycle, logger, and a no-op startup trace. Service and
@@ -71,6 +71,7 @@ instead of attaching another `listening` listener.
 - `*.service.js` owns data and integration operations.
 - `*.rules.js` owns auth, existence, ownership, and business preconditions.
 - `*.routes.js` owns endpoint contracts.
+- `*.machine.js` owns product states and transitions.
 - `*.jobs.js` owns background job contracts for validated asynchronous work.
 - `*.test.js` tests endpoint behavior through HTTP and job behavior through the worker boundary.
 
@@ -167,6 +168,20 @@ components exclude views containing private fields. Review endpoint responses
 and examples before publishing; generate docs without starting services.
 Recursive Zod schemas and `z.json()` work in generated OpenAPI. Keep their
 validation intact; generated component names are internal.
+
+## Domain Machines
+
+Import `createMachine` and `defineMachine` from `@robdel12/cricket`. Wrap a native
+XState v6 chart with a stable `id`, `version`, and Zod `schemas.events`. A service
+calls `await machine.transition(snapshot, event)` and handles
+`kind: 'unhandled'` as a product outcome. Keep authorization in rules and pass
+trusted facts explicitly.
+
+Load state from app-owned rows or restore a versioned checkpoint using
+`machine.restore`. Keep transition callbacks pure. Commit accepted changes
+and any durable intent in the same transaction. Machine emissions are plain
+facts. Use jobs for delays or external work, and send job results through the
+same service.
 
 ## Jobs
 

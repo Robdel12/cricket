@@ -44,13 +44,17 @@ obvious in every change.
   response validation, and docs metadata.
 - `defineRule` owns named guards such as auth, ownership, existence, billing,
   and business constraints.
+- `defineMachine` evaluates validated events against a native XState v6 chart.
+  Services own the transaction around each decision. Jobs handle delayed work
+  and external effects.
 - Services are first-class app code. Keep them boring, explicit, and HTTP-
   agnostic by default.
 - First-class app folders mean scaffolded, documented, inspectable, and
   agent-readable. They do not mean Cricket secretly owns runtime behavior.
 - Domain folders are the framework contract. Cricket auto-loads standard
   `*.model.js`, `*.validations.js`, `*.normalizers.js`, `*.serializers.js`,
-  `*.service.js`, `*.rules.js`, and `*.routes.js` files when they exist. Do not
+  `*.service.js`, `*.rules.js`, `*.routes.js`, `*.machine.js`, and `*.jobs.js`
+  files when they exist. Do not
   bring back `*.domain.js` manifest files or make optional files mandatory.
 - `api/middleware/` is for request middleware. `api/services/` is for shared
   app capabilities. `api/workers/` is for background entrypoints.

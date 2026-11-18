@@ -46,10 +46,24 @@ Start with `pnpm cricket check api/index.js`, then inspect the app, read
 - Put data and integration operations in `*.service.js`.
 - Put auth, existence, ownership, and business checks in `*.rules.js`.
 - Put endpoint contracts in `*.routes.js`.
+- Put product states and transitions in `*.machine.js`.
 - Put asynchronous job contracts in `*.jobs.js`.
 - Put HTTP and worker-boundary behavior tests in `*.test.js`.
 
 The folder is the domain. Optional files stay optional; Cricket auto-loads direct domain-local `*.<type>.js` files.
+
+## Domain Machines
+
+Use `defineMachine(createMachine(config))` from `@robdel12/cricket` with a native
+XState v6 config, an explicit `id` and `version`, and Zod `schemas.events`.
+Scaffold `--with machine` and use `cricket inspect` to see the loaded chart.
+
+Services explicitly call `await machine.transition(snapshot, event)` within
+their transaction. Resolve state from app rows or use `machine.persist` and
+`machine.restore` for versioned JSON checkpoints. Keep guards and context
+updates pure. An unhandled event is a product outcome. Commit emitted intent
+alongside accepted state when delivery must survive a crash, then use Cricket
+Jobs to deliver it or schedule a future event.
 
 ## HTTP Contracts
 

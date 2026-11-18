@@ -16,7 +16,7 @@ routes, jobs, and middleware should be plain functions and plain objects.
 mutation, decorators, or ORM-style lifecycles.
 
 **Definitions stay stable.** Cricket-owned app, endpoint, rule, model,
-serializer, normalizer, and job contracts should not drift after construction.
+serializer, normalizer, machine, and job contracts should not drift after construction.
 Immutable snapshots must copy caller-owned plain data before freezing it.
 
 **Composition beats magic.** Prefer explicit inputs and outputs over containers,
@@ -60,7 +60,7 @@ capabilities. `api/workers/` starts background workers. `api/migrations/` holds
 database history. `api/dev/` is local support, not production runtime.
 
 This shape is an enforced default, not a suggestion. If an app earns another
-folder, it can have one, but product endpoints, jobs, and models still enter the
+folder, it can have one, but product endpoints, machines, jobs, and models still enter the
 runtime through domains. Existing applications may use an explicit manual
 architecture while migrating. That escape hatch is visible tech debt, not a
 parallel best practice.
@@ -77,6 +77,7 @@ output.serializers.js
 domain.service.js
 access.rules.js
 http.routes.js
+*.machine.js
 *.jobs.js
 behavior.test.js
 ```
@@ -91,6 +92,7 @@ Each file has one job:
 - `service` does data and integration work.
 - `rules` handles auth, existence, ownership, billing, and business guards.
 - `routes` composes HTTP behavior.
+- `machine` declares product states and the events that move between them.
 - `jobs` defines validated asynchronous work.
 - `test` proves behavior at the API or worker boundary.
 
@@ -104,7 +106,7 @@ Packages may export a `defineCricketPlugin({ name, domains })` descriptor made
 from already-built, named Cricket domains. Apps register descriptors explicitly
 with `defineCricketApp({ domains: './domains', plugins: [...] })`. Cricket
 resolves the app's domain root first, then appends plugin domains in declaration
-order. Contributions use the same route, service, model, job, inspect, and docs
+order. Contributions use the same route, service, model, machine, job, inspect, and docs
 paths as app domains. Descriptor containers are copied and frozen while built
 contracts keep their identities.
 
@@ -253,6 +255,20 @@ migrations, indexes, transactions, query strategy, and product data policy.
 `api/migrations/` is the convention. Cricket should not run migrations on server
 start or invent a second database abstraction.
 
+## Domain Machines
+
+Cricket ships XState v6 and makes native charts visible in the domain
+contract. A machine applies one validated event to an XState snapshot.
+Guards and state updates use the data passed by the caller. Routes and jobs
+reach the same decision through an explicitly imported machine in a service.
+
+Services own the read and write around each decision. App rows are enough
+when they contain the full state. Versioned XState checkpoints preserve
+history and context for charts that need them. Apps own transactions,
+concurrency, migrations, and any durable event or outbox records. Cricket
+Jobs handles asynchronous work and can return a result as another machine
+event.
+
 ## Jobs
 
 Jobs are Cricket contracts for background work.
@@ -367,7 +383,7 @@ endpoint responses before publishing. Generate frozen docs without changing
 caller-owned objects or starting services.
 
 `cricket inspect` is the framework topology map: architecture, domains, models,
-sensitive fields, rules, services, jobs, routes, operation IDs, database
+sensitive fields, rules, services, machines, jobs, routes, operation IDs, database
 posture, and observability posture.
 
 `cricket check` fails invalid architecture contracts and reports manual mode as

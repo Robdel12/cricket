@@ -4,7 +4,8 @@ Tiny contracts for sturdy Node APIs.
 
 Cricket gives Node APIs the backend shape that stays pleasant as the app grows:
 plain JavaScript, Zod contracts, predictable domain files, thin routes, boring
-services, first-class jobs, OpenAPI generation, and a normal Node entrypoint.
+services, state machines, first-class jobs, OpenAPI generation, and a normal
+Node entrypoint.
 
 No model instances. No hidden mutation. No ORM lifecycle. Your app passes plain
 objects around, composes functions, and keeps side effects at the edges.
@@ -53,7 +54,7 @@ In this repo, the canonical scaffolded guidance lives in
 - Keep contracts at real edges: requests, responses, source payloads, jobs, and
   database rows.
 - Keep definitions stable: app, endpoint, rule, model, serializer, normalizer,
-  and job contracts cannot drift after construction. Cricket owns immutable
+  machine, and job contracts cannot drift after construction. Cricket owns immutable
   contract structure without freezing caller-owned runtime values.
 - Keep domain files predictable. Agents should be able to guess where behavior
   lives before they open the repo.
@@ -86,8 +87,8 @@ middleware, or migration. Avoid generic junk drawers.
 ### Manual architecture is migration debt
 
 Cricket requires a `domains` contract by default. Structured apps cannot
-register `endpoints`, `jobs`, or `models` directly on `defineCricketApp`; those
-contracts must come from domains.
+register `endpoints`, `jobs`, or `models` directly on `defineCricketApp`. Machines
+also belong in domains.
 
 Existing or embedded applications can temporarily opt out:
 
@@ -117,6 +118,7 @@ api/domains/project/
   domain.service.js       data and product operations
   access.rules.js         auth, existence, ownership, business guards
   http.routes.js          endpoint contracts
+  *.machine.js            product states and transitions
   *.jobs.js               background job contracts
   behavior.test.js        HTTP and worker-boundary tests
 ```
@@ -980,6 +982,64 @@ Cricket does not run migrations on server start, design tables, hide data
 policy, or replace Knex. It makes the database contract visible from the same
 app definition your server uses.
 
+## Domain Machines
+
+Use a machine when the current state decides what a product event can do.
+A report can be submitted as a draft and marked published after the publish
+job finishes. Both events can go through the same domain service.
+
+Put `defineMachine(createMachine(config))` in a domain-local `*.machine.js`
+file. Both functions are available from `@robdel12/cricket`, which ships
+XState v6. Give the native chart an explicit `id`, `version`, and
+`schemas.events` map. Import the event payload schemas from
+`*.validations.js` when routes or workers share them. The
+[report publication example](examples/report-publication.js) shows a native
+chart that emits a request for follow-up work.
+
+```js
+let snapshot = reportPublication.machine.resolveState({
+  value: report.status,
+  context: { title: report.title }
+});
+let result = await reportPublication.transition(snapshot, {
+  type: 'report.submitted',
+  title: input.title
+});
+```
+
+- `await machine.initial(input)` evaluates the initial state and returns
+  `{ kind: 'applied', snapshot, emitted }`.
+- `await machine.transition(snapshot, event)` validates the event payload and
+  evaluates one event. It returns the same result shape. `kind: 'unhandled'`
+  means the event was valid but the current state or guards blocked it. An
+  accepted acknowledgement can leave the state value unchanged. Invalid
+  payloads throw Cricket's `VALIDATION_FAILED` error.
+- `await machine.persist(snapshot)` produces a plain, immutable JSON
+  checkpoint. `await machine.restore(checkpoint)` validates the chart ID,
+  version, state, and declared context schema before restoring it. Use
+  `machineVersions` from `@robdel12/cricket` to migrate checkpoints when changing
+  a stored chart's version.
+
+Keep the chart's transition callbacks and guards pure. Treat native XState
+snapshots as read-only values and use serializers for HTTP responses. Cricket
+returns JSON events requested with `enqueue.emit(...)` as immutable data.
+Use Cricket Jobs for delays and external work. The transition API rejects
+effects that require a running actor, including timers and child actors.
+
+For state you already store in rows, resolve the snapshot from those rows in
+the service. If you need to save history and context together, store the
+checkpoint in an app-owned table. Lock the row or use a conditional write
+when concurrent events can update it. For work that must survive a crash,
+store the outbound intent in the **same transaction** and let a job deliver it
+with a stable idempotency key. Keep auth in rules and let workers send results
+back through the service.
+
+Run `pnpm cricket new domain reports api/domains --with machine,service` to
+scaffold the files. `cricket inspect` shows a machine's ID, version, state
+paths, and declared events. `cricket check` catches duplicate IDs across app
+and plugin domains. Compose inline domains and plugin domains with a
+`machines: [reportPublication]` array.
+
 ## Jobs
 
 Jobs are Cricket contracts for background work. Use them when work needs
@@ -1521,7 +1581,7 @@ selected test starts as a todo until it proves behavior through the HTTP or
 worker boundary. The serializer scaffold requires a model in the same selection
 or an existing `schema.model.js` in the domain.
 `check` validates the app architecture and calls out manual migration debt.
-`inspect` prints architecture, loaded domains, model visibility, rules, services, jobs, route
+`inspect` prints architecture, loaded domains, model visibility, rules, services, machines, jobs, route
 operation IDs, and observability posture. `docs` writes OpenAPI from the same
 app module your server runs. `test` wraps Node's built-in test runner with
 Cricket defaults and optional JSON output.
@@ -1661,6 +1721,9 @@ import {
   defineApiVersions,
   defineEndpoint,
   deprecateEndpoint,
+  createMachine,
+  defineMachine,
+  machineVersions,
   respond,
   ok,
   created,
