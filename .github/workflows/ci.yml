@@ -44,3 +44,22 @@ jobs:
 
       - name: Run Redis integration tests
         run: pnpm run test:redis
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+      - run: |
+          corepack enable
+          corepack prepare pnpm@11.3.0 --activate
+          pnpm install --frozen-lockfile
+      - run: pnpm docs:test
+      - run: pnpm --filter cricket-docs exec playwright-core install --with-deps chromium
+      - run: pnpm --filter cricket-docs test:browser

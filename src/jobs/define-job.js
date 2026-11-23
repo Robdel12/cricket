@@ -107,6 +107,15 @@ export function isJobContract(value) {
 }
 
 /**
+ * @guide jobs Run background jobs
+ *
+ * Put `defineJob` contracts in `*.jobs.js`. Give each job a name, an input schema, a queue, and a `run` function. Use the same services your routes use.
+ *
+ * Call `jobs.enqueue` where you need to hand off work. In a worker entrypoint under `api/workers/`, use `startCricketWorker` to read jobs from the queue. Set retry and concurrency policy where you define the job, and use an idempotency key for work that can be requested twice.
+ *
+ * Use `cronSchedule` for recurring work. Test scheduled work by advancing the test clock, calling `worker.schedules.tick()`, and draining available jobs. See the [jobs walkthrough](../README.md#jobs) for worker setup, retries, recovery, and the execution ledger.
+ */
+/**
  * Define a Cricket background job contract.
  *
  * The returned job is frozen plain data plus a `run` function. Cricket uses it

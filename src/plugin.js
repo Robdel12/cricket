@@ -103,6 +103,15 @@ function pluginServiceSchemasFor(services) {
 }
 
 /**
+ * @guide plugins Share domains with plugins
+ *
+ * Use `defineCricketPlugin` when several apps share a domain or a package owns a set of routes. The plugin declares domains and the host app supplies the services its handlers need.
+ *
+ * Use `definePluginSchema` to describe the methods, inputs, and outputs at that boundary. Cricket checks that the host provides those methods at startup and parses data at each call. Run `cricket inspect` to see which domains the plugin added.
+ *
+ * See the [plugin composition example](../examples/plugin-composition/app.js) for the host and [the plugin factory](../examples/plugin-composition/plugin.js) it loads.
+ */
+/**
  * Define the Zod contracts that an app's service adapters must follow.
  *
  * Each method accepts one input value and returns one output value.

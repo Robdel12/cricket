@@ -1,0 +1,28 @@
+:root {
+  --sl-color-accent-low: #15372c;
+  --sl-color-accent: #76d8ad;
+  --sl-color-accent-high: #c7f3df;
+  --sl-content-width: 47rem;
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: #ddf4e8;
+  --sl-color-accent: #146747;
+  --sl-color-accent-high: #123e2e;
+}
+
+.hero h1 {
+  letter-spacing: -.055em;
+}
+
+.hero .tagline {
+  max-width: 32rem;
+}
+
+.hero {
+  padding-block: clamp(2.5rem, 7vw, 5rem);
+}
+
+.pagination-links a {
+  box-shadow: none;
+}

@@ -102,6 +102,29 @@ function appWithTestLogger(app, testState) {
 }
 
 /**
+ * @guide testing Test your API
+ *
+ * Use `createTestRuntime(app)` from `@robdel12/cricket/test` to run the real HTTP stack. Make requests through its `api` client and check the status, response, and any saved rows. Call `cleanup()` when the test ends.
+ *
+ * ```js
+ * import assert from 'node:assert/strict';
+ * import { test } from 'node:test';
+ * import { createTestRuntime } from '@robdel12/cricket/test';
+ * import { app } from './api.js';
+ *
+ * test('greets the caller', async t => {
+ *   let { api, cleanup } = await createTestRuntime(app);
+ *   t.after(cleanup);
+ *
+ *   let response = await api.get('/hello/Cricket');
+ *   assert.equal(response.status, 200);
+ *   assert.deepEqual(response.body, { message: 'Hey, Cricket!' });
+ * });
+ * ```
+ *
+ * This test uses the app from [Your first route](guide.md#your-first-route). Run `pnpm exec cricket test`. Use the worker boundary to test jobs and a real test database for behavior that writes data.
+ */
+/**
  * Create a Cricket runtime wired for test inspection.
  *
  * The runtime remains a normal Cricket HTTP runtime. The test harness only adds

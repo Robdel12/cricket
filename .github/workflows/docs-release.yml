@@ -1,0 +1,48 @@
+name: Release documentation
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+env:
+  CRICKET_DOCS_PATH: ${{ vars.CRICKET_DOCS_PATH || '/cricket/' }}
+
+jobs:
+  release:
+    concurrency:
+      group: cricket-docs-release-${{ github.event.release.tag_name }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.x
+      - run: |
+          corepack enable
+          corepack prepare pnpm@11.3.0 --activate
+          pnpm install --frozen-lockfile
+      - name: Build the tagged documentation
+        env:
+          CRICKET_DOCS_VERSION: ${{ github.event.release.tag_name }}
+        run: pnpm docs:build
+      - name: Archive the documentation
+        env:
+          CRICKET_DOCS_VERSION: ${{ github.event.release.tag_name }}
+        run: node site/scripts/archive.js pack site/dist "$RUNNER_TEMP/cricket-release/cricket-docs-$CRICKET_DOCS_VERSION.tar.gz"
+      - name: Attach the release archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CRICKET_DOCS_VERSION: ${{ github.event.release.tag_name }}
+        run: node site/scripts/releases.js upload "$RUNNER_TEMP/cricket-release" "$CRICKET_DOCS_VERSION"

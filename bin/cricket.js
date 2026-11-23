@@ -109,6 +109,13 @@ function apiVersionSelections(args) {
   }));
 }
 
+/**
+ * @guide cli Cricket CLI
+ *
+ * Run these commands with `pnpm exec cricket` from your app. Run `cricket` by itself to see this usage text.
+ *
+ * `init` sets up the app folders and agent guidance. `check` looks for structure problems, `inspect` lists what Cricket loaded, and `docs` writes OpenAPI from the same app definition.
+ */
 function usage() {
   return `Usage:
   cricket new domain <name> [root] --with <types|all> [--force]
