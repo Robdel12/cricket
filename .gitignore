@@ -7,6 +7,9 @@ node_modules/
 
 coverage/
 dist/
+/site/.astro/
+/site/published/
+/site/src/content/docs/
 
 *.log
 *.sqlite

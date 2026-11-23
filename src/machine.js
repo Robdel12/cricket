@@ -77,6 +77,15 @@ function resultFor(machine, [snapshot, effects]) {
 }
 
 /**
+ * @guide machines Model domain state
+ *
+ * Use a machine when a product event can do different things depending on the current state. A draft report can be submitted, and the same report can be marked published when a job succeeds.
+ *
+ * Put the chart in a `*.machine.js` file. Pass a native XState v6 chart to `defineMachine` and give it an ID, a version, and schemas for its public events. Your service loads a snapshot, calls `transition(snapshot, event)`, and saves the result in a transaction. Store a checkpoint with `persist` and read it back with `restore` if the chart needs more than the state you already keep in a row.
+ *
+ * Keep guards and transition callbacks pure. Save any work that has to survive a crash in the same transaction, then let a job deliver it. The [report publication example](../examples/report-publication.js) shows how a chart emits a request for work.
+ */
+/**
  * Define a domain machine backed by a native XState v6 chart.
  * Services evaluate events and decide how to persist the result and deliver emitted facts.
  * @param {import('xstate').AnyStateMachine} machine

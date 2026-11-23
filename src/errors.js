@@ -83,6 +83,8 @@ export function tooManyRequests(message = 'Too many requests', details) {
 }
 
 /**
+ * Return a 401 error when the request needs a signed-in user.
+ *
  * @param {string} [message]
  * @param {object} [details]
  */
@@ -91,6 +93,8 @@ export function unauthenticated(message = 'Unauthenticated', details) {
 }
 
 /**
+ * Return a 403 error when the caller lacks access.
+ *
  * @param {string} [message]
  * @param {object} [details]
  */
@@ -99,6 +103,8 @@ export function forbidden(message = 'Forbidden', details) {
 }
 
 /**
+ * Return a 404 error when the requested resource is missing.
+ *
  * @param {string} [message]
  * @param {object} [details]
  */

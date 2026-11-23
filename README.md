@@ -2,6 +2,8 @@
 
 Tiny contracts for sturdy Node APIs.
 
+[Quickstart and guides](docs/guide.md) · [JavaScript API](docs/api.md) · [Working on the docs](docs/documentation.md)
+
 Cricket gives Node APIs the backend shape that stays pleasant as the app grows:
 plain JavaScript, Zod contracts, predictable domain files, thin routes, boring
 services, state machines, first-class jobs, OpenAPI generation, and a normal
@@ -13,7 +15,7 @@ objects around, composes functions, and keeps side effects at the edges.
 ## Install
 
 ```sh
-pnpm add @robdel12/cricket
+pnpm add github:Robdel12/cricket
 ```
 
 ## Adopt Cricket

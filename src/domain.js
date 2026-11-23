@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isJobContract } from './jobs/define-job.js';
 import { isMachineContract } from './machine.js';
 
+/** File suffixes Cricket loads from a domain folder. */
 export let domainFileTypes = [
   'model',
   'validations',
@@ -252,6 +253,21 @@ async function listDomainFolders(rootPath) {
 }
 
 /**
+ * @guide domains Organize your app
+ *
+ * Start with `pnpm exec cricket init .`. It creates an app entry in `api/index.js`, the standard folders, and agent guidance in `AGENTS.md` and `.agents/skills/`. In an existing app, `pnpm exec cricket init agents .` adds the guidance on its own.
+ *
+ * Put features in `api/domains/`. A project domain might start with `http.routes.js`, `input.validations.js`, and `domain.service.js`. Cricket loads direct files by suffix inside each domain folder. Add models, serializers, rules, machines, or jobs when the feature needs them.
+ *
+ * ```sh
+ * pnpm exec cricket new domain project api/domains --with validations,service,routes,test
+ * pnpm exec cricket check api/index.js
+ * pnpm exec cricket inspect api/index.js
+ * ```
+ *
+ * Use `check` to catch structure problems and `inspect` to see what the app loaded. For examples of the full folder layout and app setup, see [App shape in the README](../README.md#app-shape).
+ */
+/**
  * Load Cricket domains from the standard folder structure.
  *
  * @param {string|URL|Array<object|string|URL>} domains - Domain root, domain folders, or already-loaded domain objects.
@@ -316,6 +332,7 @@ export function collectJobs(domains) {
   );
 }
 
+/** Collect machine contracts by ID. Duplicate IDs across domains throw. */
 export function collectMachines(domains) {
   let machines = new Map();
   for (let domain of domains) {

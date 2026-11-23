@@ -97,6 +97,11 @@ Use `$testing-philosophy`.
 
 ## Docs
 
+The docs site builds from source. Edit `@guide` blocks and public export JSDoc
+in the JavaScript, then regenerate `docs/guide.md` and `docs/api.md`.
+See [Working on the docs](docs/documentation.md) for the commands and release
+workflow.
+
 When changing framework behavior, update `README.md` for user-facing usage and
 `vision.md` for direction/tradeoffs. Keep docs candid about what Cricket
 provides and what remains app responsibility.

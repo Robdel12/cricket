@@ -1,0 +1,57 @@
+---
+import Header from '@astrojs/starlight/components/Header.astro';
+import { settings } from '../../scripts/settings.js';
+let { version, path, base } = settings();
+---
+<div class="docs-header">
+  <Header {...Astro.props} />
+  <div class="version-control">
+    <label for="docs-version">Version</label>
+    <select id="docs-version" disabled data-index={import.meta.env.DEV ? undefined : `${path}versions.json`}>
+      <option value={base} selected>{version === 'next' ? 'Next (unreleased)' : version}</option>
+    </select>
+    <span id="version-status" role="status"></span>
+    <noscript><a href={path}>Latest docs</a></noscript>
+  </div>
+</div>
+<script>
+  let select = document.querySelector('#docs-version');
+  let status = document.querySelector('#version-status');
+  if (select instanceof HTMLSelectElement && status instanceof HTMLElement) {
+    let current = select.value;
+    let indexUrl = select.dataset.index;
+    select.addEventListener('change', () => {
+      // Each version has its own homepage and search index. A removed API page
+      // in an older release must not turn a version change into a 404.
+      location.assign(select.value);
+    });
+    if (indexUrl) try {
+      let sitePath = new URL('.', new URL(indexUrl, location.origin)).pathname;
+      let response = await fetch(indexUrl);
+      if (!response.ok) throw new Error('Version index unavailable');
+      let index = await response.json();
+      for (let entry of index.versions) {
+        if (entry.path === current) continue;
+        let url = new URL(entry.path, location.origin);
+        if (url.origin !== location.origin || !url.pathname.startsWith(sitePath)) continue;
+        select.add(new Option(entry.version === 'next' ? 'Next (unreleased)' : entry.version, url.pathname));
+      }
+      select.disabled = select.options.length < 2;
+    } catch {
+      status.textContent = 'Other versions unavailable';
+    }
+  }
+</script>
+<style>
+  .docs-header { display: flex; align-items: center; gap: 1rem; height: 100%; }
+  .docs-header :global(.header) { flex: 1; min-width: 0; }
+  .version-control { display: flex; align-items: center; gap: .5rem; font-size: .8125rem; }
+  select { padding: .35rem; max-width: 12rem; background: var(--sl-color-bg); color: var(--sl-color-white); border: 1px solid var(--sl-color-gray-4); border-radius: .25rem; }
+  label { color: var(--sl-color-gray-2); }
+  #version-status { font-size: .75rem; }
+  @media (max-width: 50rem) {
+    label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+    #version-status { position: absolute; top: 100%; right: 0; padding: .25rem .5rem; background: var(--sl-color-bg); }
+    select { max-width: 9.5rem; }
+  }
+</style>

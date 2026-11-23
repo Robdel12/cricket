@@ -476,6 +476,19 @@ function validateAuthRequirements(requirements, schemes) {
 }
 
 /**
+ * @guide openapi Generate OpenAPI
+ *
+ * Run the docs command against the app module you already serve. It reads the registered endpoint contracts without starting the server or running setup.
+ *
+ * ```sh
+ * pnpm exec cricket docs api/index.js --out openapi.json
+ * ```
+ *
+ * Add endpoint summaries, response types, request headers, and auth metadata when they help clients. Keep access checks in rules. Review which routes the generated file includes before sharing it.
+ *
+ * See [the public contracts example](../examples/public-contracts.js) and the [OpenAPI options in the README](../README.md#document-your-http-api).
+ */
+/**
  * Generates an OpenAPI 3.1 document from Cricket endpoint and model contracts.
  *
  * The generator is intentionally narrow: it translates the framework's own

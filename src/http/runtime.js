@@ -1327,6 +1327,19 @@ function createRuntimeHandler({
 }
 
 /**
+ * @guide http Serve HTTP
+ *
+ * Export a `defineCricketApp` contract from your app entry and pass it to `startCricketApp`. Set `main: import.meta.url` so CLI commands can import the app without opening a listener. App setup runs when the runtime starts and can return shared dependencies, services, and cleanup.
+ *
+ * Most handlers return a body. Use `created(body)` for a 201, or `respond(status, body)` when the status should be explicit. For a route that already uses web-standard `Request` and `Response`, use a `fetch` handler and declare its status codes and media types in `fetchResponses`.
+ *
+ * ## Choose the request contract
+ *
+ * Turn on `multipart` for uploads or `rawBody` when you need the original bytes. Configure trusted proxies when Cricket runs behind a proxy you control. If different clients need different versions of the same route, use `defineApiVersions` and declare the contracts for each version.
+ *
+ * The README has examples for [Fetch handlers](../README.md#fetch-endpoints), [API versions](../README.md#endpoint-api-versions), [multipart requests](../README.md#multipart-requests), [trusted proxies](../README.md#configure-trusted-proxies), and [OIDC hosting](../README.md#host-oidc-inside-cricket).
+ */
+/**
  * Create a Cricket runtime from an app contract.
  *
  * Resolves domains, sets up services, compiles middleware and routes, and returns

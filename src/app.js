@@ -276,6 +276,41 @@ function validateResolvedDomains(domains) {
 }
 
 /**
+ * @guide getting-started Your first route
+ *
+ * You'll need Node 24 or newer and pnpm.
+ *
+ * ## Install Cricket
+ *
+ * Run this in an empty project folder. If you already have a `package.json`, skip `pnpm init` and set `"type": "module"` there.
+ *
+ * <!-- quickstart install -->
+ *
+ * ## Add a route
+ *
+ * Save this as `api.js`.
+ *
+ * <!-- quickstart example -->
+ *
+ * ## Try it
+ *
+ * Start the server.
+ *
+ * ```sh
+ * node api.js
+ * ```
+ *
+ * Leave it running and open a second terminal.
+ *
+ * ```sh
+ * curl http://localhost:3000/hello/Cricket
+ * ```
+ *
+ * You should get `{"message":"Hey, Cricket!"}`. Cricket checks the path params before calling your handler and parses the response before it sends it.
+ *
+ * Once you want a folder for routes, services, and other domain code, run `pnpm exec cricket init .` and read [Organize your app](guide.md#organize-your-app).
+ */
+/**
  * Define the Cricket app contract that CLIs, docs generation, and runtimes all
  * consume. This is intentionally plain data plus setup/context functions.
  *

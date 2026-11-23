@@ -62,6 +62,21 @@ async function parseReturnedRow(model, query, returning) {
 }
 
 /**
+ * @guide database Connect a database
+ *
+ * Set the Knex client and connection in the app's `database` config. Cricket creates the connection, passes `db` to your services, and closes it during shutdown. Install the driver for the database you use.
+ *
+ * Use `createKnexRepository` when a service needs a small set of table operations. Your model describes the row, and your service owns the query and its access rules. Use Knex directly for queries that need more control.
+ *
+ * Keep schema changes in `api/migrations/` and run them as a separate step when you deploy.
+ *
+ * ```sh
+ * pnpm exec cricket migrate make api/index.js create_projects
+ * pnpm exec cricket migrate latest api/index.js
+ * pnpm exec cricket migrate status api/index.js
+ * ```
+ */
+/**
  * Builds a Knex-backed repository around a Cricket model contract.
  *
  * The repository keeps persistence concerns at the edge while returning plain

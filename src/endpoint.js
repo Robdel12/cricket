@@ -418,6 +418,19 @@ function parseRequestHeaders(schema, headers = {}) {
 }
 
 /**
+ * @guide contracts Define route contracts
+ *
+ * A route connects a method and path to your app. Use `defineEndpoint` to pass the Zod schemas for `params`, `query`, `body`, and `response` that the route needs. Put shared input schemas in a `*.validations.js` file and import them in the route.
+ *
+ * Use `defineRule` for checks such as sign-in, ownership, and record existence. Put queries and writes in a service. That lets the same product operation run from a route or a background job.
+ *
+ * ## Shape data at the edges
+ *
+ * A model describes a stored row. Use `field.public` and `field.private` to say what can leave the app, and add named views when different callers need different fields.
+ *
+ * Use normalizers to shape data from webhooks, CSVs, and other outside sources. Use serializers to shape outgoing API data. `defineNormalizer` and `defineSerializer` can parse their output against a schema. See [a complete model-to-route example](../examples/one-file-app.js).
+ */
+/**
  * Define a request/response contract around a handler.
  *
  * This keeps validation, rule execution, and response parsing in one place so

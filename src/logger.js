@@ -84,6 +84,7 @@ function safeMetadata(value, seen = new WeakSet()) {
   return safe;
 }
 
+/** Build a structured log entry and redact sensitive metadata fields. */
 export function logEnvelope({
   context,
   event,
@@ -172,6 +173,15 @@ export function normalizeLogger(logger, context = {}) {
   };
 }
 
+/**
+ * @guide observability Follow a request
+ *
+ * Cricket passes a logger to the app, routes, and workers. Use structured fields for details you want to filter later. Add trace spans around the service calls and external requests you need to time.
+ *
+ * Pipe your JSON logs into `cricket trace <requestId>` to see one request's timeline. Configure `onError` if your app sends reports to an external service. Keep secrets out of logs and error reports.
+ *
+ * See [logging and tracing](../README.md#logging-and-tracing) for configuration or [the shutdown example](../examples/request-pause.js) for draining requests and pausing traffic.
+ */
 /**
  * Create Cricket's small structured logger.
  *
