@@ -2,7 +2,7 @@
 
 Tiny contracts for sturdy Node APIs.
 
-[Quickstart and guides](docs/guide.md) · [JavaScript API](docs/api.md) · [Working on the docs](docs/documentation.md)
+**[Documentation](https://robdel12.github.io/cricket/)** · [Quickstart and guides](docs/guide.md) · [JavaScript API](docs/api.md) · [Working on the docs](docs/documentation.md)
 
 Cricket gives Node APIs the backend shape that stays pleasant as the app grows:
 plain JavaScript, Zod contracts, predictable domain files, thin routes, boring
