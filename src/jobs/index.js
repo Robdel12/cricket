@@ -19,6 +19,7 @@ export {
 } from './concurrency.js';
 
 export {
+  localQueue,
   redisQueue
 } from './queue.js';
 
@@ -39,6 +40,10 @@ export {
   createCricketJobs,
   startCricketWorker
 } from './runtime.js';
+
+export {
+  createLocalQueueDriver
+} from './drivers/local.js';
 
 export {
   createTestQueueDriver

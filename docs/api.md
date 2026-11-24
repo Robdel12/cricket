@@ -22,6 +22,7 @@ For examples you can build on, start with [Using Cricket](guide.md#your-first-ro
 | `created` | Create a 201 response. |
 | `createJobLedgerTable` | Create the Cricket jobs ledger table. |
 | `createKnexRepository` | Builds a Knex-backed repository around a Cricket model contract. |
+| `createLocalQueueDriver` | Create a process-local Cricket queue. Share the same driver instance between a producer and a worker, or let a worker create its own with `queues.local`. Work and cron positions are cleared at cleanup and lost on process exit. |
 | `createMachine` | Create a native XState chart to pass to `defineMachine`. |
 | `createServices` | Build a service registry from domain-owned service factories. |
 | `cricketError` | Create the framework's standard error shape so Cricket can map it to HTTP. |
@@ -45,6 +46,7 @@ For examples you can build on, start with [Using Cricket](guide.md#your-first-ro
 | `generateOpenApi` | Generates an OpenAPI 3.1 document from Cricket endpoint and model contracts. |
 | `jobFailure` | Define first-class failure handlers for a Cricket job. |
 | `loadDomains` | Load Cricket domains from the standard folder structure. |
+| `localQueue` | Describe a queue for work that runs inside one process. Pending and active envelopes live in memory. Rebuild wakeups from app-owned durable state on startup when work must survive a restart. |
 | `machineVersions` | Describe supported chart versions and how to migrate saved checkpoints. |
 | `mapKeys` | Map output keys from a serializer while preserving the values. |
 | `normalizeLogger` | Normalize app-provided logging into Cricket's small logger shape. |
@@ -104,10 +106,12 @@ For examples you can build on, start with [Using Cricket](guide.md#your-first-ro
 | `concurrency` | Concurrency policy builders for Cricket jobs. |
 | `createCricketJobs` | Create a producer-side Cricket jobs capability. |
 | `createJobLedgerTable` | Create the Cricket jobs ledger table. |
+| `createLocalQueueDriver` | Create a process-local Cricket queue. Share the same driver instance between a producer and a worker, or let a worker create its own with `queues.local`. Work and cron positions are cleared at cleanup and lost on process exit. |
 | `createTestQueueDriver` | Create an in-memory queue driver for Cricket job tests. |
 | `cronSchedule` | Describe cron-backed schedule metadata for a Cricket job. |
 | `defineJob` | Define a Cricket background job contract. |
 | `jobFailure` | Define first-class failure handlers for a Cricket job. |
+| `localQueue` | Describe a queue for work that runs inside one process. Pending and active envelopes live in memory. Rebuild wakeups from app-owned durable state on startup when work must survive a restart. |
 | `planCronSchedule` | Plan due cron slots from a schedule cursor and a fixed clock. |
 | `planJobEnvelope` | Build the immutable envelope Cricket stores and queues for a job run. |
 | `redisQueue` | Describe the Redis queue a job should use. |

@@ -370,6 +370,9 @@ export async function createRedisQueueDriver({
   async function enqueueEnvelope(envelope, {
     slotId
   } = {}) {
+    if (envelope.coalesceKey)
+      throw new Error('Coalescing jobs need the Cricket local queue driver');
+
     addQueueName(queues, envelope.queueName);
 
     let duplicateKey = duplicateKeyFor(prefix, envelope);

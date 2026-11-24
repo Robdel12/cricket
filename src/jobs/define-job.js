@@ -113,6 +113,7 @@ export function isJobContract(value) {
  *
  * Call `jobs.enqueue` where you need to hand off work. In a worker entrypoint under `api/workers/`, use `startCricketWorker` to read jobs from the queue. Set retry and concurrency policy where you define the job, and use an idempotency key for work that can be requested twice.
  *
+ * Use `localQueue` with `queues.local: true` for a single-process app. Envelopes and cron positions live in memory. Keep durable work in app tables and rebuild pending wakeups at startup. A `coalesceKey` replaces only pending work for the same job and key. Use `jobs.cancelPending(job, key)` to cancel a pending wakeup.
  * Use `cronSchedule` for recurring work. Test scheduled work by advancing the test clock, calling `worker.schedules.tick()`, and draining available jobs. See the [jobs walkthrough](../README.md#jobs) for worker setup, retries, recovery, and the execution ledger.
  */
 /**
@@ -127,7 +128,7 @@ export function isJobContract(value) {
  * @param {object} options.input - Zod schema for the immutable job input.
  * @param {object} [options.context] - Zod schema for enqueue metadata.
  * @param {object} [options.result] - Zod schema for the job result.
- * @param {object} [options.queue] - Queue contract, usually `redisQueue(...)`.
+ * @param {object} [options.queue] - Queue contract from `localQueue(...)` or `redisQueue(...)`.
  * @param {object} [options.retry] - Retry policy, usually `retry.exponential(...)`.
  * @param {object} [options.failure] - Failure handlers, usually `jobFailure(...)`.
  * @param {Function} [options.recover] - Pure recovery decision over job logs, spans, progress, ledger, and run state.
@@ -168,6 +169,9 @@ export function defineJob(options = {}) {
 
   if (typeof run !== 'function')
     throw new Error('defineJob run must be a function');
+
+  if (queue?.coalesceKey !== undefined && retry)
+    throw new Error('Jobs with a coalescing local queue must keep retries in app state');
 
   assertSchedule(schedule);
   assertFailure(failure);

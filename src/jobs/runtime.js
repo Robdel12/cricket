@@ -5,9 +5,10 @@ import { frozenPlain } from '../immutable.js';
 import { createTrace } from '../trace.js';
 import { parseZod } from '../schema.js';
 import { normalizeJobClock } from './clock.js';
-import { jobResultFailed } from './errors.js';
-import { planJobEnvelope } from './envelope.js';
+import { createLocalQueueDriver } from './drivers/local.js';
 import { createRedisQueueDriver } from './drivers/redis.js';
+import { planJobEnvelope } from './envelope.js';
+import { jobResultFailed } from './errors.js';
 import { createJobLedger } from './ledger.js';
 import {
   createRecoverySnapshot,
@@ -358,9 +359,12 @@ function scheduleContext(runtime, {
   };
 }
 
-async function createDriver(queues = {}, jobList = []) {
+async function createDriver(queues, jobList, clock) {
   if (queues.driver)
     return queues.driver;
+
+  if (queues.local === true)
+    return createLocalQueueDriver({ now: clock.now });
 
   if (queues.test === true)
     return createTestQueueDriver();
@@ -373,7 +377,17 @@ async function createDriver(queues = {}, jobList = []) {
         .filter(Boolean)
     });
 
-  throw new Error('Cricket jobs need queues.driver, queues.redis, or explicit queues.test');
+  throw new Error('Cricket jobs need queues.driver, queues.redis, queues.local, or explicit queues.test');
+}
+
+async function recordEnqueue(result, envelope, recordLedger) {
+  if (result.replaced)
+    await recordLedger('superseded', result.replaced, ledger => ledger.cancelled(result.replaced, 'superseded'));
+
+  if (result.enqueued) {
+    let queued = result.envelope ?? envelope;
+    await recordLedger('queued', queued, ledger => ledger.queued(queued));
+  }
 }
 
 function createJobsCapability({
@@ -391,8 +405,7 @@ function createJobsCapability({
       });
       let result = await driver.enqueue(envelope);
 
-      if (result.enqueued)
-        await recordLedger('queued', envelope, ledger => ledger.queued(envelope));
+      await recordEnqueue(result, envelope, recordLedger);
 
       return result;
     },
@@ -404,6 +417,25 @@ function createJobsCapability({
         results.push(await jobsCapability.enqueue(job, input, options));
 
       return results;
+    },
+
+    async cancelPending(job, key) {
+      if (typeof driver.cancelPending !== 'function')
+        throw new Error('The configured Cricket jobs driver does not support cancelling pending work');
+
+      if (!job.queue?.coalesceKey || typeof key !== 'string' || !key)
+        throw new Error('jobs.cancelPending needs a coalescing job and its resolved key');
+
+      let envelope = await driver.cancelPending({
+        name: job.name,
+        queueName: job.queue.name,
+        coalesceKey: key
+      });
+
+      if (envelope)
+        await recordLedger('cancelled', envelope, ledger => ledger.cancelled(envelope, 'cancelled'));
+
+      return frozenPlain({ cancelled: Boolean(envelope) });
     },
 
     async removeFinished(ids) {
@@ -436,7 +468,7 @@ function createJobsCapability({
  * @param {object} [options.ledger.db] - Knex database handle for ledger writes.
  * @param {string} [options.ledger.tableName='cricket_jobs'] - Ledger table name.
  * @param {object} [options.logger] - Logger used for best-effort ledger warnings.
- * @param {object} [options.queues] - Queue driver configuration.
+ * @param {object} [options.queues] - Queue driver configuration, including `{ local: true }` for an in-process driver.
  * @returns {Promise<object>} Producer controls, driver, ledger, and jobs capability.
  */
 export async function createCricketJobs({
@@ -448,7 +480,7 @@ export async function createCricketJobs({
 } = {}) {
   let clock = normalizeJobClock(clockOptions);
   let jobList = toArray(jobs);
-  let driver = await createDriver(queues, jobList);
+  let driver = await createDriver(queues, jobList, clock);
   let ledger = createJobLedger(ledgerOptions);
   let recordLedger = createLedgerRecorder({
     ledger,
@@ -484,7 +516,7 @@ export async function createCricketJobs({
  * @param {object[]} [options.jobs] - Domain-owned jobs this worker should execute. Manual apps may register jobs directly.
  * @param {object} [options.ledger] - Job ledger options.
  * @param {string} [options.ledger.tableName='cricket_jobs'] - Ledger table name.
- * @param {object} [options.queues] - Queue driver configuration.
+ * @param {object} [options.queues] - Queue driver configuration, including `{ local: true }` for an in-process driver.
  * @returns {Promise<object>} Worker controls, runtime, driver, and jobs capability.
  */
 export async function startCricketWorker(cricketApp, {
@@ -517,7 +549,7 @@ export async function startCricketWorker(cricketApp, {
       : [...appJobs, ...selectedJobs];
 
     byName = jobsByName(jobList);
-    driver = await createDriver(queues, jobList);
+    driver = await createDriver(queues, jobList, clock);
   } catch (error) {
     await runtime.cleanup();
     throw error;
@@ -1107,8 +1139,7 @@ export async function startCricketWorker(cricketApp, {
           })
           : await driver.enqueue(envelope);
 
-        if (result.enqueued)
-          await recordLedger('queued', result.envelope, ledger => ledger.queued(result.envelope));
+        await recordEnqueue(result, envelope, recordLedger);
 
         materialized.push(result);
       }

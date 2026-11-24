@@ -111,6 +111,7 @@ export function createJobLedger({
   if (!db)
     return {
       async queued() {},
+      async cancelled() {},
       async started() {},
       async progressed() {},
       async completed() {},
@@ -124,6 +125,14 @@ export function createJobLedger({
         .insert(ledgerRowForEnvelope(envelope))
         .onConflict('id')
         .ignore();
+    },
+
+    async cancelled(envelope, status) {
+      await upsertLifecycleState(db, tableName, envelope, {
+        status,
+        finished_at: timestamp(),
+        updated_at: timestamp()
+      });
     },
 
     async started(envelope, {

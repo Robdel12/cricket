@@ -421,6 +421,8 @@ describe('Cricket CLI', () => {
     assert.match(jobsSkill, /createCricketJobs/);
     assert.match(jobsSkill, /startCricketWorker/);
     for (let guidance of [agents, jobsSkill]) {
+      assert.match(guidance, /queues\.local/);
+      assert.match(guidance, /jobs\.cancelPending\(job, key\)/);
       assert.match(guidance, /driver\.checkConnection\(\)/);
       assert.match(guidance, /'connected' \| 'disconnected' \| 'closed'/);
       assert.match(guidance, /blocking-wait/);

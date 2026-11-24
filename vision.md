@@ -285,6 +285,11 @@ the next known delayed or cron boundary, and shutdown aborts that wait. They do
 not poll on a framework interval. Between jobs, the continuous worker checks
 recovery, due cron slots, and delayed availability even while ready work remains.
 
+A local driver gives a single process wakeups, delayed jobs, and coordination
+without a separate service. A pending wakeup can be replaced or cancelled by
+job and key while an active run finishes. Its queue is transient. Apps that
+need restart recovery rebuild local work from durable product rows.
+
 Redis coordinates hot execution: queues, wakeups, leases, attempts, idempotency,
 delayed availability, schedule materialization, and attempt evidence. The
 app database keeps product truth. Cricket's `cricket_jobs` table is an
@@ -299,8 +304,8 @@ claim, retry, completion/failure, delayed promotion, and schedule
 materialization are atomic. Each attempt owns Cricket's lease, evidence, retry,
 and settlement writes. Cricket rejects stale coordination updates to those
 fields. Apps still own idempotency or attempt-awareness for product-side
-effects. Envelopes, run state, events, current-attempt evidence, and
-schedule-slot ownership remain after completion or failure. Apps own retention
+effects. The Redis driver retains envelopes, run state, events, attempt evidence, and
+schedule-slot ownership after completion or failure. Apps own retention
 windows and schedule cleanup. Cricket owns a safe removal capability that
 accepts finished job IDs, verifies their status, and removes its internal Redis
 records without exposing key shapes.

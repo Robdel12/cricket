@@ -136,6 +136,10 @@ export function planJobEnvelope(job, input, {
     callMaybeFunction(job.queue.idempotencyKey, calculationContext),
     'Job queue idempotencyKey'
   );
+  let coalesceKey = optionalStringMetadata(
+    callMaybeFunction(job.queue.coalesceKey, calculationContext),
+    'Job queue coalesceKey'
+  );
   let priority = optionalPriority(
     callMaybeFunction(job.queue.priority, calculationContext)
   );
@@ -147,6 +151,7 @@ export function planJobEnvelope(job, input, {
     name: job.name,
     queueName: job.queue.name,
     ...(idempotencyKey ? { idempotencyKey } : {}),
+    ...(coalesceKey ? { coalesceKey } : {}),
     ...(priority === undefined ? {} : { priority }),
     ...(concurrency.length ? { concurrency } : {}),
     input: parsedInput,

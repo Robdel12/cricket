@@ -75,6 +75,9 @@ export function createTestQueueDriver() {
 
   return {
     async enqueue(envelope) {
+      if (envelope.coalesceKey)
+        throw new Error('Coalescing jobs need the Cricket local queue driver');
+
       let duplicate = duplicateFor(items, envelope);
 
       if (duplicate)

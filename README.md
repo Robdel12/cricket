@@ -1204,10 +1204,31 @@ but every selected job must belong to one of the app's resolved domains,
 including plugin domains. Manual apps may register jobs at the worker boundary
 while they migrate that ownership.
 
-Choose the queue deliberately. Production producers and workers use
-`queues.redis` or an app-provided `queues.driver`; tests opt into the in-memory
-driver with `queues.test: true`. Cricket never silently turns a missing queue
-configuration into an in-memory worker.
+Choose the queue deliberately. Use `queues.local: true` for one process,
+`queues.redis` for Redis-backed coordination, or pass a `queues.driver`.
+`queues.test: true` enables the recording driver used by tests.
+
+### Run jobs in one process
+
+Use `localQueue({ name: 'maintenance' })` in a job contract and start the
+worker with `startCricketWorker(app, { queues: { local: true } })`. Enqueue
+through `worker.jobs`. If the producer and worker are assembled separately
+inside one process, pass the same `createLocalQueueDriver()` instance as
+`queues.driver` to both. Let the worker own cleanup.
+
+Use `coalesceKey` on jobs that wake a worker to check current app state. A new
+enqueue replaces pending work for the same job and key, including its deadline.
+The successor waits for any active run with that key. Call
+`jobs.cancelPending(job, key)` to cancel just the pending wakeup. Ordinary local
+jobs can use Cricket's idempotency, priority, concurrency, and retry policies.
+For coalescing jobs, keep retries in the durable state the job reads.
+
+The local driver keeps envelopes and cron positions in memory, discards
+completed and failed envelopes, and starts empty after restart. Review Relay
+uses it for wakeups and rebuilds pending deliveries from SQLite on startup.
+See the [local queue example](examples/local-queue.js).
+
+### Run jobs with Redis
 
 The built-in Redis client accepts `redis://` and `rediss://` URLs, including ACL
 credentials and a numeric database path. `rediss://` verifies certificates by

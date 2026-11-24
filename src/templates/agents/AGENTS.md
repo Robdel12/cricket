@@ -195,6 +195,10 @@ lifecycle, and logger, then adds job-scoped trace, jobs, and progress.
 Keep job contracts in domain-local `*.jobs.js` files when the work belongs to
 one domain.
 
+For single-process apps, use `localQueue` and `queues.local: true`. Rebuild
+pending work from durable product rows after restart. Use `coalesceKey` and
+`jobs.cancelPending(job, key)` for wakeups that read current state.
+
 Redis is hot coordination: queue membership, leases, wakeups, attempts, delayed
 availability, schedule materialization, and progress. App tables keep product
 truth. Add Cricket's `cricket_jobs` ledger in a normal app migration when you

@@ -152,6 +152,7 @@ Put `defineJob` contracts in `*.jobs.js`. Give each job a name, an input schema,
 
 Call `jobs.enqueue` where you need to hand off work. In a worker entrypoint under `api/workers/`, use `startCricketWorker` to read jobs from the queue. Set retry and concurrency policy where you define the job, and use an idempotency key for work that can be requested twice.
 
+Use `localQueue` with `queues.local: true` for a single-process app. Envelopes and cron positions live in memory. Keep durable work in app tables and rebuild pending wakeups at startup. A `coalesceKey` replaces only pending work for the same job and key. Use `jobs.cancelPending(job, key)` to cancel a pending wakeup.
 Use `cronSchedule` for recurring work. Test scheduled work by advancing the test clock, calling `worker.schedules.tick()`, and draining available jobs. See the [jobs walkthrough](../README.md#jobs) for worker setup, retries, recovery, and the execution ledger.
 
 ## Follow a request

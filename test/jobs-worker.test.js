@@ -565,13 +565,13 @@ describe('Cricket jobs: worker', () => {
       createCricketJobs({
         jobs: [job]
       }),
-      /queues\.driver, queues\.redis, or explicit queues\.test/
+      /queues\.driver, queues\.redis, queues\.local, or explicit queues\.test/
     );
     await assert.rejects(
       startCricketWorker(defineManualTestApp({}), {
         jobs: [job]
       }),
-      /queues\.driver, queues\.redis, or explicit queues\.test/
+      /queues\.driver, queues\.redis, queues\.local, or explicit queues\.test/
     );
   });
 
