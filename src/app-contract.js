@@ -87,6 +87,8 @@ function jobSummaryFor(job) {
   return {
     name: job.name,
     queue: job.queue?.name,
+    ...(job.queue?.type ? { queueType: job.queue.type } : {}),
+    ...(job.queue?.coalesceKey ? { coalescing: true } : {}),
     state: job.state?.mode,
     retry: job.retry?.type ?? 'none',
     failure: failurePhasesFor(job),
@@ -377,6 +379,10 @@ export function formatAppMap(appMap) {
   for (let job of appMap.jobs) {
     lines.push(`  ${job.name}`);
     lines.push(`    queue: ${job.queue ?? 'none'}`);
+    if (job.queueType)
+      lines.push(`    queue contract: ${job.queueType}`);
+    if (job.coalescing)
+      lines.push('    pending jobs: coalesced by key');
     lines.push(`    state: ${job.state ?? 'none'}`);
     lines.push(`    retry: ${job.retry}`);
     lines.push(`    failure: ${job.failure.join(', ') || 'none'}`);

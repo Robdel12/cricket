@@ -13,6 +13,7 @@ import {
   startCricketWorker,
   z
 } from '../src/index.js';
+import { createAppMap, formatAppMap } from '../src/app-contract.js';
 import { createManualClock, deferred } from '../test-support/jobs.js';
 
 let start = '2026-06-18T12:00:00.000Z';
@@ -23,6 +24,28 @@ function appFor(...jobs) {
     logger() {}
   });
 }
+
+test('a local queue rejects competing drivers at startup', async () => {
+  let expected = /queues\.local cannot be combined/;
+  for (let other of [{ driver: {} }, { redis: { url: 'redis://127.0.0.1' } }, { test: true }]) {
+    let queues = { local: true, ...other };
+    await assert.rejects(createCricketJobs({ queues }), expected);
+    await assert.rejects(startCricketWorker(appFor(), { queues }), expected);
+  }
+});
+
+test('inspection displays the queue contract and coalescing policy', () => {
+  let job = defineJob({
+    name: 'inbox.refresh',
+    input: z.object({}),
+    queue: localQueue({ name: 'inboxes', coalesceKey: 'wake' }),
+    run() {}
+  });
+  let appMap = createAppMap(appFor(job));
+  assert.equal(appMap.jobs[0].queueType, 'local');
+  assert.equal(appMap.jobs[0].coalescing, true);
+  assert.match(formatAppMap(appMap), /queue: inboxes\n +queue contract: local\n +pending jobs: coalesced by key/);
+});
 
 test('a shared local queue runs the newest pending wakeup and cancels by job and key', async t => {
   let time = createManualClock(start);

@@ -1207,6 +1207,7 @@ while they migrate that ownership.
 Choose the queue deliberately. Use `queues.local: true` for one process,
 `queues.redis` for Redis-backed coordination, or pass a `queues.driver`.
 `queues.test: true` enables the recording driver used by tests.
+Local mode is an exclusive choice.
 
 ### Run jobs in one process
 
@@ -1226,6 +1227,7 @@ For coalescing jobs, keep retries in the durable state the job reads.
 The local driver keeps envelopes and cron positions in memory, discards
 completed and failed envelopes, and starts empty after restart. Review Relay
 uses it for wakeups and rebuilds pending deliveries from SQLite on startup.
+`cricket inspect` shows the local queue contract and the coalescing policy.
 See the [local queue example](examples/local-queue.js).
 
 ### Run jobs with Redis

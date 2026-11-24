@@ -280,7 +280,8 @@ plain `run` function. Job execution reuses assembled app services, lifecycle,
 and logger, then adds job-scoped trace, jobs, and progress capabilities.
 Recovery reads execution evidence and returns a pure decision.
 
-Queue ownership should always be explicit. Workers wait for driver wakeups or
+Queue ownership should always be explicit. Local mode rejects a second driver
+choice at startup. Workers wait for driver wakeups or
 the next known delayed or cron boundary, and shutdown aborts that wait. They do
 not poll on a framework interval. Between jobs, the continuous worker checks
 recovery, due cron slots, and delayed availability even while ready work remains.
