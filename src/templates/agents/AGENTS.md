@@ -195,8 +195,8 @@ lifecycle, and logger, then adds job-scoped trace, jobs, and progress.
 Keep job contracts in domain-local `*.jobs.js` files when the work belongs to
 one domain.
 
-For single-process apps, use `localQueue` and `queues.local: true`. Rebuild
-pending work from durable product rows after restart. Use `coalesceKey` and
+For single-process apps, use `localQueue` and `queues.local: true` as the only
+driver choice. Rebuild pending work from durable product rows after restart. Use `coalesceKey` and
 `jobs.cancelPending(job, key)` for wakeups that read current state.
 
 Redis is hot coordination: queue membership, leases, wakeups, attempts, delayed

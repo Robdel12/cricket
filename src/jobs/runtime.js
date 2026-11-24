@@ -360,6 +360,9 @@ function scheduleContext(runtime, {
 }
 
 async function createDriver(queues, jobList, clock) {
+  if (queues.local === true && (queues.driver || queues.redis || queues.test === true))
+    throw new Error('queues.local cannot be combined with queues.driver, queues.redis, or queues.test');
+
   if (queues.driver)
     return queues.driver;
 
@@ -468,7 +471,7 @@ function createJobsCapability({
  * @param {object} [options.ledger.db] - Knex database handle for ledger writes.
  * @param {string} [options.ledger.tableName='cricket_jobs'] - Ledger table name.
  * @param {object} [options.logger] - Logger used for best-effort ledger warnings.
- * @param {object} [options.queues] - Queue driver configuration, including `{ local: true }` for an in-process driver.
+ * @param {object} [options.queues] - Queue driver configuration, including `{ local: true }` for an in-process driver. Choose local mode by itself.
  * @returns {Promise<object>} Producer controls, driver, ledger, and jobs capability.
  */
 export async function createCricketJobs({
@@ -516,7 +519,7 @@ export async function createCricketJobs({
  * @param {object[]} [options.jobs] - Domain-owned jobs this worker should execute. Manual apps may register jobs directly.
  * @param {object} [options.ledger] - Job ledger options.
  * @param {string} [options.ledger.tableName='cricket_jobs'] - Ledger table name.
- * @param {object} [options.queues] - Queue driver configuration, including `{ local: true }` for an in-process driver.
+ * @param {object} [options.queues] - Queue driver configuration, including `{ local: true }` for an in-process driver. Choose local mode by itself.
  * @returns {Promise<object>} Worker controls, runtime, driver, and jobs capability.
  */
 export async function startCricketWorker(cricketApp, {
