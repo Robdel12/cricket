@@ -1,9 +1,9 @@
 <!-- Generated from source JSDoc. Run pnpm --filter cricket-docs generate --write-markdown. -->
 # JavaScript API
 
-Pick the import path you want to use. Each page lists the exports for that path, with their signatures and links to the source for this version.
+Every export, grouped by import path. Each page shows the signature and links to the source for this version.
 
-For examples you can build on, start with [Using Cricket](guide.md#your-first-route). To describe your own HTTP API, see [Generate OpenAPI](guide.md#generate-openapi).
+New to Cricket? The [guides](guide.md#your-first-route) are a friendlier place to start.
 
 ## @robdel12/cricket
 

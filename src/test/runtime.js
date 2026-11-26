@@ -104,25 +104,53 @@ function appWithTestLogger(app, testState) {
 /**
  * @guide testing Test your API
  *
- * Use `createTestRuntime(app)` from `@robdel12/cricket/test` to run the real HTTP stack. Make requests through its `api` client and check the status, response, and any saved rows. Call `cleanup()` when the test ends.
+ * The best test hits your API the way a client does. `createTestRuntime` starts your real app on a random port, so your tests run the same routes, rules, and database code as production.
  *
- * ```js
- * import assert from 'node:assert/strict';
- * import { test } from 'node:test';
- * import { createTestRuntime } from '@robdel12/cricket/test';
- * import { app } from './api.js';
+ * ## Write a test
  *
- * test('greets the caller', async t => {
- *   let { api, cleanup } = await createTestRuntime(app);
- *   t.after(cleanup);
+ * Here are the tests from the [example app](../examples/projects/):
  *
- *   let response = await api.get('/hello/Cricket');
- *   assert.equal(response.status, 200);
- *   assert.deepEqual(response.body, { message: 'Hey, Cricket!' });
- * });
+ * <!-- example examples/projects/api/domains/projects/behavior.test.js api/domains/projects/behavior.test.js -->
+ *
+ * The test database is in-memory SQLite, so each test starts fresh after running migrations. The `api` client takes `body`, `headers`, and `query`, and gives you back `status`, `headers`, and `body`.
+ *
+ * Run them with:
+ *
+ * ```sh
+ * pnpm exec cricket test
  * ```
  *
- * This test uses the app from [Your first route](guide.md#your-first-route). Run `pnpm exec cricket test`. Use the worker boundary to test jobs and a real test database for behavior that writes data.
+ * It finds `*.test.js` files under `api/`, `src/`, and `test/`, and sets `NODE_ENV=test` so your app picks its test database.
+ *
+ * ## What to check
+ *
+ * Check what a client would notice: status codes, response bodies, validation errors, who's allowed in, and rows that got saved. Don't mock Cricket. Mock only things you don't own, like a payment API or the clock.
+ *
+ * When you need to look under the hood, `testState` has the logs, traces, and timings for each request:
+ *
+ * ```js
+ * let { api, testState } = await createTestRuntime(app);
+ * let response = await api.get('/api/projects/launch-plan');
+ *
+ * testState.request(response.requestId);
+ * ```
+ *
+ * ## Test jobs
+ *
+ * Start a worker with the in-memory queue, then run the work yourself. No sleeping, no waiting.
+ *
+ * ```js
+ * let worker = await startCricketWorker(app, {
+ *   jobs: [generateReport],
+ *   queues: { test: true },
+ *   clock: { now: () => new Date('2026-06-19T09:16:00.000Z') }
+ * });
+ *
+ * await worker.jobs.enqueue(generateReport, { reportId: 'r1', accountId: 'a1' });
+ * await worker.drain();
+ * ```
+ *
+ * For scheduled jobs, set the clock, call `worker.schedules.tick()`, then `worker.drain()`.
  */
 /**
  * Create a Cricket runtime wired for test inspection.

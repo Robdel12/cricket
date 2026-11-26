@@ -34,7 +34,7 @@ tables, migrations, imports, queues, workers, health, and deployment.
 explicit dependencies, inspect output, OpenAPI output, and boundary tests make
 apps easier for humans and agents to change safely.
 
-**Guidance is a contract, not a changelog.** README, examples, and generated
+**Guidance is a contract, not a changelog.** Guides, examples, and generated
 agent skills should describe the current framework as one cohesive system.
 Rewrite surrounding guidance and remove obsolete instructions when contracts
 change instead of preserving the order implementation work happened.

@@ -76,7 +76,7 @@ obvious in every change.
   orientation, and commands.
 - The CLI-scaffolded agent guidance is documentation. When public framework
   contracts change, update the `cricket init agents` templates in
-  `src/templates/agents/` and the scaffold tests alongside `README.md`,
+  `src/templates/agents/` and the scaffold tests alongside the `@guide` docs,
   `vision.md`, and examples.
 - Treat LLM/agent readability as a first-class design concern: predictable
   filenames, predictable exports, small pure functions, explicit dependencies,
@@ -102,9 +102,14 @@ in the JavaScript, then regenerate `docs/guide.md` and `docs/api.md`.
 See [Working on the docs](docs/documentation.md) for the commands and release
 workflow.
 
-When changing framework behavior, update `README.md` for user-facing usage and
-`vision.md` for direction/tradeoffs. Keep docs candid about what Cricket
+When changing framework behavior, update the `@guide` block that covers it for
+user-facing usage and `vision.md` for direction/tradeoffs. Keep `README.md` a
+short front door that links to the guides. Keep docs candid about what Cricket
 provides and what remains app responsibility.
+
+Guides follow Robert's writing style: casual, conversational, plain language,
+short sentences, and no filler. Quote real code with `<!-- example path -->`
+instead of pasting it, so `test/examples.test.js` keeps it honest.
 
 Update examples when public contracts change. The examples are part of the API
 surface here, and stale examples will mislead the next real-app pass.

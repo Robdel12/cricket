@@ -255,17 +255,74 @@ async function listDomainFolders(rootPath) {
 /**
  * @guide domains Organize your app
  *
- * Start with `pnpm exec cricket init .`. It creates an app entry in `api/index.js`, the standard folders, and agent guidance in `AGENTS.md` and `.agents/skills/`. In an existing app, `pnpm exec cricket init agents .` adds the guidance on its own.
+ * Cricket apps share one layout. Once you've seen one, you can find your way around any of them, and so can your coding agent.
  *
- * Put features in `api/domains/`. A project domain might start with `http.routes.js`, `input.validations.js`, and `domain.service.js`. Cricket loads direct files by suffix inside each domain folder. Add models, serializers, rules, machines, or jobs when the feature needs them.
+ * ## Set up the folders
+ *
+ * Run `init` in your project.
  *
  * ```sh
- * pnpm exec cricket new domain project api/domains --with validations,service,routes,test
+ * pnpm exec cricket init .
+ * ```
+ *
+ * You'll get this layout:
+ *
+ * ```text
+ * api/
+ *   index.js       your app definition
+ *   domains/       features, one folder each
+ *   middleware/    request middleware, like reading the signed-in user
+ *   services/      shared helpers, like email or storage clients
+ *   workers/       background job entrypoints
+ *   migrations/    database changes
+ *   dev/           local-only tools
+ * ```
+ *
+ * `init` also writes `AGENTS.md` and a few skills under `.agents/skills/`, so coding agents follow the same rules. In an app that already has this layout, `pnpm exec cricket init agents .` adds only the agent guidance.
+ *
+ * ## Add a domain
+ *
+ * A domain is a folder of files that change together. Here's the projects domain from the [example app](../examples/projects/):
+ *
+ * ```text
+ * api/domains/projects/
+ *   schema.model.js         what a stored project looks like
+ *   input.validations.js    what callers can send
+ *   output.serializers.js   what the API sends back
+ *   domain.service.js       reads and writes
+ *   access.rules.js         who can do what
+ *   http.routes.js          the endpoints
+ *   behavior.test.js        tests through HTTP
+ * ```
+ *
+ * Each file has one job, and the suffix says what it is. Cricket loads files by suffix, so there's nothing to register. Start small and add files when the feature needs them. A domain can also have `*.normalizers.js` for outside data, `*.machine.js` for state, and `*.jobs.js` for background work.
+ *
+ * Let the CLI make the files for you:
+ *
+ * ```sh
+ * pnpm exec cricket new domain projects api/domains --with model,validations,serializers,service,rules,routes,test
+ * ```
+ *
+ * ## Point the app at your domains
+ *
+ * The app definition lives in `api/index.js`. Set `baseUrl` so relative paths like `./domains` and `./migrations` work no matter where you run from.
+ *
+ * <!-- example examples/projects/api/index.js api/index.js -->
+ *
+ * Services are named after the domain folder. The `projects` folder exports `createProjectsService`, and handlers get it as `services.projects`.
+ *
+ * ## Check your work
+ *
+ * ```sh
  * pnpm exec cricket check api/index.js
  * pnpm exec cricket inspect api/index.js
  * ```
  *
- * Use `check` to catch structure problems and `inspect` to see what the app loaded. For examples of the full folder layout and app setup, see [App shape in the README](../README.md#app-shape).
+ * `check` catches structure problems, like two domains with the same name. `inspect` shows everything Cricket loaded: domains, routes, rules, services, models, jobs, and machines.
+ *
+ * ## Moving an existing app over
+ *
+ * Got endpoints that don't fit in domains yet? Set `architecture: 'manual'` and pass `endpoints` directly while you migrate. `check` and `inspect` flag it as migration debt, and you can't mix it with `domains`, so the switch is one clean step when you're ready.
  */
 /**
  * Load Cricket domains from the standard folder structure.

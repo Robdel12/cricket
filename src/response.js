@@ -81,6 +81,75 @@ export function withResponseBody(response, body) {
 }
 
 /**
+ * @guide responses Send responses
+ *
+ * Most handlers just return the body. Cricket sends it as JSON with a 200 (or 201 for `created`). When you need control over the status, headers, or cookies, wrap the body with a response helper.
+ *
+ * ## Pick a status
+ *
+ * ```js
+ * import { created, ok, redirect, respond } from '@robdel12/cricket';
+ *
+ * return { project };                    // 200
+ * return ok({ project });                // 200, spelled out
+ * return created({ project });           // 201
+ * return respond(202, { queued: true }); // any status
+ * return redirect('/projects', 303);     // a redirect
+ * ```
+ *
+ * Only these helpers can change the status. A plain object with a `status` or `redirect` field is just a body, so your data can't accidentally turn into transport instructions.
+ *
+ * ## Add headers and cookies
+ *
+ * ```js
+ * import { ok, respond, withCookies, withHeaders } from '@robdel12/cricket';
+ *
+ * return withHeaders(respond(202, { queued: true }), { 'Retry-After': '5' });
+ *
+ * return withCookies(ok({ signedIn: true }), [{
+ *   name: 'session',
+ *   value: session.id,
+ *   options: { httpOnly: true, secure: true }
+ * }]);
+ * ```
+ *
+ * ## Describe more than one status
+ *
+ * Use `responses` when a route can answer with different shapes. `response` is shorthand for the default success status.
+ *
+ * ```js
+ * let readReport = defineEndpoint({
+ *   method: 'get',
+ *   path: '/reports/:id',
+ *   responses: {
+ *     200: z.object({ report: Report.public }),
+ *     202: z.object({ status: z.literal('rendering') })
+ *   },
+ *   handler: ({ report }) => report.ready
+ *     ? { report: serializeReport(report) }
+ *     : respond(202, { status: 'rendering' })
+ * });
+ * ```
+ *
+ * Every response gets checked against its status. If the body doesn't match, the client gets a 500 and your logs get the details.
+ *
+ * ## Report an error you handled
+ *
+ * Sometimes you catch an error and send a friendly response instead. Attach the original with `withError` so your error reporting still sees it.
+ *
+ * <!-- example examples/error-reporting.js -->
+ *
+ * The body stays friendly, and `onError` gets the real exception. See [Follow a request](guide.md#follow-a-request) for reporting.
+ *
+ * ## Stream a file
+ *
+ * Return a Node stream and clean it up with `withResponseCleanup`. Set `Content-Length` when you know the size, and Cricket checks the stream actually sends that many bytes.
+ *
+ * <!-- example examples/known-length-stream.js -->
+ *
+ * Cricket handles backpressure, and it runs your cleanup even if the client disconnects halfway.
+ */
+/**
  * Create an explicit Cricket HTTP response with any valid final status.
  *
  * @param {number} status

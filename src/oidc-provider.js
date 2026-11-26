@@ -255,6 +255,50 @@ function createAuthorizationApi(provider, { origin, resource, csrfKey, grantSeco
 }
 
 /**
+ * @guide oidc Host OAuth and OIDC
+ *
+ * Need your API to be an OAuth or OpenID Connect provider, like for an MCP server? Cricket wraps the battle-tested [`oidc-provider`](https://github.com/panva/node-oidc-provider) package, and your app keeps control of accounts, consent, and storage.
+ *
+ * Install the optional packages first:
+ *
+ * ```sh
+ * pnpm add oidc-provider koa koa-mount
+ * ```
+ *
+ * ## Create the host in setup
+ *
+ * `createOidcProviderHost` builds the provider. Return its `protocolHost` from setup so Cricket can route to it.
+ *
+ * <!-- example examples/oidc-provider-host.js -->
+ *
+ * Then bind your policy hooks from the app's `services` function, once your domain services exist:
+ *
+ * ```js
+ * export let app = defineCricketApp({
+ *   baseUrl: import.meta.url,
+ *   domains: './domains',
+ *   setup: ({ db }) => createExampleOidcSetup({ adapter: createOAuthAdapter({ db }), ...oauthConfig }),
+ *   services({ dependencies, services }) {
+ *     bindExampleOidcPolicy(dependencies.oidcHost, services.oauth);
+ *     return services;
+ *   }
+ * });
+ * ```
+ *
+ * ## What your hooks decide
+ *
+ * The hooks get plain, validated facts. They never see Koa contexts or raw requests.
+ *
+ * - `withRequest(facts, run)` is your transaction. Await `run()` inside it so provider reads and your writes commit together.
+ * - `prepareInteraction`, `consentDetails`, and `decideConsent` drive your consent screen.
+ * - `resolveAccount` checks the account and grant every time a token is used.
+ * - `authorizeRequest` and `authorizeRevocation` can reject or rate-limit before the provider does any work.
+ *
+ * ## What stays with the app
+ *
+ * Cricket handles the protocol and its routes. You own client registration, storage, sessions, scopes, and the consent UI. The provider uses the same [trusted proxy](guide.md#serve-http) settings as the rest of your app, so HTTPS redirects and secure cookies work behind a proxy.
+ */
+/**
  * Create a Cricket-owned OIDC provider host. Provider/Koa/Node objects stay
  * inside the integration; apps provide only protocol policy and plain facts.
  */

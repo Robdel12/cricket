@@ -176,11 +176,70 @@ export function normalizeLogger(logger, context = {}) {
 /**
  * @guide observability Follow a request
  *
- * Cricket passes a logger to the app, routes, and workers. Use structured fields for details you want to filter later. Add trace spans around the service calls and external requests you need to time.
+ * When something goes wrong, you want to see what happened. Cricket logs every request with an ID, times the work you care about, and reports errors where you tell it to.
  *
- * Pipe your JSON logs into `cricket trace <requestId>` to see one request's timeline. Configure `onError` if your app sends reports to an external service. Keep secrets out of logs and error reports.
+ * ## Logging
  *
- * See [logging and tracing](../README.md#logging-and-tracing) for configuration or [the shutdown example](../examples/request-pause.js) for draining requests and pausing traffic.
+ * Set up the logger on the app. Pretty output is great locally, JSON is what your log collector wants.
+ *
+ * ```js
+ * export let app = defineCricketApp({
+ *   domains: './domains',
+ *   logger: {
+ *     service: 'projects-api',
+ *     level: process.env.LOG_LEVEL ?? 'info',
+ *     format: process.env.NODE_ENV === 'production' ? 'json' : 'pretty'
+ *   }
+ * });
+ * ```
+ *
+ * Setup, services, rules, handlers, and jobs all get the same `logger`. Log events with structured fields so you can filter on them later:
+ *
+ * ```js
+ * logger.info('project.created', { projectId: project.id });
+ * ```
+ *
+ * Cricket redacts fields that look like secrets, like `authorization`, `cookie`, `password`, and `token`.
+ *
+ * ## Tracing
+ *
+ * Wrap the slow or important bits in a span:
+ *
+ * ```js
+ * let project = await trace.span('projects.find', { slug }, () => services.projects.findBySlug(slug));
+ * ```
+ *
+ * Then pull one request's timeline out of your JSON logs:
+ *
+ * ```sh
+ * docker logs api | pnpm exec cricket trace req_123
+ * ```
+ *
+ * ## Reporting errors
+ *
+ * Give the app an `onError` hook to send failures to your error tracker. It gets the original exception plus the request, response, matched route, and logger.
+ *
+ * Using Sentry? There's an adapter:
+ *
+ * ```js
+ * import { sentryErrorHandler } from '@robdel12/cricket/sentry';
+ * import * as Sentry from '@sentry/node';
+ *
+ * export let app = defineCricketApp({
+ *   domains: './domains',
+ *   onError: sentryErrorHandler(Sentry),
+ *   setup() {
+ *     Sentry.init({ dsn: process.env.SENTRY_DSN });
+ *     return { cleanup: () => Sentry.flush(2000) };
+ *   }
+ * });
+ * ```
+ *
+ * It skips 4xx errors and adds the method, status, route, and request ID. It never sends headers, cookies, query strings, or bodies.
+ *
+ * ## Health checks
+ *
+ * Your app can read `lifecycle` to see if Cricket is starting, ready, or shutting down. But whether your product is healthy is your call, so write your own health route that checks what matters, like the database.
  */
 /**
  * Create Cricket's small structured logger.

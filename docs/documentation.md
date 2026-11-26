@@ -1,8 +1,10 @@
 # Working on the docs
 
-Edit guides in the JavaScript JSDoc next to the code they explain. Add a new guide with `@guide slug Page title` and put its slug in `site/navigation.js`. Use regular JSDoc on public exports for the JavaScript API reference. The site reads the export map in `package.json`, shows signatures from the implementation, and links to the exact source commit.
+The docs live in the source, right next to the code they explain. Each guide is a `@guide slug Page title` comment block, and the JavaScript API pages come from the JSDoc on each export. Add a new guide by writing its block and adding the slug to `site/navigation.js`.
 
-The quickstart pulls in [the runnable example](../examples/docs-start.js). The CLI page runs Cricket to get the usage text. Use [the project vision](../vision.md) for design decisions.
+Quote real code with `<!-- example examples/some-file.js -->` instead of pasting it. The site shows the file with its name on a tab, and `test/examples.test.js` makes sure it still works. The quickstart pulls in [examples/docs-start.js](../examples/docs-start.js), and most guides quote the [projects example app](../examples/projects/).
+
+Write the way you'd explain it to a friend: plain words, short sentences, no filler. The [vision](../vision.md) covers why Cricket works the way it does.
 
 ```sh
 pnpm install
@@ -11,23 +13,23 @@ pnpm docs:build
 pnpm docs:test
 ```
 
-After changing source docs, refresh the GitHub copies and commit them with the source.
+After you change a guide, refresh the GitHub copies and commit them with the source:
 
 ```sh
 pnpm --filter cricket-docs generate --write-markdown
 ```
 
-Restart the dev server after editing source comments. Generated site files and build output are ignored.
+Restart the dev server after editing source comments. If code blocks look unstyled after changing the code theme, delete `site/.astro` first.
 
-## Version and publish
+## Versions and publishing
 
-Next builds from `main`. A published GitHub release builds from its exact tag, which must match the version in `package.json`. The release gets a `cricket-docs-<tag>.tar.gz` asset with its HTML, search index, and commit metadata. Keep that asset with the release. Cut a new version to change published docs.
+Next builds from `main`. A published GitHub release builds from its exact tag, which has to match the version in `package.json`. The release gets a `cricket-docs-<tag>.tar.gz` asset with its HTML, search index, and commit info. Keep that asset with the release. To change published docs, cut a new version.
 
-The Docs workflow downloads those archives and puts them alongside Next. The homepage opens the latest stable release, or Next until the first stable release is ready. Prereleases are in the version picker. Each version has its own search index, and switching versions takes you to that version's homepage.
+The Docs workflow downloads those archives and puts them next to Next. The homepage opens the latest stable release, or Next until there is one. Prereleases show up in the version picker. Each version has its own search, and switching versions takes you to that version's homepage.
 
-Set GitHub Pages to **GitHub Actions** and set the repository variable `CRICKET_DOCS_DEPLOY` to `true` to turn on deploys. The workflow uploads a site artifact on `main` even before deploys are enabled.
+To turn on deploys, set GitHub Pages to **GitHub Actions** and set the repository variable `CRICKET_DOCS_DEPLOY` to `true`. The workflow uploads a site artifact on `main` even before that.
 
-The default base path is `/cricket/`. To serve the site elsewhere, set the repository variable `CRICKET_DOCS_PATH` before the first release. Use the same path for local builds when testing that setup. Local builds go to `site/dist`, and the assembled site goes to `site/published`.
+The site lives at `/cricket/` by default. To serve it somewhere else, set the repository variable `CRICKET_DOCS_PATH` before the first release, and use the same path for local builds when you test it. Local builds go to `site/dist`, and the assembled site goes to `site/published`.
 
 ## Check search and version switching
 

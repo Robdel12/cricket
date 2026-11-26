@@ -478,15 +478,41 @@ function validateAuthRequirements(requirements, schemes) {
 /**
  * @guide openapi Generate OpenAPI
  *
- * Run the docs command against the app module you already serve. It reads the registered endpoint contracts without starting the server or running setup.
+ * Your route contracts already describe your API, so Cricket can write the OpenAPI file for you. No separate spec to keep in sync!
  *
  * ```sh
  * pnpm exec cricket docs api/index.js --out openapi.json
  * ```
  *
- * Add endpoint summaries, response types, request headers, and auth metadata when they help clients. Keep access checks in rules. Review which routes the generated file includes before sharing it.
+ * This reads your app without starting the server or running `setup`. You get an OpenAPI 3.1 file with every route, schema, and status.
  *
- * See [the public contracts example](../examples/public-contracts.js) and the [OpenAPI options in the README](../README.md#document-your-http-api).
+ * ## Add the details clients need
+ *
+ * Summaries, auth, headers, and examples all live on the route:
+ *
+ * <!-- example examples/public-contracts.js -->
+ *
+ * A few things to know:
+ *
+ * - `authMethods` on the app names your auth schemes. `auth` on a route says which ones it takes. This only documents auth. Your rules still enforce it.
+ * - `headers` parses the request headers you list and puts them in `input.headers`. Use lowercase names.
+ * - When a response `schema` and `serializer` are both set, the docs show the serializer's output. Internal fields like `internalNote` above stay out of the docs and out of the response.
+ *
+ * ## Custom types
+ *
+ * If Cricket can't describe a type, like a `Buffer` or a custom transform, generation fails rather than guessing. Describe it with `jsonSchema` metadata:
+ *
+ * ```js
+ * let BinaryFile = z.instanceof(Buffer).meta({
+ *   jsonSchema: { type: 'string', format: 'binary' }
+ * });
+ * ```
+ *
+ * That metadata only changes the docs, so check it against a real response.
+ *
+ * ## Review before you publish
+ *
+ * The file includes every route you registered. Read through it before you share it, especially examples, which can still show private data if you put it there.
  */
 /**
  * Generates an OpenAPI 3.1 document from Cricket endpoint and model contracts.

@@ -1329,15 +1329,120 @@ function createRuntimeHandler({
 /**
  * @guide http Serve HTTP
  *
- * Export a `defineCricketApp` contract from your app entry and pass it to `startCricketApp`. Set `main: import.meta.url` so CLI commands can import the app without opening a listener. App setup runs when the runtime starts and can return shared dependencies, services, and cleanup.
+ * Cricket ships its own HTTP runtime, so there's no Express or Koa to configure. Export your app from `api/index.js` and start it with `startCricketApp`.
  *
- * Most handlers return a body. Use `created(body)` for a 201, or `respond(status, body)` when the status should be explicit. For a route that already uses web-standard `Request` and `Response`, use a `fetch` handler and declare its status codes and media types in `fetchResponses`.
+ * ```js
+ * await startCricketApp(app, {
+ *   port: process.env.PORT ?? 3000,
+ *   main: import.meta.url
+ * });
+ * ```
  *
- * ## Choose the request contract
+ * `main: import.meta.url` starts the server only when you run that file directly. Tests and CLI commands import `app` without opening a port. Once it's listening, the result includes `origin` with the real address, handy when you pass `port: 0`.
  *
- * Turn on `multipart` for uploads or `rawBody` when you need the original bytes. Configure trusted proxies when Cricket runs behind a proxy you control. If different clients need different versions of the same route, use `defineApiVersions` and declare the contracts for each version.
+ * ## Set things up once
  *
- * The README has examples for [Fetch handlers](../README.md#fetch-endpoints), [API versions](../README.md#endpoint-api-versions), [multipart requests](../README.md#multipart-requests), [trusted proxies](../README.md#configure-trusted-proxies), and [OIDC hosting](../README.md#host-oidc-inside-cricket).
+ * `setup` runs when the runtime starts. Use it for clients you want to share, and return a `cleanup` to close them.
+ *
+ * ```js
+ * export let app = defineCricketApp({
+ *   baseUrl: import.meta.url,
+ *   domains: './domains',
+ *   async setup({ db, logger }) {
+ *     let mailer = createMailer(process.env.SMTP_URL);
+ *
+ *     return {
+ *       dependencies: { mailer },
+ *       cleanup: () => mailer.close()
+ *     };
+ *   }
+ * });
+ * ```
+ *
+ * Domain services get `dependencies` when they're created, so `createProjectsService({ db, mailer })` just works. Setup doesn't run when the CLI imports your app, so `inspect` and `docs` never connect to anything.
+ *
+ * ## Add middleware
+ *
+ * Middleware wraps every request. It gets the request context and a `next` function. Here's the one from the [example app](../examples/projects/):
+ *
+ * <!-- example examples/projects/api/middleware/read-user.js api/middleware/read-user.js -->
+ *
+ * Use middleware for edge work like reading credentials, CORS, and request IDs. Product decisions belong in [rules](guide.md#define-route-contracts).
+ *
+ * ## Shared headers and early answers
+ *
+ * `responseHeaders` adds default headers to every response. `requestPolicy` can answer a request before middleware runs, which is great for CORS preflight. Return nothing to carry on.
+ *
+ * ```js
+ * let trustedOrigins = new Set(['https://console.example.com']);
+ *
+ * export let app = defineCricketApp({
+ *   domains: './domains',
+ *   responseHeaders() {
+ *     return { 'X-Content-Type-Options': 'nosniff' };
+ *   },
+ *   requestPolicy({ request }) {
+ *     let origin = request.headers.origin;
+ *     if (request.method === 'OPTIONS' && trustedOrigins.has(origin))
+ *       return withHeaders(respond(204), {
+ *         'Access-Control-Allow-Origin': origin,
+ *         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+ *         Vary: 'Origin'
+ *       });
+ *   }
+ * });
+ * ```
+ *
+ * Headers you set on a response win over these defaults.
+ *
+ * ## Accept uploads
+ *
+ * Turn on `multipart` and set limits that fit the upload. Files stream to temp files and show up as `request.files`. Cricket deletes them once your handler finishes.
+ *
+ * ```js
+ * let upload = defineEndpoint({
+ *   method: 'post',
+ *   path: '/uploads',
+ *   beforeBodyRules: [requireUser],
+ *   multipart: {
+ *     maxBytes: 50 * 1024 * 1024,
+ *     maxFiles: 10,
+ *     maxFileBytes: 50 * 1024 * 1024,
+ *     maxFields: 50
+ *   },
+ *   handler({ request }) {
+ *     return created({
+ *       files: request.files.map(file => ({ name: file.originalName, size: file.size }))
+ *     });
+ *   }
+ * });
+ * ```
+ *
+ * `beforeBodyRules` run before Cricket reads the body. Use them for auth, so a stranger can't make you store a 50 MB upload. When a limit comes from config, set it on the app with `requestBodyLimits`, keyed by the route's operation ID. Need the exact bytes, like for webhook signatures? Use `rawBody` instead.
+ *
+ * ## Use a Fetch handler
+ *
+ * Got a library that already speaks web-standard `Request` and `Response`? Give the route a `fetch` function. Cricket still matches the route and runs rules, then hands you a real `Request`.
+ *
+ * <!-- example examples/fetch-endpoint.js -->
+ *
+ * Fetch routes declare their statuses and content types in `fetchResponses`. Cricket checks those without buffering the body, so streaming just works.
+ *
+ * ## Run behind a proxy
+ *
+ * Cricket ignores `X-Forwarded-*` headers by default. If a proxy you control sits in front of the app, list its addresses.
+ *
+ * <!-- example examples/trusted-proxy.js -->
+ *
+ * Only listed peers can set the client IP, host, or protocol. Use your real proxy addresses, and have the proxy overwrite forwarded headers rather than pass them through.
+ *
+ * ## Shut down cleanly
+ *
+ * Call `stop(signal)` on the started server. Cricket stops taking new requests, runs your `onShutdown` hook, waits for in-flight requests and streams to finish, then runs `cleanup` and closes the database.
+ *
+ * Need to pause traffic for a moment, like while you reset state? `runtime.requests.pause()` holds new requests with a 503 until you resume.
+ *
+ * <!-- example examples/request-pause.js -->
  */
 /**
  * Create a Cricket runtime from an app contract.

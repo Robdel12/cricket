@@ -79,11 +79,51 @@ function resultFor(machine, [snapshot, effects]) {
 /**
  * @guide machines Model domain state
  *
- * Use a machine when a product event can do different things depending on the current state. A draft report can be submitted, and the same report can be marked published when a job succeeds.
+ * Some features have real states. A report starts as a draft, gets submitted, and later gets published. What an event can do depends on where the report is right now.
  *
- * Put the chart in a `*.machine.js` file. Pass a native XState v6 chart to `defineMachine` and give it an ID, a version, and schemas for its public events. Your service loads a snapshot, calls `transition(snapshot, event)`, and saves the result in a transaction. Store a checkpoint with `persist` and read it back with `restore` if the chart needs more than the state you already keep in a row.
+ * That's a state machine, and Cricket uses [XState v6](https://stately.ai/docs) for them. You don't need to install it, `createMachine` comes with Cricket.
  *
- * Keep guards and transition callbacks pure. Save any work that has to survive a crash in the same transaction, then let a job deliver it. The [report publication example](../examples/report-publication.js) shows how a chart emits a request for work.
+ * ## Define the machine
+ *
+ * Put it in a `*.machine.js` file in the domain. Give it an `id`, a `version`, and a schema for each event.
+ *
+ * <!-- example examples/report-publication.js -->
+ *
+ * Submitting a draft moves it to `publishing` and emits a `report.publicationRequested` event. Something else, usually a job, does the actual publishing.
+ *
+ * ## Run an event
+ *
+ * Machines don't run in the background or hold state in memory. Your service loads the current state, asks the machine what happens, and saves the result.
+ *
+ * ```js
+ * let snapshot = reportPublication.machine.resolveState({
+ *   value: report.status,
+ *   context: { title: report.title }
+ * });
+ *
+ * let result = await reportPublication.transition(snapshot, {
+ *   type: 'report.submitted',
+ *   title: input.title
+ * });
+ *
+ * if (result.kind === 'unhandled') return badRequest('This report cannot be submitted');
+ * await reports.save(result.snapshot, result.emitted);
+ * ```
+ *
+ * `transition` checks the event against its schema first. Then you get one of two results:
+ *
+ * - `applied` means the event did something. Save `snapshot` and act on `emitted`.
+ * - `unhandled` means the event was valid, but the current state doesn't accept it.
+ *
+ * ## Keep it safe
+ *
+ * - Keep guards and transitions pure. No fetching or writing inside the chart.
+ * - Save the new state and any follow-up work in the same transaction, then let a [job](guide.md#run-background-jobs) do the work. That way a crash can't lose it.
+ * - Lock the row or use a conditional write when two events could land at once.
+ *
+ * If your state needs more than a status column, `persist(snapshot)` gives you a JSON checkpoint and `restore(checkpoint)` reads it back. When you change a stored chart, bump its `version` and migrate old checkpoints with `machineVersions`.
+ *
+ * `pnpm exec cricket new domain reports api/domains --with machine,service` scaffolds the files, and `cricket inspect` lists each machine's states and events.
  */
 /**
  * Define a domain machine backed by a native XState v6 chart.

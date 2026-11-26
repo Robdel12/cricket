@@ -112,9 +112,15 @@ function apiVersionSelections(args) {
 /**
  * @guide cli Cricket CLI
  *
- * Run these commands with `pnpm exec cricket` from your app. Run `cricket` by itself to see this usage text.
+ * Run these from your app with `pnpm exec cricket`. Run `cricket` on its own to see this list.
  *
- * `init` sets up the app folders and agent guidance. `check` looks for structure problems, `inspect` lists what Cricket loaded, and `docs` writes OpenAPI from the same app definition.
+ * - `init` sets up the folders and agent guidance.
+ * - `new domain` scaffolds a domain with only the files you pick.
+ * - `check` looks for structure problems. `inspect` shows everything Cricket loaded.
+ * - `docs` writes OpenAPI from your app.
+ * - `migrate` runs your Knex migrations.
+ * - `test` runs your tests with `NODE_ENV=test`.
+ * - `trace` pulls one request out of your JSON logs.
  */
 function usage() {
   return `Usage:
