@@ -7,7 +7,7 @@ import {
   withHeaders,
   withResponseCleanup,
   z
-} from '../src/index.js';
+} from '@robdel12/cricket';
 
 let content = Buffer.from('A file served through Cricket.\n');
 export let app = defineCricketApp({

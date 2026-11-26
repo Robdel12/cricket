@@ -1,6 +1,6 @@
 import {
   defineCricketApp, defineEndpoint, defineRule, defineSerializer, ok, unauthenticated, withHeaders, z
-} from '../src/index.js';
+} from '@robdel12/cricket';
 
 let requireUser = defineRule('report.requireUser', ({ user }) => {
   if (!user) throw unauthenticated('Sign in to read reports');
@@ -35,8 +35,7 @@ let showReport = defineEndpoint({
   })
 });
 
-// Resolve user credentials in middleware or request context.
-// The rule above checks access; auth metadata only documents it.
+// `auth` only documents the scheme. The rule above is what checks access.
 export let app = defineCricketApp({
   name: 'Public contract example',
   version: '1.0.0',

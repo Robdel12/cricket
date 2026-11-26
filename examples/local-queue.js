@@ -1,4 +1,4 @@
-import { defineCricketApp, defineJob, localQueue, startCricketWorker, z } from '../src/index.js';
+import { defineCricketApp, defineJob, localQueue, startCricketWorker, z } from '@robdel12/cricket';
 
 let refreshInbox = defineJob({
   name: 'inbox.refresh',

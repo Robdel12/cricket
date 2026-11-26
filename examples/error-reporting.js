@@ -5,7 +5,7 @@ import {
   startCricketApp,
   withError,
   z
-} from '../src/index.js';
+} from '@robdel12/cricket';
 
 export let app = defineCricketApp({
   name: 'Error reporting example',
@@ -23,7 +23,7 @@ export let app = defineCricketApp({
     })]
   }],
   onError(error, { logger, request, response, route, handled }) {
-    // Replace this callback with sentryErrorHandler(Sentry) for Sentry reporting.
+    // Using Sentry? Swap this for sentryErrorHandler(Sentry).
     logger.error('provider.failure', {
       name: error.name,
       requestId: request?.id,

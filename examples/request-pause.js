@@ -1,5 +1,5 @@
-import { defineCricketApp, defineEndpoint } from '../src/index.js';
-import { createTestRuntime } from '../src/test/index.js';
+import { defineCricketApp, defineEndpoint } from '@robdel12/cricket';
+import { createTestRuntime } from '@robdel12/cricket/test';
 
 let state = { message: 'Before maintenance' };
 let app = defineCricketApp({

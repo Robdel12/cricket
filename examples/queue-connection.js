@@ -1,4 +1,4 @@
-import { createCricketJobs } from '../src/jobs/index.js';
+import { createCricketJobs } from '@robdel12/cricket/jobs';
 
 let producer = await createCricketJobs({
   queues: {
@@ -7,8 +7,8 @@ let producer = await createCricketJobs({
 });
 
 try {
-  // A command-transport fact for app-owned health checks. Worker progress,
-  // blocking waits, ledger state, and capacity need their own app checks.
+  // This only tells you Redis answered a PING. Your health check still
+  // decides what "healthy" means, like whether workers are making progress.
   console.log(await producer.driver.checkConnection());
 } finally {
   await producer.cleanup();

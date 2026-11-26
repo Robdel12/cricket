@@ -24,7 +24,7 @@ let LegacySession = z.object({
 let normalizeLegacySession = defineNormalizer({
   name: 'session.create.2025-11-15',
   source: LegacySessionInput,
-  // Reuse the endpoint schema so normalization enforces the current contract.
+  // Reusing the route's body schema means old requests get the same checks.
   output: CurrentSessionInput,
   normalize(value) {
     return {
@@ -36,7 +36,7 @@ let normalizeLegacySession = defineNormalizer({
 let serializeLegacySession = defineSerializer({
   name: 'session.2025-11-15',
   output: LegacySession,
-  // value has already passed CurrentSession, including public field stripping.
+  // By now the value already passed the current response schema.
   serialize(value) {
     return {
       session_id: value.id,
