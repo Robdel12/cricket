@@ -398,8 +398,10 @@ export async function resolveCricketApp(app, {
   baseUrl
 } = {}) {
   let definedApp = definedAppFor(app);
+  // Resolve the base once so domains, migrations, and anything else relative agree.
+  let appBaseUrl = definedApp.baseUrl ?? baseUrl;
   let domains = await loadDomains(definedApp.domains, {
-    baseUrl: definedApp.baseUrl ?? baseUrl
+    baseUrl: appBaseUrl
   });
   domains = [...domains, ...definedApp.plugins.flatMap(plugin => plugin.domains)];
   validateResolvedDomains(domains);
@@ -415,6 +417,7 @@ export async function resolveCricketApp(app, {
 
   return freezeAppContract({
     ...definedApp,
+    ...(appBaseUrl === undefined ? {} : { baseUrl: appBaseUrl }),
     domains,
     endpoints,
     jobs: hasExplicitJobs ? definedApp.jobs : collectJobs(domains),

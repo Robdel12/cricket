@@ -36,7 +36,7 @@ export async function runMigrationCommand({
 }) {
   let definition = await loadAppDefinition(appModule);
   let config = knexConfigForDatabase(requireDatabase(definition.app), {
-    baseUrl: definition.moduleUrl,
+    baseUrl: definition.app.baseUrl ?? definition.moduleUrl,
     environment
   });
   let migrationsDirectory = config.migrations.directory;

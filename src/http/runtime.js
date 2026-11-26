@@ -1381,7 +1381,7 @@ export async function createCricketRuntime(cricketApp, {
   });
   let db = appContract.database
     ? createDatabaseConnection(appContract.database, {
-      baseUrl
+      baseUrl: appContract.baseUrl
     })
     : undefined;
   let setup;
