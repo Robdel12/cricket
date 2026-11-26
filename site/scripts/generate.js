@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { guideOrder } from '../navigation.js';
-import { settings } from './settings.js';
+import { installSource, settings } from './settings.js';
 import { publicApi, sourceGuides } from './source.js';
 
 let exec = promisify(execFile);
@@ -83,7 +83,8 @@ export async function generate({ base, commit, version }) {
     title: overview.title,
     template: 'splash',
     hero: {
-      tagline: 'Build a Node API with explicit contracts, thin routes, and plain JavaScript.',
+      title: 'Tiny contracts for sturdy Node\u00a0APIs.',
+      tagline: 'Cricket checks what comes into each route and what goes out. Everything in between is plain JavaScript: objects in, objects out.',
       actions: [
         { text: 'Build your first route', link: base + 'guides/getting-started/', variant: 'primary' },
         { text: 'Browse the API', link: base + 'api/', variant: 'secondary' }
@@ -93,17 +94,20 @@ export async function generate({ base, commit, version }) {
   await page('404', { title: 'Page not found', pagefind: false },
     `Start at the [Cricket docs homepage](${base}) or use search to find what you need.`);
 
-  let example = code('js', await read('examples/docs-start.js'));
-  let installFrom = 'github:Robdel12/cricket';
+  // Guides quote real, tested files with <!-- example path [tab title] -->.
+  let includePattern = /<!-- example (\S+)(?: (\S+))? -->/g;
+  let includePaths = new Set([...guides.values()].flatMap(({ body }) => [...body.matchAll(includePattern)].map(match => match[1])));
+  let examples = new Map(await Promise.all([...includePaths].map(async path => [path, await read(path)])));
+  let exampleBlock = (path, title = path) => code(`${path.split('.').at(-1)} title="${title}"`, examples.get(path));
   let guideBody = (body, source) => body
     .replace('<!-- quickstart install -->', () => code('sh', `pnpm init --init-type module\npnpm add ${source}`))
-    .replace('<!-- quickstart example -->', () => example);
+    .replace(includePattern, (_, path, title) => exampleBlock(path, title));
   let portableGuide = `# Using Cricket\n\n${overview.body}\n`;
   for (let key of guideOrder) {
     let { title, body } = guides.get(key);
-    let markdownBody = guideBody(body, installFrom).replace(/^(#{2,5}) /gm, '#$1 ');
+    let markdownBody = guideBody(body, installSource('next')).replace(/^(#{2,5}) /gm, '#$1 ');
     portableGuide += `\n## ${title}\n\n${markdownBody}\n`;
-    let siteBody = guideBody(body, version === 'next' ? installFrom : `${installFrom}#${version}`);
+    let siteBody = guideBody(body, installSource(version));
     await page(`guides/${key}`, { title }, siteLinks(siteBody));
   }
 

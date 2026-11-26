@@ -4,7 +4,8 @@ function guides(label, items) {
 
 export let guideNavigation = [
   { label: 'Start here', items: [{ label: 'Cricket', slug: '' }, { slug: 'guides/getting-started' }] },
-  guides('Build an API', ['domains', 'contracts', 'http', 'database', 'plugins', 'openapi']),
+  guides('Build an API', ['domains', 'contracts', 'responses', 'http', 'database']),
+  guides('Grow your API', ['versions', 'openapi', 'plugins', 'oidc']),
   guides('Run your app', ['machines', 'jobs', 'observability', 'testing'])
 ];
 

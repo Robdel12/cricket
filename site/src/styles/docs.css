@@ -1,28 +1,198 @@
+@import '@fontsource-variable/atkinson-hyperlegible-next';
+@import '@fontsource-variable/atkinson-hyperlegible-mono';
+
+/*
+ * Cricket brand tokens.
+ * Night meadow by default: blue-black dusk, grass green for links and the
+ * pass state, cricket-wing amber for marks and the rejection state.
+ * Atkinson Hyperlegible Next for reading and display, its Mono sibling for
+ * code: one family, built so I, l, 1, 0, and O never get confused.
+ */
 :root {
-  --sl-color-accent-low: #15372c;
-  --sl-color-accent: #76d8ad;
-  --sl-color-accent-high: #c7f3df;
-  --sl-content-width: 47rem;
+  --sl-font: 'Atkinson Hyperlegible Next Variable';
+  --sl-font-mono: 'Atkinson Hyperlegible Mono Variable';
+  --sl-content-width: 46rem;
+  --sl-line-height: 1.7;
+  --sl-text-h1: clamp(2.25rem, 1.8rem + 1.6vw, 3rem);
+  --sl-text-h2: 1.75rem;
+  --sl-text-h3: 1.35rem;
+  --sl-text-h4: 1.125rem;
+
+  --cr-amber: #f2bd4b;
+  --cr-ink: var(--sl-color-white);
+
+  --sl-color-white: #eef2f6;
+  --sl-color-gray-1: #dbe1ea;
+  --sl-color-gray-2: #b9c3d1;
+  --sl-color-gray-3: #8794a8;
+  --sl-color-gray-4: #5b687c;
+  --sl-color-gray-5: #313e52;
+  --sl-color-gray-6: #1a2435;
+  --sl-color-black: #0e1522;
+
+  --sl-color-accent-low: #163626;
+  --sl-color-accent: #84d39b;
+  --sl-color-accent-high: #c8efd4;
+
+  --sl-color-bg-nav: var(--sl-color-bg);
+  --sl-color-bg-sidebar: var(--sl-color-bg);
+  --sl-color-bg-inline-code: #1d2839;
+  --sl-color-hairline: #1d2839;
+  --sl-color-hairline-light: #2a3749;
+  --sl-color-text-accent: #9ee0b1;
+
+  /*
+   * The contract panel and code blocks share one dark surface in both themes,
+   * so these colors stay fixed instead of following the light theme.
+   */
+  --cr-panel: #141d2b;
+  --cr-panel-raised: #1a2537;
+  --cr-panel-edge: #26344a;
+  --cr-panel-text: #c6cfdb;
+  --cr-panel-strong: #f4f7fa;
+  --cr-panel-muted: #8b98ac;
+  --cr-pass: #84d39b;
+  --cr-pass-bg: rgb(132 211 155 / .09);
+  --cr-fail-bg: rgb(242 189 75 / .1);
+  --cr-syn-keyword: #f2bd4b;
+  --cr-syn-fn: #9ee0b1;
+  --cr-syn-string: #f0a5a0;
+  --cr-syn-number: #a7c4ff;
 }
 
 :root[data-theme='light'] {
-  --sl-color-accent-low: #ddf4e8;
-  --sl-color-accent: #146747;
-  --sl-color-accent-high: #123e2e;
+  --cr-amber: #b57a00;
+
+  --sl-color-white: #141d2b;
+  --sl-color-gray-1: #232e3e;
+  --sl-color-gray-2: #424e60;
+  --sl-color-gray-3: #677387;
+  --sl-color-gray-4: #97a1b0;
+  --sl-color-gray-5: #cfd5dc;
+  --sl-color-gray-6: #e7ebe9;
+  --sl-color-gray-7: #f0f3f1;
+  --sl-color-black: #f7f9f7;
+
+  --sl-color-accent-low: #d9efe0;
+  --sl-color-accent: #1d7444;
+  --sl-color-accent-high: #124a2c;
+
+  --sl-color-bg-inline-code: #e6ece7;
+  --sl-color-hairline: #e3e8e4;
+  --sl-color-hairline-light: #d3dad5;
+  --sl-color-text: #2d3848;
+  --sl-color-text-accent: #1a6b3e;
 }
 
-.hero h1 {
-  letter-spacing: -.055em;
+::selection { background: color-mix(in srgb, var(--cr-amber) 35%, transparent); }
+
+body {
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
 }
 
-.hero .tagline {
-  max-width: 32rem;
+:focus-visible { outline: 2px solid var(--cr-amber); outline-offset: 2px; }
+
+/* Header */
+.header { border-bottom: 1px solid var(--sl-color-hairline); }
+header.header { padding-block: 0; }
+site-search button[data-open-modal] {
+  border-radius: .6rem;
+  background: var(--sl-color-gray-6);
+  border-color: transparent;
+}
+site-search button[data-open-modal]:hover { border-color: var(--sl-color-gray-4); }
+
+/* Sidebar */
+nav.sidebar .top-level > li > details > summary .group-label > span,
+.sidebar-content .group-label span {
+  font-size: .9375rem;
+  font-weight: 720;
+  color: var(--cr-ink);
+}
+.sidebar-content a {
+  font-size: .9375rem;
+  border-radius: .45rem;
+  padding-block: .3rem;
+}
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover {
+  background: transparent;
+  color: var(--cr-ink);
+  font-weight: 700;
+  box-shadow: inset 3px 0 0 var(--cr-amber);
+}
+.sidebar-content a:hover { color: var(--sl-color-text-accent); }
+
+/* Page title and headings */
+h1#_top {
+  font-weight: 800;
+  letter-spacing: -.02em;
+  line-height: 1.05;
+  color: var(--cr-ink);
+}
+.sl-markdown-content :is(h2, h3, h4, h5) {
+  letter-spacing: -.015em;
+  color: var(--cr-ink);
+}
+.sl-markdown-content h2 { font-weight: 760; margin-top: 2.75rem; }
+.sl-markdown-content h3 { font-weight: 720; }
+.sl-markdown-content :is(h2, h3) code {
+  font-size: .9em;
+  background: none;
+  padding: 0;
+  font-weight: 700;
+}
+.sl-markdown-content p,
+.sl-markdown-content li { max-width: 68ch; }
+
+/* Links */
+.sl-markdown-content a:not(:where(.not-content *)) {
+  color: var(--sl-color-text-accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: .2em;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+}
+.sl-markdown-content a:not(:where(.not-content *)):hover { text-decoration-color: currentColor; }
+
+/* Inline code */
+.sl-markdown-content :not(pre) > code {
+  border-radius: .35rem;
+  padding: .12em .38em;
+  font-size: .86em;
+  color: var(--cr-ink);
 }
 
-.hero {
-  padding-block: clamp(2.5rem, 7vw, 5rem);
-}
+/* Tables */
+.sl-markdown-content table { font-size: .9375rem; }
+.sl-markdown-content th { font-weight: 700; color: var(--cr-ink); border-bottom: 2px solid var(--cr-ink); }
 
+/* Code frames */
+.expressive-code .frame.is-terminal .header { border-bottom-color: var(--cr-panel-edge); }
+.expressive-code .frame.is-terminal .header::before { opacity: .5; }
+
+/* Asides */
+.starlight-aside { border-radius: .6rem; border-inline-start-width: 3px; }
+
+/* Pagination: plain links with the page name doing the work. */
 .pagination-links a {
+  border-radius: .75rem;
+  border-color: var(--sl-color-hairline-light);
   box-shadow: none;
 }
+.pagination-links a:hover { border-color: var(--cr-ink); }
+.pagination-links .link-title {
+  font-weight: 760;
+  color: var(--cr-ink);
+}
+
+/* Table of contents */
+starlight-toc h2, mobile-starlight-toc h2 { font-weight: 700; color: var(--cr-ink); }
+starlight-toc a[aria-current='true'] { color: var(--cr-ink); font-weight: 650; }
+
+/* Splash page: the landing gets a wider measure and owns its own title. */
+:root[data-has-hero] { --sl-content-width: 76rem; }
+[data-has-hero] .content-panel:first-of-type { padding-top: 0; }
+[data-has-hero] .sl-container > .landing { margin-top: 0; }
+[data-has-hero] .pagination-links { display: none; }
+[data-has-hero] footer { max-width: 76rem; }
