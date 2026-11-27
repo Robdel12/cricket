@@ -157,11 +157,16 @@ New to Cricket? The [guides](guide.md#your-first-route) are a friendlier place t
 | --- | --- |
 | `sentryErrorHandler` | Adapt Cricket's onError hook to an app-owned, initialized Sentry SDK. |
 
-## @robdel12/cricket/oidc-provider
+## @robdel12/cricket/oauth
 
 | Export | Use |
 | --- | --- |
-| `createOidcProviderHost` | Create a Cricket-owned OIDC provider host. Provider/Koa/Node objects stay inside the integration; apps provide only protocol policy and plain facts. |
+| `createOAuthAuthorization` | Create app-facing OAuth grant and access-token operations for a transactional store. |
+| `createOAuthClients` | Resolve configured and metadata-document OAuth clients and verify their credentials. |
+| `createOAuthTokenService` | Execute OAuth grant exchanges using the application's durable token store. |
+| `defineOAuthPlugin` | Define an opt-in OAuth domain for MCP authorization and token exchange. |
+| `fetchOAuthMetadata` | Fetch bounded OAuth client metadata or public keys over HTTPS from publicly routable addresses. |
+| `publicOAuthKeys` | Export public keys from app-owned OAuth signing keys for the discovery endpoint. |
 
 ## @robdel12/cricket/test
 

@@ -8,6 +8,7 @@
   need before the request ends. Set multipart limits on the endpoint, or use
   app `requestBodyLimits` keyed by operation ID for deployment-specific byte limits.
   Use `beforeBodyRules` when access must be checked before an upload is read.
+  A rule can return a Cricket response to end the request early.
 - Use `fetch(request, context)` with an integration built around web
   `Request` and `Response`. Keep rules for access, set `maxBodyBytes`, and
   honor `request.signal`. Declare allowed statuses and media types with
@@ -50,14 +51,16 @@ version and its deltas when support ends.
 
 - Set app `trustProxy` to verified peer IPs or CIDRs. Trust is off by default.
   Have the proxy overwrite forwarded host and protocol. Read `request.clientIp`,
-  `request.peerIp`, and `request.proxyTrusted` from Cricket. OIDC uses the same
-  trusted request facts. The app owns host allowlists.
+  `request.peerIp`, and `request.proxyTrusted` from Cricket. The app owns host
+  allowlists.
 - Use app `responseHeaders(request)` for defaults and `requestPolicy({ request })`
   for early responses such as trusted-origin preflight. Policy runs before
   protocol hosts and normal middleware. Explicit response headers take
   precedence over defaults. Cricket merges `Vary` tokens and respects headers
   reserved by the protocol host.
-- Use the first-party `@robdel12/cricket/oidc-provider` integration and register
-  its host through setup's `protocolHosts`. Bind app policy hooks after the
-  domains load. Cricket handles HTTP and the protocol engine. The app owns
-  clients, sessions, consent, storage, and UI.
+- Add `defineOAuthPlugin({ paths, serviceName: 'oauth' })` from
+  `@robdel12/cricket/oauth` for authorization code with S256 PKCE and opaque
+  access and refresh tokens. Install the plugin on the app and compose
+  `services.oauth` when setup dependencies and domain services are ready.
+  Keep account checks, consent, UI, and storage in the app. Run code consumption,
+  token rotation, and revocation in the app store's transaction.

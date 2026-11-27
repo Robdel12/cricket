@@ -1146,8 +1146,10 @@ function createRuntimeHandler({
                 apiVersion: apiVersionNegotiation.version
               } : {}),
               request: requestContextForMatchedRequest.request
-            })
+            }, { allowResponse: true })
           );
+          if (isHttpResponse(contextAfterBeforeBodyRules))
+            return applyDeprecationHeaders(contextAfterBeforeBodyRules, routeEndpoint.deprecation);
 
           if (routeEndpoint.fetch || routeEndpoint.rawBody ||
               !['GET', 'HEAD'].includes(matchedRequest.method.toUpperCase()))
@@ -1423,7 +1425,7 @@ function createRuntimeHandler({
  * });
  * ```
  *
- * `beforeBodyRules` run before Cricket reads the body. Use them for auth, so a stranger can't make you store a 50 MB upload. When a limit comes from config, set it on the app with `requestBodyLimits`, keyed by the route's operation ID. Need the exact bytes, like for webhook signatures? Use `rawBody` instead.
+ * `beforeBodyRules` run before Cricket reads the body. Return a Cricket response from a rule to end the request without reading the body first. When a limit comes from config, set it on the app with `requestBodyLimits`, keyed by the route's operation ID. Need the exact bytes, like for webhook signatures? Use `rawBody` instead.
  *
  * ## Use a Fetch handler
  *

@@ -160,10 +160,14 @@ endpoints document wire formats but do not claim parsed response schemas.
 Proxy trust belongs to the native HTTP boundary. Defaults ignore forwarding;
 apps explicitly allow verified socket peers or CIDRs. Cricket validates authority
 and forwarded IP hops once, exposes plain peer/client facts, and stops the IP
-walk at the nearest untrusted hop. First-party protocol hosts consume those same
-facts, so a private Koa/provider mount cannot independently trust spoofed headers.
-Apps still own proxy deployment, header replacement, network access, and host
-allowlists. IP values stay out of automatic request snapshots.
+walk at the nearest untrusted hop. Cricket endpoints and protocol integrations
+use those same request facts. Apps own proxy deployment, header replacement,
+network access, and host allowlists. IP values stay out of automatic request
+snapshots.
+
+OAuth is an opt-in domain plugin. Cricket owns the authorization flow and
+token rules. Apps own user sign-in, consent, permissions, and the durable store.
+Atomic code exchange and token rotation keep each connection independent.
 
 Handler, middleware, and fallback return values are domain bodies by default.
 Only explicit, function-shaped Cricket response helpers control status,
