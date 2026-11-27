@@ -29,6 +29,19 @@ function code(language, body) {
   return `\`\`\`${language}\n${body.trim()}\n\`\`\``;
 }
 
+// Search results and link previews quote the description, so each page uses
+// its own intro: prose before the first heading, trimmed to a snippet.
+export function describe(markdown) {
+  let intro = markdown.replace(/```[\s\S]*?```/g, '').trim().split(/^#/m)[0];
+  let prose = intro.split(/\n\s*\n/).map(block => block.trim())
+    .filter(block => block && !/^(#|-|\*|\||<|```|\d+\.)/.test(block))
+    .map(block => block.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/\*\*|`/g, '').replace(/\s+/g, ' '));
+  let text = '';
+  for (let block of prose) if (text.length < 120) text = `${text} ${block}`.trim();
+  if (text.length <= 160) return text;
+  return text.slice(0, text.lastIndexOf(' ', 157)).replace(/[,;:.]$/, '') + '…';
+}
+
 function apiSlug(key) {
   return key === '.' ? 'root' : key.slice(2);
 }
@@ -74,16 +87,35 @@ export async function generate({ base, commit, version }) {
   }
 
   async function page(path, frontmatter, body) {
+    frontmatter = { description: describe(body), ...frontmatter };
     await write(join(output, `${path}.md`), `---\n${JSON.stringify(frontmatter, null, 2)}\n---\n\n${body.trim()}\n`);
   }
 
   await rm(output, { recursive: true, force: true });
   let overview = guides.get('overview');
+  let headline = 'Node APIs that explain themselves.';
+  let summary = describe(overview.body);
   await page('index', {
-    title: overview.title,
+    title: headline,
+    description: summary,
     template: 'splash',
+    // The tab and search result lead with the name; social cards use the headline.
+    head: [
+      { tag: 'title', content: `${overview.title}: ${headline}` },
+      { tag: 'meta', attrs: { property: 'og:type', content: 'website' } },
+      { tag: 'script', attrs: { type: 'application/ld+json' }, content: JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'SoftwareSourceCode',
+        name: overview.title,
+        description: summary,
+        codeRepository: repository,
+        programmingLanguage: 'JavaScript',
+        runtimePlatform: 'Node.js',
+        license: 'https://opensource.org/licenses/MIT'
+      }) }
+    ],
     hero: {
-      title: 'Node APIs that explain themselves.',
+      title: headline,
       tagline: 'Cricket is a functional, domain-first framework for Node. Every route declares what it takes and what it returns, every definition is frozen, and your whole app reads straight from the folders.',
       actions: [
         { text: 'Build your first route', link: base + 'guides/getting-started/', variant: 'primary' },
@@ -91,7 +123,7 @@ export async function generate({ base, commit, version }) {
       ]
     }
   }, siteLinks(overview.body));
-  await page('404', { title: 'Page not found', pagefind: false },
+  await page('404', { title: 'Page not found', pagefind: false, head: [{ tag: 'meta', attrs: { name: 'robots', content: 'noindex' } }] },
     `Start at the [Cricket docs homepage](${base}) or use search to find what you need.`);
 
   // Guides quote real, tested files with <!-- example path [tab title] -->.
@@ -122,7 +154,8 @@ export async function generate({ base, commit, version }) {
     let specifier = name + key.slice(1);
     let slug = apiSlug(key);
     imports.push(`- [\`${specifier}\`](${base}api/${slug}/)`);
-    await page(`api/${slug}`, { title: specifier }, entries.map(entry => apiBody(entry, sourceLink)).join('\n\n'));
+    let description = describe(`Everything ${specifier} exports: ${entries.map(entry => entry.name).join(', ')}.`);
+    await page(`api/${slug}`, { title: specifier, description }, entries.map(entry => apiBody(entry, sourceLink)).join('\n\n'));
 
     portableApi += `\n## ${specifier}\n\n| Export | Use |\n| --- | --- |\n`;
     for (let { name, description } of entries)

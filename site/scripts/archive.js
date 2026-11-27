@@ -126,7 +126,7 @@ export async function assemble({ next, archives, output }) {
     let latest = releases.find(entry => !semver.prerelease(entry.version)) ?? versions[0];
     await writeFile(join(output, 'versions.json'), JSON.stringify({ schemaVersion: 1, latest: latest.version, versions }, null, 2) + '\n');
     let links = versions.map(entry => `<li><a href="${entry.path}">${entry.version === 'next' ? 'Next (unreleased)' : entry.version}</a></li>`).join('\n');
-    await writeFile(join(output, 'index.html'), `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Cricket documentation</title><meta http-equiv="refresh" content="0;url=${latest.path}"><h1>Cricket documentation</h1><p><a href="${latest.path}">Read the ${latest.version} docs</a></p><ul>${links}</ul></html>\n`);
+    await writeFile(join(output, 'index.html'), `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Cricket documentation</title><link rel="canonical" href="${latest.path}"><meta http-equiv="refresh" content="0;url=${latest.path}"><h1>Cricket documentation</h1><p><a href="${latest.path}">Read the ${latest.version} docs</a></p><ul>${links}</ul></html>\n`);
     await writeFile(join(output, '.nojekyll'), '');
   } finally { await rm(staging, { recursive: true, force: true }); }
 }

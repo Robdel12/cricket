@@ -5,15 +5,26 @@ import { guideNavigation } from './navigation.js';
 import { settings } from './scripts/settings.js';
 
 let { base } = settings();
+let origin = 'https://robdel12.github.io';
+let meta = (key, content) => ({ tag: 'meta', attrs: { [key.startsWith('og:') ? 'property' : 'name']: key, content } });
 
 export default defineConfig({
-  site: 'https://robdel12.github.io',
+  site: origin,
   base,
   trailingSlash: 'always',
   integrations: [starlight({
     title: 'Cricket',
     description: 'A functional, domain-first Node API framework that documents itself.',
     favicon: '/favicon.svg',
+    // Link previews and search results. public/og.png is the shared card.
+    head: [
+      meta('og:image', `${origin}${base}og.png`),
+      meta('og:image:width', '1200'),
+      meta('og:image:height', '630'),
+      meta('og:image:alt', 'Cricket: Node APIs that explain themselves.'),
+      meta('twitter:image', `${origin}${base}og.png`),
+      meta('theme-color', '#0e1522')
+    ],
     social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/Robdel12/cricket' }],
     customCss: ['./src/styles/docs.css'],
     components: {
