@@ -324,6 +324,8 @@ function validateResolvedDomains(domains) {
  * @param {'domains'|'manual'} [options.architecture='domains'] - Manual is a migration escape hatch.
  * @param {string|URL|object[]} [options.domains] - Domain root or inline domains. Required unless architecture is manual.
  * @param {object[]} [options.plugins=[]] - Explicit `defineCricketPlugin` descriptors contributing domains.
+ * @param {Function|object} [options.observability] - Awaited observers or a configuration object.
+ * @param {Function} [options.observability.export] - Send individual events through a bounded background queue.
  * @param {(request: object) => object} [options.responseHeaders]
  *   Default headers for normalized requests.
  * @param {(input: {request: object}) => object|undefined} [options.requestPolicy]

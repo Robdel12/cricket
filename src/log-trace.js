@@ -6,8 +6,14 @@ function parseJsonLine(line) {
   }
 }
 
-function requestIdFor(log) {
-  return log?.requestId ?? log?.metadata?.requestId;
+function correlationIds(log) {
+  let { metadata } = log;
+  let context = log.span?.context ?? metadata?.span?.context;
+  return [
+    log.requestId ?? metadata?.requestId,
+    log.jobRunId ?? metadata?.jobRunId ?? context?.jobRunId,
+    log.parentJobRunId ?? metadata?.parentJobRunId ?? context?.parentJobRunId
+  ].filter(id => typeof id === 'string' && id);
 }
 
 function routeNameFor(log) {
@@ -35,6 +41,7 @@ function objectValue(value) {
 function requestSummary(log) {
   let request = log.metadata?.request ?? {};
   let response = log.metadata?.response ?? {};
+  let { jobName, jobRunId, parentJobRunId, envelopeId, attempt, availableAt } = log.metadata ?? {};
   let parts = [
     log.time,
     log.level?.toUpperCase(),
@@ -42,7 +49,13 @@ function requestSummary(log) {
     routeNameFor(log),
     request.method,
     request.path,
-    response.status ? `status=${response.status}` : undefined
+    response.status ? `status=${response.status}` : undefined,
+    jobName,
+    jobRunId,
+    attempt ? `attempt=${attempt}` : undefined,
+    envelopeId ? `job=${envelopeId}` : undefined,
+    parentJobRunId ? `parent=${parentJobRunId}` : undefined,
+    availableAt ? `availableAt=${availableAt}` : undefined
   ];
 
   return parts.filter(Boolean).join(' ');
@@ -206,16 +219,16 @@ function renderTimelineNode(node, depth, seen) {
   return lines;
 }
 
-function formatLifecycleTrace(logs, requestId) {
+function formatLifecycleTrace(logs, id) {
   return [
-    `Trace ${requestId}`,
+    `Trace ${id}`,
     ...logs.map(log => `  ${requestSummary(log)}`)
   ].join('\n');
 }
 
-function formatTimelineTrace(logs, requestId) {
+function formatTimelineTrace(logs, id) {
   let roots = createTimelineNodes(logs);
-  let lines = [`Trace ${requestId}`];
+  let lines = [`Trace ${id}`];
   let seen = new Set();
 
   for (let node of roots)
@@ -225,34 +238,53 @@ function formatTimelineTrace(logs, requestId) {
 }
 
 /**
- * Parse newline-delimited Cricket JSON logs and keep events for one request.
+ * Find the request and related jobs by a request ID or job run ID.
  *
- * @param {string} input - Raw log text, usually from stdin.
- * @param {string} requestId - Request id to trace.
+ * @param {string} input - Newline-delimited JSON logs.
+ * @param {string} id - Request ID or job run ID.
  * @returns {object[]} Matching structured log entries.
  */
-export function traceLogs(input, requestId) {
-  return input
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(Boolean)
-    .map(parseJsonLine)
-    .filter(log => requestIdFor(log) === requestId);
+export function traceLogs(input, id) {
+  let logs = input.split(/\r?\n/).map(parseJsonLine).filter(Boolean);
+  let links = new Map();
+
+  for (let log of logs) {
+    let ids = correlationIds(log);
+    if (ids.length < 2)
+      continue;
+
+    for (let id of ids) {
+      if (!links.has(id))
+        links.set(id, new Set());
+
+      let related = links.get(id);
+      for (let other of ids)
+        if (other !== id)
+          related.add(other);
+    }
+  }
+
+  let selected = new Set([id]);
+  for (let id of selected)
+    for (let other of links.get(id) ?? [])
+      selected.add(other);
+
+  return logs.filter(log => correlationIds(log).some(id => selected.has(id)));
 }
 
 /**
- * Format a request trace for terminal output.
+ * Format a trace for terminal output.
  *
- * @param {object[]} logs - Structured log entries for one request.
- * @param {string} requestId - Request id being traced.
+ * @param {object[]} logs - Matching structured log entries.
+ * @param {string} id - Request ID or job run ID used for the lookup.
  * @returns {string} Human-readable trace.
  */
-export function formatTrace(logs, requestId) {
+export function formatTrace(logs, id) {
   if (!logs.length)
-    return `No Cricket logs found for ${requestId}`;
+    return `No Cricket logs found for ${id}`;
 
   if (logs.some(isSpanLog))
-    return formatTimelineTrace(logs, requestId);
+    return formatTimelineTrace(logs, id);
 
-  return formatLifecycleTrace(logs, requestId);
+  return formatLifecycleTrace(logs, id);
 }

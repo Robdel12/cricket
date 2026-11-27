@@ -7,7 +7,7 @@ import { parseZod } from '../schema.js';
 import { normalizeJobClock } from './clock.js';
 import { createLocalQueueDriver } from './drivers/local.js';
 import { createRedisQueueDriver } from './drivers/redis.js';
-import { planJobEnvelope } from './envelope.js';
+import { jobRequestId, planJobEnvelope } from './envelope.js';
 import { jobResultFailed } from './errors.js';
 import { createJobLedger } from './ledger.js';
 import {
@@ -143,10 +143,16 @@ function parseJobResult(job, result) {
   return parseZod(job.result, result, jobResultFailed);
 }
 
+function jobParent(envelope) {
+  let { parentJobRunId } = envelope;
+  return parentJobRunId ? { parentJobRunId } : {};
+}
+
 function jobRunContext(envelope, jobRunId) {
   return {
     jobRunId,
-    requestId: envelope.context?.requestId
+    requestId: jobRequestId(envelope),
+    ...jobParent(envelope)
   };
 }
 
@@ -168,8 +174,7 @@ function failureContext({
     failure: safeError(error),
     envelope,
     attempt,
-    jobRunId: jobRun.jobRunId,
-    requestId: jobRun.requestId,
+    ...jobRun,
     services: runtime.services,
     logger,
     trace,
@@ -200,14 +205,14 @@ function createFailureHandler({
     let originalError = safeError(error);
 
     try {
-      await trace.span(`job.failure.${phase} ${job.name}`, {}, () => handler(failureContext({
+      await trace.span(`job.failure.${phase} ${job.name}`, failureTrace => handler(failureContext({
         envelope,
         error,
         attempt,
         jobRun,
         runtime,
         logger,
-        trace,
+        trace: failureTrace,
         jobsCapability,
         progress
       })));
@@ -396,7 +401,8 @@ async function recordEnqueue(result, envelope, recordLedger) {
 function createJobsCapability({
   driver,
   recordLedger,
-  clock
+  clock,
+  logger
 }) {
   let jobsCapability = {
     plan: planJobEnvelope,
@@ -409,6 +415,22 @@ function createJobsCapability({
       let result = await driver.enqueue(envelope);
 
       await recordEnqueue(result, envelope, recordLedger);
+
+      let requestId = jobRequestId(envelope);
+      if ((requestId || envelope.parentJobRunId) && result?.enqueued) {
+        try {
+          logger?.info?.('job.enqueued', {
+            requestId,
+            ...jobParent(envelope),
+            jobName: envelope.name,
+            queueName: envelope.queueName,
+            envelopeId: envelope.id,
+            availableAt: envelope.availableAt
+          });
+        } catch {
+          // A trace log must not turn an accepted job into a failed enqueue.
+        }
+      }
 
       return result;
     },
@@ -492,7 +514,8 @@ export async function createCricketJobs({
   let jobsCapability = createJobsCapability({
     driver,
     recordLedger,
-    clock
+    clock,
+    logger
   });
 
   return {
@@ -592,7 +615,8 @@ export async function startCricketWorker(cricketApp, {
       scheduledFor: envelope.scheduledFor,
       availableAt: envelope.availableAt,
       trigger: envelope.trigger,
-      requestId: envelope.context?.requestId,
+      requestId: jobRequestId(envelope),
+      ...jobParent(envelope),
       ...metadata
     });
   }
@@ -600,7 +624,8 @@ export async function startCricketWorker(cricketApp, {
   let jobsCapability = createJobsCapability({
     driver,
     recordLedger,
-    clock
+    clock,
+    logger: runtime.logger
   });
 
   async function retryJob({
@@ -699,6 +724,7 @@ export async function startCricketWorker(cricketApp, {
       envelopeId: envelope.id,
       queueName: envelope.queueName,
       attempt: claim.attempt,
+      ...jobParent(envelope),
       ...(envelope.scheduleKey ? { scheduleKey: envelope.scheduleKey } : {}),
       ...(envelope.scheduledFor ? { scheduledFor: envelope.scheduledFor } : {}),
       ...(jobRun.requestId ? { requestId: jobRun.requestId } : {})
@@ -713,6 +739,7 @@ export async function startCricketWorker(cricketApp, {
         jobRunId: jobRun.jobRunId,
         envelopeId: envelope.id,
         queueName: envelope.queueName,
+        ...jobParent(envelope),
         ...(envelope.scheduleKey ? { scheduleKey: envelope.scheduleKey } : {}),
         ...(envelope.scheduledFor ? { scheduledFor: envelope.scheduledFor } : {})
       }
@@ -755,14 +782,15 @@ export async function startCricketWorker(cricketApp, {
     });
 
     try {
-      let result = await trace.span(`job.run ${job.name}`, {}, () => job.run({
+      let result = await trace.span(`job.run ${job.name}`, runTrace => job.run({
         input: envelope.input,
         context: envelope.context,
         envelope,
         attempt: claim.attempt,
+        ...jobRun,
         services: runtime.services,
         logger,
-        trace,
+        trace: runTrace,
         lifecycle: runtime.lifecycle,
         jobs: jobsCapability,
         progress
@@ -905,20 +933,24 @@ export async function startCricketWorker(cricketApp, {
         candidate,
         now: now instanceof Date ? now.toISOString() : String(now)
       });
+      let jobRun = jobRunContext(envelope, candidate.jobRunId ?? `jobrun_${randomUUID()}`);
       let logger = createRecordingLogger(runtime.logger.child({
         jobName: job.name,
         envelopeId: envelope.id,
         queueName: envelope.queueName,
-        attempt: candidate.attempt
+        attempt: candidate.attempt,
+        ...jobRun
       }), driver, envelope, candidate.attempt);
       let trace = createTrace({
         logger,
         replay: runtime.observability.createReplay(),
-        requestId: candidate.jobRunId ?? envelope.context?.requestId ?? envelope.id,
+        requestId: jobRun.requestId ?? jobRun.jobRunId,
         context: {
           jobName: job.name,
           envelopeId: envelope.id,
-          queueName: envelope.queueName
+          queueName: envelope.queueName,
+          ...jobParent(envelope),
+          jobRunId: jobRun.jobRunId
         }
       });
       let progress = createProgressCapability(
@@ -928,10 +960,6 @@ export async function startCricketWorker(cricketApp, {
         candidate.attempt,
         emitJobEvent
       );
-      let jobRun = {
-        jobRunId: candidate.jobRunId ?? `jobrun_${randomUUID()}`,
-        requestId: envelope.context?.requestId
-      };
       let runFailureHandler = createFailureHandler({
         envelope,
         attempt: candidate.attempt,

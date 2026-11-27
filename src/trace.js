@@ -134,6 +134,8 @@ export function createTrace({
     try {
       await replay?.emit?.({
         requestId,
+        ...(context.jobRunId ? { jobRunId: context.jobRunId } : {}),
+        ...(context.parentJobRunId ? { parentJobRunId: context.parentJobRunId } : {}),
         route,
         span,
         type: 'trace.span.finished'

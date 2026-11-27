@@ -169,7 +169,12 @@ function setupDependenciesFor(setup, db) {
   };
 }
 
-function setupWithLifecycleCleanup(setup, lifecycleController, requests, fetchShutdownController) {
+function setupWithLifecycleCleanup(setup, {
+  lifecycleController,
+  requests,
+  fetchShutdownController,
+  closeObservability
+}) {
   let cleaning;
   return {
     ...setup,
@@ -181,7 +186,7 @@ function setupWithLifecycleCleanup(setup, lifecycleController, requests, fetchSh
         fetchShutdownController.abort(new Error('Cricket runtime is shutting down'));
       cleaning = (async () => {
         let errors = [];
-        for (let cleanup of [requests.idle, setup.cleanup]) {
+        for (let cleanup of [requests.idle, closeObservability, setup.cleanup]) {
           try {
             await cleanup?.();
           } catch (error) {
@@ -1501,7 +1506,12 @@ export async function createCricketRuntime(cricketApp, {
           trace: createNoopTrace()
         }) : undefined;
     setup = setupDependenciesFor(normalizeSetupResult(setupResult), db);
-    setup = setupWithLifecycleCleanup(setup, lifecycleController, requests, fetchShutdownController);
+    setup = setupWithLifecycleCleanup(setup, {
+      lifecycleController,
+      requests,
+      fetchShutdownController,
+      closeObservability: observability.close
+    });
   } catch (error) {
     let errors = [error];
     try {

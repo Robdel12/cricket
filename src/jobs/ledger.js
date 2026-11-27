@@ -1,3 +1,5 @@
+import { jobRequestId } from './envelope.js';
+
 function textValue(value) {
   return value === undefined ? undefined : JSON.stringify(value);
 }
@@ -16,7 +18,7 @@ function ledgerRowForEnvelope(envelope, now) {
     queue_name: envelope.queueName,
     idempotency_key: envelope.idempotencyKey,
     partition_key: partition?.key,
-    request_id: envelope.context?.requestId,
+    request_id: jobRequestId(envelope),
     source: envelope.context?.source,
     priority: envelope.priority,
     schedule_key: envelope.scheduleKey,
