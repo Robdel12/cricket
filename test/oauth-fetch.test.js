@@ -3,7 +3,11 @@ import { Buffer } from 'node:buffer';
 import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
 import { test } from 'node:test';
+import request from 'supertest';
+import { createCricketRuntime, defineCricketApp } from '../src/index.js';
+import { createOAuthClients, oauthRedirectAllowed } from '../src/oauth/clients.js';
 import { createOAuthMetadataFetcher } from '../src/oauth/fetch-metadata.js';
+import { defineOAuthPlugin } from '../src/oauth/index.js';
 
 let documentUrl = 'https://client.example/client.json';
 let publicAddress = { address: '8.8.8.8', family: 4 };
@@ -141,4 +145,95 @@ test('returns promptly when the request is canceled while DNS is pending', async
   });
   await assert.rejects(fetchMetadata(documentUrl, { signal: controller.signal }), /caller canceled/);
   assert.equal(requests.length, 0);
+});
+
+
+test('only HTTPS and loopback HTTP callbacks are accepted from OAuth client metadata', async () => {
+  let document = {
+    ...metadata,
+    application_type: 'native',
+    grant_types: ['authorization_code', 'refresh_token'],
+    redirect_uris: ['https://client.example/callback', 'http://127.0.0.1/callback']
+  };
+  let clients = createOAuthClients({
+    issuer: 'https://api.example/oauth',
+    fetchMetadata: async () => document
+  });
+  let client = await clients.find(documentUrl);
+  assert.equal((await clients.authenticate({ body: { client_id: documentUrl } }))?.id, client.id);
+  assert.equal(oauthRedirectAllowed(client, 'https://client.example/callback'), true);
+  assert.equal(oauthRedirectAllowed(client, 'https://client.example/callback/other'), false);
+  assert.equal(oauthRedirectAllowed(client, 'http://127.0.0.1:42000/callback'), true);
+  assert.equal(oauthRedirectAllowed(client, 'http://127.0.0.1:42000/other'), false);
+
+  for (let [applicationType, redirectUri] of [
+    ['web', 'http://client.example/callback'],
+    ['native', 'com.example.client:/callback']
+  ]) {
+    let entry = { ...document, application_type: applicationType, redirect_uris: [redirectUri] };
+    let rejected = createOAuthClients({
+      issuer: 'https://api.example/oauth',
+      fetchMetadata: async () => entry
+    });
+    assert.equal(await rejected.find(documentUrl), undefined);
+    assert.throws(() => createOAuthClients({
+      issuer: 'https://api.example/oauth',
+      clients: [entry]
+    }), /Invalid or duplicate OAuth client configuration/);
+  }
+});
+
+
+test('an unapproved metadata client gets OAuth errors without navigating the browser', async () => {
+  let origin = 'https://api.example';
+  let client = {
+    client_id: documentUrl,
+    redirect_uris: ['https://client.example/callback'],
+    token_endpoint_auth_method: 'none',
+    grant_types: ['authorization_code', 'refresh_token']
+  };
+  let clients = createOAuthClients({
+    issuer: origin + '/oauth',
+    fetchMetadata: async () => client
+  });
+  let runtime = await createCricketRuntime(defineCricketApp({
+    domains: [],
+    plugins: [defineOAuthPlugin({
+      paths: {
+        authorization: '/oauth/authorize',
+        token: '/oauth/token',
+        revocation: '/oauth/revoke',
+        jwks: '/oauth/jwks',
+        resourceMetadata: '/.well-known/oauth-protected-resource/mcp',
+        authorizationMetadata: '/.well-known/oauth-authorization-server/oauth',
+        interaction: '/oauth/interactions',
+        interactionLanding: '/consent'
+      }
+    })],
+    setup() {
+      return {
+        services: {
+          oauth: {
+            origin,
+            issuer: origin + '/oauth',
+            resource: origin + '/mcp',
+            resourceScopes: ['read'],
+            resolveClient: ({ clientId, request }) => clients.find(clientId, request)
+          }
+        }
+      };
+    }
+  }), { logger() {} });
+  try {
+    let rejected = await request(runtime.app)
+      .get('/oauth/authorize')
+      .set('Host', new URL(origin).host)
+      .query({ client_id: documentUrl, redirect_uri: client.redirect_uris[0] });
+    assert.equal(rejected.status, 400);
+    assert.equal(rejected.body.error, 'unsupported_response_type');
+    assert.equal(rejected.headers.location, undefined);
+    assert.equal(rejected.headers['cache-control'], 'no-store');
+  } finally {
+    await runtime.cleanup();
+  }
 });

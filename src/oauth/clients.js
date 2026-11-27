@@ -17,8 +17,6 @@ let assertionType = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
 let sharedSecretMethods = new Set(oauthClientAuthMethods.filter((method) => method.startsWith('client_secret_')));
 let publicMetadataMethods = new Set(['none', 'private_key_jwt']);
 let grantTypes = new Set(['authorization_code', 'refresh_token']);
-let loopbackHosts = new Set(['localhost', '127.0.0.1', '[::1]']);
-let unsafeSchemes = new Set(['javascript:', 'vbscript:', 'data:', 'blob:', 'file:', 'about:']);
 let privateKeyFields = ['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'];
 
 function isString(value) {
@@ -48,13 +46,8 @@ function metadataUrl(value) {
   return !path.split('/').some((segment) => /^\.{1,2}$/u.test(segment.replace(/%2e/giu, '.')));
 }
 
-function allowedRedirect(value, applicationType) {
-  let url = parseUrl(value);
-  if (!url) return false;
-  if (applicationType === 'web') return url.protocol === 'https:' || url.protocol === 'http:';
-  if (url.protocol === 'http:') return loopbackHosts.has(url.hostname);
-  if (url.protocol === 'https:') return !loopbackHosts.has(url.hostname);
-  return !unsafeSchemes.has(url.protocol);
+function allowedRedirect(value) {
+  return httpsUrl(value) || (Boolean(withoutLoopbackPort(value)) && Boolean(parseUrl(value)));
 }
 
 function withoutLoopbackPort(value) {
@@ -63,7 +56,7 @@ function withoutLoopbackPort(value) {
 }
 
 export function oauthRedirectAllowed({ redirectUris, applicationType }, candidate) {
-  if (!allowedRedirect(candidate, applicationType)) return false;
+  if (!allowedRedirect(candidate)) return false;
   if (redirectUris.includes(candidate)) return true;
   if (applicationType !== 'native') return false;
   let loopback = withoutLoopbackPort(candidate);
@@ -89,7 +82,7 @@ function normalizeClient(input, expectedId) {
   if (!['native', 'web'].includes(applicationType)) return;
   let redirectUris = input.redirect_uris;
   if (!Array.isArray(redirectUris) || !redirectUris.length ||
-      !redirectUris.every((uri) => allowedRedirect(uri, applicationType))) return;
+      !redirectUris.every(allowedRedirect)) return;
 
   let responseTypes = input.response_types ?? ['code'];
   if (!Array.isArray(responseTypes) || !responseTypes.every(isString) ||
@@ -110,7 +103,7 @@ function normalizeClient(input, expectedId) {
       (!expectedId || publicMetadataMethods.has(choice)));
     if (!authMethod) return;
   }
-  authMethod ??= 'client_secret_basic';
+  authMethod ??= expectedId ? 'none' : 'client_secret_basic';
   if (!oauthClientAuthMethods.includes(authMethod)) return;
   if (expectedId && (!publicMetadataMethods.has(authMethod) || Object.hasOwn(input, 'client_secret') ||
       Object.hasOwn(input, 'client_secret_expires_at'))) return;
@@ -140,7 +133,8 @@ function normalizeClient(input, expectedId) {
       redirectUris: Object.freeze([...redirectUris]),
       grantTypes: Object.freeze(allowedGrants),
       applicationType,
-      authMethod
+      authMethod,
+      fromMetadata: Boolean(expectedId)
     }),
     credentials: {
       clientSecret, secretExpiresAt, jwks, jwksUri,

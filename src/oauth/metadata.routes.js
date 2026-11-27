@@ -1,8 +1,9 @@
 import { createPrivateKey, createPublicKey } from 'node:crypto';
 import { defineEndpoint } from '../endpoint.js';
-import { ok, respond, withHeaders } from '../response.js';
+import { ok } from '../response.js';
 import { oauthClientAuthAlgorithms, oauthClientAuthMethods } from './clients.js';
 import { oauthResponseModes } from './interaction.routes.js';
+import { createOAuthRequestRule, oauthResponse } from './request-rule.js';
 
 /** Export public keys from app-owned OAuth signing keys for the discovery endpoint. */
 export function publicOAuthKeys(jwks) {
@@ -25,16 +26,9 @@ function metadataEndpoint(path, serviceName, summary, render) {
     path,
     summary,
     tags: ['OAuth'],
-    async handler({ services, request }) {
-      let oauth = services[serviceName];
-      let headers = { 'Cache-Control': 'no-store' };
-      if (!oauth) return withHeaders(respond(404, { error: 'not_found' }), headers);
-      if (request.host.toLowerCase() !== new URL(oauth.origin).host)
-        return withHeaders(respond(421, { error: 'invalid_request' }), headers);
-      let admission = await oauth.authorizeRequest?.({ request, route: 'metadata' });
-      if (admission)
-        return withHeaders(respond(admission.status, admission.body), { ...headers, ...admission.headers });
-      return withHeaders(ok(render(oauth)), headers);
+    beforeBodyRules: [createOAuthRequestRule(serviceName, 'metadata')],
+    handler({ oauth }) {
+      return oauthResponse(ok(render(oauth)));
     }
   });
 }

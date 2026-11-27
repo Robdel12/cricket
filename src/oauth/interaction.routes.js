@@ -4,6 +4,7 @@ import { defineEndpoint } from '../endpoint.js';
 import { ok, redirect, respond, withCookies, withError, withHeaders } from '../response.js';
 import { grantResourceScopes } from './authorization-service.js';
 import { oauthRedirectAllowed } from './clients.js';
+import { createOAuthRequestRule, oauthResponse } from './request-rule.js';
 
 let idPattern = /^[a-zA-Z0-9_-]{10,256}$/;
 let challengePattern = /^[a-zA-Z0-9_-]{43}$/;
@@ -18,13 +19,6 @@ let authorizeParameters = Object.freeze([
 
 function readScope(scope) {
   return typeof scope === 'string' ? scope.split(' ').filter(Boolean) : [];
-}
-
-function oauthResponse(response) {
-  return withHeaders(response, {
-    'Cache-Control': 'no-store',
-    'Referrer-Policy': 'no-referrer'
-  });
 }
 
 function protocolError(error, description, status = 400) {
@@ -176,7 +170,11 @@ async function startAuthorization({ oauth, request, paths }) {
   if (!responseModeAllowed(authorization))
     return protocolError('invalid_request', 'The requested response mode is unavailable.');
   let failed = authorizationError(authorization, oauth);
-  if (failed) return callbackResponse(authorization, oauth.issuer, failed);
+  if (failed) {
+    // A public metadata document does not authorize navigating the user's browser.
+    if (client.fromMetadata) return protocolError(failed.error, failed.error_description);
+    return callbackResponse(authorization, oauth.issuer, failed);
+  }
 
   let uid = issueId();
   let iat = nowSeconds(oauth);
@@ -263,6 +261,8 @@ async function interaction({ oauth, request, decision, paths }) {
     let client = await oauth.resolveClient({ request, clientId: row.params.client_id });
     if (!client)
       return respond(400, { error: 'The requesting client is unavailable.' });
+    if (!oauthRedirectAllowed(client, row.params.redirect_uri))
+      return protocolError('invalid_request', 'The redirect URI is invalid.');
     let input = { request, uid, interaction: hookInteraction(row), principal, token,
       client: clientFacts(client) };
     if (!decision) return ok(await oauth.consentDetails(input));
@@ -336,15 +336,9 @@ function interactionEndpoint({ path, method, operationId, admitAs, handler, rawB
   return defineEndpoint({
     path, method, operationId,
     ...(rawBody ? { rawBody: true, maxBodyBytes: 65536 } : {}),
-    async handler({ services, request }) {
-      let oauth = services[serviceName];
-      if (!oauth) return oauthResponse(respond(404, { error: 'OAuth is unavailable.' }));
-      if (request.host.toLowerCase() !== new URL(oauth.origin).host)
-        return oauthResponse(respond(421, { error: 'Use the configured OAuth origin.' }));
+    beforeBodyRules: [createOAuthRequestRule(serviceName, admitAs)],
+    async handler({ oauth, request }) {
       try {
-        let admission = await oauth.authorizeRequest?.({ request, route: admitAs });
-        if (admission)
-          return oauthResponse(withHeaders(respond(admission.status, admission.body), admission.headers ?? {}));
         return oauthResponse(await handler({ oauth, request }));
       } catch (error) {
         let status = error?.status ?? error?.statusCode;

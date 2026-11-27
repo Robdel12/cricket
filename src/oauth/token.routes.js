@@ -1,12 +1,12 @@
 import { defineEndpoint } from '../endpoint.js';
-import { respond, withError, withHeaders } from '../response.js';
+import { respond, withError } from '../response.js';
+import { createOAuthRequestRule, oauthResponse } from './request-rule.js';
 
-let noStore = Object.freeze({ 'Cache-Control': 'no-store', Pragma: 'no-cache' });
 let jwtBearer = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
 let tokenForm = 'application/x-www-form-urlencoded';
 
 function oauthError(error, status = 400, headers = {}) {
-  return withHeaders(respond(status, { error }), { ...noStore, ...headers });
+  return oauthResponse(respond(status, { error }), headers);
 }
 
 function tokenFormFrom(request) {
@@ -50,16 +50,9 @@ function createTokenEndpoint(path, isRevocation, serviceName) {
     tags: ['OAuth'],
     maxBodyBytes: 64 * 1024,
     rawBody: true,
-    async handler({ request, services }) {
-      let oauth = services[serviceName];
-      if (!oauth) return oauthError('not_found', 404);
-      if (request.host.toLowerCase() !== new URL(oauth.origin).host)
-        return oauthError('invalid_request', 421);
-
+    beforeBodyRules: [createOAuthRequestRule(serviceName, route)],
+    async handler({ request, oauth }) {
       try {
-        let admission = await oauth.authorizeRequest?.({ request, route });
-        if (admission)
-          return withHeaders(respond(admission.status, admission.body), { ...noStore, ...admission.headers });
         let body = tokenFormFrom(request);
         if (!body) return oauthError('invalid_request');
         if (request.headers.dpop) return oauthError('invalid_dpop_proof');
@@ -86,7 +79,7 @@ function createTokenEndpoint(path, isRevocation, serviceName) {
             credential: input.credential,
             tokenTypeHint: body.token_type_hint
           });
-          return withHeaders(respond(200), noStore);
+          return oauthResponse(respond(200));
         }
         if (!client.grantTypes.includes(input.grantType)) return oauthError('unauthorized_client');
         let redirectUri = input.redirectUri;
@@ -100,7 +93,7 @@ function createTokenEndpoint(path, isRevocation, serviceName) {
           clientId: client.id,
           issueRefreshToken: client.grantTypes.includes('refresh_token')
         });
-        return result.error ? oauthError(result.error) : withHeaders(respond(200, result), noStore);
+        return result.error ? oauthError(result.error) : oauthResponse(respond(200, result));
       } catch (error) {
         return withError(oauthError('server_error', 503), error);
       }

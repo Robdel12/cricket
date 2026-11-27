@@ -8,6 +8,7 @@
   need before the request ends. Set multipart limits on the endpoint, or use
   app `requestBodyLimits` keyed by operation ID for deployment-specific byte limits.
   Use `beforeBodyRules` when access must be checked before an upload is read.
+  A rule can return a Cricket response to end the request early.
 - Use `fetch(request, context)` with an integration built around web
   `Request` and `Response`. Keep rules for access, set `maxBodyBytes`, and
   honor `request.signal`. Declare allowed statuses and media types with

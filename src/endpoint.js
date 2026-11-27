@@ -515,7 +515,7 @@ function parseRequestHeaders(schema, headers = {}) {
  * @param {any} [config.response] - Zod schema or { schema, serializer }; canonical parsing precedes the selected public serializer.
  * @param {Record<string | number, any>} [config.responses]
  * @param {Record<string | number, {description?: string, contentTypes?: string[]}>} config.fetchResponses - Required Fetch transport status/media contract; bodies remain streams.
- * @param {Array<Function>} [config.beforeBodyRules=[]] - Rules that run before request body parsing.
+ * @param {Array<Function>} [config.beforeBodyRules=[]] - Rules that run before request body parsing and can end the request by returning a Cricket response.
  * @param {Array<Function>} [config.rules=[]]
  * @param {(request: Request, context: any) => Response|Promise<Response>} [config.fetch] - Fetch-style transport handler; the Node HTTP bridge stays inside Cricket.
  * @param {(context: any) => any|Promise<any>} [config.handler] - Use with parsed endpoint bodies.

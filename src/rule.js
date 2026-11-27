@@ -1,3 +1,5 @@
+import { isHttpResponse } from './response.js';
+
 /**
  * Define a named guard that can be run against an endpoint context.
  *
@@ -26,9 +28,10 @@ export function defineRule(name, check) {
  *
  * @param {Array<Function>} rules
  * @param {any} context
+ * @param {{allowResponse?: boolean}} [options]
  * @returns {Promise<any>}
  */
-export async function applyRules(rules, context) {
+export async function applyRules(rules, context, { allowResponse = false } = {}) {
   let currentContext = context;
 
   for (let rule of rules ?? []) {
@@ -39,6 +42,9 @@ export async function applyRules(rules, context) {
 
     if (!result)
       continue;
+
+    if (allowResponse && isHttpResponse(result))
+      return result;
 
     if (isPlainObject(result)) {
       currentContext = mergeRuleFacts(currentContext, result, rule);
