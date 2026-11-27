@@ -12,7 +12,7 @@ export default defineConfig({
   trailingSlash: 'always',
   integrations: [starlight({
     title: 'Cricket',
-    description: 'A small Node framework for APIs with explicit contracts.',
+    description: 'A functional, domain-first Node API framework that documents itself.',
     favicon: '/favicon.svg',
     social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/Robdel12/cricket' }],
     customCss: ['./src/styles/docs.css'],

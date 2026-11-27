@@ -1,17 +1,16 @@
 <!-- Generated from source JSDoc. Run pnpm --filter cricket-docs generate --write-markdown. -->
 # Using Cricket
 
-Cricket is a small framework for building Node APIs. You give each route a contract for what comes in and what goes out, and Cricket checks both. Everything in between is plain JavaScript.
+Cricket is a Node API framework where the code is the documentation. Every route says what it takes and what it returns, Cricket checks both, and your app's folders tell you where everything lives.
 
-There's no ORM, no classes to extend, and no magic wiring. Your app passes plain objects around, and you can read how it works from the files on disk.
+It ships its own HTTP runtime, plus logging, tracing, jobs, state machines, migrations, and a test harness. There's no ORM, no classes to extend, and no magic wiring.
 
 ## What you get
 
-- **Contracts at the edges.** Zod schemas check params, query, body, and responses. Bad input gets a clear 422 before your handler runs.
-- **A predictable shape.** Each feature lives in a domain folder, and each file in it has one job. You'll know where code lives before you open anything.
-- **Its own HTTP runtime.** No Express or Koa underneath. Cricket handles streaming, uploads, shutdown, and proxies for you.
-- **The boring stuff, built in.** Logging, tracing, background jobs, state machines, migrations, OpenAPI, and a test harness all share the same app definition.
-- **Agent-friendly by default.** `cricket init` writes guidance for coding agents, so they follow the same conventions you do.
+- **Self-documenting.** Contracts aren't comments. Cricket checks them on every request and turns them into OpenAPI, `cricket inspect` output, and agent guidance, so the docs can't drift from the code.
+- **Domain-first.** Each feature lives in one folder, and each file in it has one job. You'll know where code lives before you open anything.
+- **Functional and immutable.** Plain functions, plain objects, and definitions that are frozen once they're built. Compose them however you like.
+- **Built for agents.** Predictable files and explicit dependencies make Cricket apps safe to change, whether the next commit comes from you or a coding agent. `cricket init` writes the guidance for them.
 
 ## Where to start
 

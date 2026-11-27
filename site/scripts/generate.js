@@ -83,8 +83,8 @@ export async function generate({ base, commit, version }) {
     title: overview.title,
     template: 'splash',
     hero: {
-      title: 'Tiny contracts for sturdy Node\u00a0APIs.',
-      tagline: 'Cricket checks what comes into each route and what goes out. Everything in between is plain JavaScript: objects in, objects out.',
+      title: 'Node APIs that explain themselves.',
+      tagline: 'Cricket is a functional, domain-first framework for Node. Every route declares what it takes and what it returns, every definition is frozen, and your whole app reads straight from the folders.',
       actions: [
         { text: 'Build your first route', link: base + 'guides/getting-started/', variant: 'primary' },
         { text: 'Browse the API', link: base + 'api/', variant: 'secondary' }

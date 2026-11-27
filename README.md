@@ -1,8 +1,8 @@
 # Cricket
 
-Tiny contracts for sturdy Node APIs.
+Node APIs that explain themselves.
 
-Cricket is a small framework for building Node APIs. You give each route a contract for what comes in and what goes out, and Cricket checks both. Everything in between is plain JavaScript: objects in, objects out.
+Cricket is a functional, domain-first framework for Node APIs. Every route declares what it takes and what it returns, every definition is frozen, and your whole app reads straight from the folders. You, your team, and your coding agents all know where to look.
 
 No ORM, no classes to extend, no magic wiring. Just plain functions you can read.
 
@@ -41,11 +41,11 @@ Run `node api.js`, then `curl localhost:3000/hello/Cricket`. Cricket checks the 
 
 ## What you get
 
-- **Contracts at the edges.** Zod checks params, query, body, and responses.
-- **A predictable shape.** Each feature is a domain folder, and each file in it has one job.
-- **Its own HTTP runtime.** Streaming, uploads, proxies, and clean shutdown, with no Express underneath.
-- **The boring stuff, built in.** Logging, tracing, jobs, state machines, migrations, OpenAPI, and a test harness.
-- **Agent-friendly.** `cricket init` writes guidance so coding agents follow the same conventions you do.
+- **Self-documenting.** Contracts get checked on every request and become OpenAPI, `cricket inspect` output, and agent guidance.
+- **Domain-first.** Each feature is one folder, and each file in it has one job.
+- **Functional and immutable.** Plain functions, plain objects, frozen definitions.
+- **Built for agents.** Predictable files your coding agent can actually follow.
+- **The boring stuff, built in.** Its own HTTP runtime, plus logging, tracing, jobs, state machines, migrations, and a test harness.
 
 ## Read the docs
 

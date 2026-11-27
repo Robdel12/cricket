@@ -2,7 +2,8 @@
 
 ## Product Direction
 
-Cricket is a tiny Node API framework for sturdy contracts.
+Cricket is a functional, domain-first Node API framework built to document
+itself.
 
 The core pattern is intentionally simple: models define durable row visibility,
 validations protect input shape, normalizers shape outside data entering the app,

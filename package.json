@@ -2,7 +2,7 @@
   "name": "@robdel12/cricket",
   "version": "0.1.0",
   "type": "module",
-  "description": "Tiny contracts for sturdy Node APIs.",
+  "description": "Node APIs that explain themselves.",
   "license": "MIT",
   "packageManager": "pnpm@11.3.0",
   "engines": {
