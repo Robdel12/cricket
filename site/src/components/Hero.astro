@@ -1,0 +1,321 @@
+---
+import { Code } from '@astrojs/starlight/components';
+import { stringify } from 'yaml';
+import { generateOpenApi } from '../../../src/openapi.js';
+import { temperature } from '../../../examples/temperature.js';
+import source from '../../../examples/temperature.js?raw';
+import { installSource, settings } from '../../scripts/settings.js';
+
+// The copy lives in the homepage frontmatter, written by scripts/generate.js.
+let { title, tagline, actions = [] } = Astro.locals.starlightRoute.entry.data.hero ?? {};
+let install = `pnpm add ${installSource(settings().version)}`;
+
+// The demo shows a real, tested endpoint (examples/temperature.js). The code
+// panel is its source and the OpenAPI tab is what Cricket generates from it.
+let openapi = stringify(generateOpenApi({ endpoints: [temperature] }).paths).trimEnd();
+let block = source.slice(source.indexOf('let temperature'), source.indexOf('});') + 3);
+
+// Each line lights up with the part of the contract it belongs to.
+let roles = { query: 'gate-in', response: 'gate-out', handler: 'run' };
+let tokenPattern = /('[^']*')|\b(let|return)\b|(\b\d+\b)|(\w+)(?=\()/g;
+let role = '';
+let lines = block.split('\n').map(line => {
+  let key = line.match(/^  (\w+)/)?.[1];
+  if (key) role = roles[key] ?? '';
+  else if (!line.startsWith(' ')) role = '';
+  let tokens = [];
+  let last = 0;
+  for (let match of line.matchAll(tokenPattern)) {
+    tokens.push(['', line.slice(last, match.index)], [match[1] ? 's' : match[2] ? 'k' : match[3] ? 'n' : 'f', match[0]]);
+    last = match.index + match[0].length;
+  }
+  return { role, tokens: [...tokens, ['', line.slice(last)]] };
+});
+---
+<section class="landing-hero" aria-labelledby="_top">
+  <div class="intro">
+    <h1 id="_top" data-page-title>{title}</h1>
+    <p class="lede">{tagline}</p>
+    <div class="actions">
+      {actions.map(({ text, link, variant }) => <a class:list={['button', variant]} href={link}>{text}</a>)}
+    </div>
+    <div class="install">
+      <code>{install}</code>
+      <button type="button" data-copy={install}>Copy</button>
+    </div>
+  </div>
+
+  <figure class="contract" data-state="ok">
+    <form class="request" onsubmit="return false">
+      <span class="method">GET</span>
+      <label class="path" for="chirps-input">/temperature?chirps=</label>
+      <input id="chirps-input" name="chirps" value="120" autocomplete="off" spellcheck="false" inputmode="numeric" aria-describedby="contract-caption" />
+    </form>
+<pre class="code" aria-label="The endpoint that answers this request"><code>{lines.map(({ role, tokens }) => <span class:list={['ln', role]}>{tokens.map(([kind, text]) => kind ? <span class={kind}>{text}</span> : text)}</span>)}</code></pre>
+    <div class="tabs" role="tablist" aria-label="What Cricket makes from this contract">
+      <button type="button" role="tab" id="tab-response" aria-controls="panel-response" aria-selected="true">Response</button>
+      <button type="button" role="tab" id="tab-openapi" aria-controls="panel-openapi" aria-selected="false" tabindex="-1">OpenAPI</button>
+    </div>
+    <output class="response" id="panel-response" role="tabpanel" aria-labelledby="tab-response" for="chirps-input" aria-live="polite">
+      <span class="status">200 OK</span>
+<pre><code class="body">&#123;"fahrenheit": 70&#125;</code></pre>
+    </output>
+    <div class="openapi" id="panel-openapi" role="tabpanel" aria-labelledby="tab-openapi" hidden>
+      <Code code={openapi} lang="yaml" frame="none" />
+    </div>
+    <figcaption id="contract-caption">
+      Dolbear’s law turns chirps per minute into degrees. Try <button type="button" data-try="abc">abc</button>,
+      <button type="button" data-try="-3">-3</button>, or <button type="button" data-try="1.5">1.5</button>,
+      and the handler never runs. Then flip to OpenAPI to see the docs Cricket writes from the same contract.
+    </figcaption>
+  </figure>
+</section>
+
+<script>
+  // Mirrors the real responses Cricket sends for examples/temperature.js,
+  // including Zod's coercion (an empty value becomes 0). test/examples.test.js
+  // pins these exact bodies, so a Zod or Cricket change fails there first.
+  function respond(raw: string) {
+    let value = Number(raw);
+    let path = ['chirps'];
+    let issue;
+    if (Number.isNaN(value))
+      issue = { expected: 'number', code: 'invalid_type', received: 'NaN', path, message: 'Invalid input: expected number, received NaN' };
+    else if (!Number.isSafeInteger(value))
+      issue = { expected: 'int', format: 'safeint', code: 'invalid_type', path, message: 'Invalid input: expected int, received number' };
+    else if (value <= 0)
+      issue = { origin: 'number', code: 'too_small', minimum: 0, inclusive: false, path, message: 'Too small: expected number to be >0' };
+    if (!issue) return { ok: true, label: '200 OK', body: { fahrenheit: 50 + (value - 40) / 4 } };
+    return {
+      ok: false,
+      label: '422 Unprocessable Entity',
+      body: { error: { code: 'VALIDATION_FAILED', message: 'Validation failed', issues: [issue] } }
+    };
+  }
+
+  function format(body: unknown) {
+    let compact = JSON.stringify(body);
+    if (compact.length < 40) return compact.replace(':', ': ');
+    // Keep short arrays such as ["chirps"] on one line.
+    return JSON.stringify(body, null, 2).replace(/\[\s+("[^"]*")\s+\]/g, '[$1]');
+  }
+
+  let figure = document.querySelector<HTMLElement>('.contract');
+  let input = document.querySelector<HTMLInputElement>('#chirps-input');
+  let status = figure?.querySelector<HTMLElement>('.status');
+  let body = figure?.querySelector<HTMLElement>('.body');
+
+  function render() {
+    if (!figure || !input || !status || !body) return;
+    let result = respond(input.value);
+    figure.dataset.state = result.ok ? 'ok' : 'rejected';
+    status.textContent = result.label;
+    body.textContent = format(result.body);
+  }
+
+  input?.addEventListener('input', render);
+  for (let button of document.querySelectorAll<HTMLButtonElement>('[data-try]')) {
+    button.addEventListener('click', () => {
+      if (!input) return;
+      input.value = button.dataset.try ?? '';
+      render();
+      input.focus();
+    });
+  }
+  for (let button of document.querySelectorAll<HTMLButtonElement>('[data-copy]')) {
+    button.addEventListener('click', async () => {
+      await navigator.clipboard.writeText(button.dataset.copy ?? '');
+      button.textContent = 'Copied';
+    });
+    button.addEventListener('blur', () => { button.textContent = 'Copy'; });
+  }
+  render();
+
+  // Two tabs: click to switch, and either arrow key flips to the other one.
+  let tabs = [...document.querySelectorAll<HTMLButtonElement>('.tabs [role="tab"]')];
+  function select(tab: HTMLButtonElement) {
+    for (let other of tabs) {
+      let selected = other === tab;
+      other.setAttribute('aria-selected', String(selected));
+      other.tabIndex = selected ? 0 : -1;
+      document.getElementById(other.getAttribute('aria-controls') ?? '')?.toggleAttribute('hidden', !selected);
+    }
+  }
+  for (let tab of tabs) {
+    tab.addEventListener('click', () => select(tab));
+    tab.addEventListener('keydown', event => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      let next = tabs.find(other => other !== tab) ?? tab;
+      select(next);
+      next.focus();
+    });
+  }
+</script>
+
+<style>
+  .landing-hero {
+    display: grid;
+    gap: clamp(2.5rem, 6vw, 4.5rem);
+    padding-block: clamp(2rem, 6vw, 4.5rem) clamp(2.5rem, 6vw, 4rem);
+    align-items: start;
+  }
+  @media (min-width: 66rem) {
+    .landing-hero { grid-template-columns: minmax(0, 1fr) minmax(0, 1.08fr); }
+    .intro { padding-top: 1.5rem; }
+  }
+
+  /* Weight, tracking, and color come from the shared h1#_top rule in docs.css. */
+  h1 {
+    margin: 0;
+    font-size: clamp(2.5rem, 1.2rem + 4vw, 4.4rem);
+    text-wrap: balance;
+    overflow-wrap: normal;
+    max-width: 15ch;
+  }
+  .lede {
+    margin: 1.5rem 0 0;
+    max-width: 34ch;
+    font-size: clamp(1.125rem, 1rem + .4vw, 1.3rem);
+    line-height: 1.5;
+    color: var(--sl-color-gray-2);
+  }
+
+  .actions { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 2rem; }
+  .button {
+    display: inline-flex;
+    align-items: center;
+    padding: .8rem 1.25rem;
+    border-radius: .6rem;
+    font-weight: 650;
+    text-decoration: none;
+    border: 2px solid var(--cr-ink);
+    line-height: 1.2;
+  }
+  .button.primary { background: var(--cr-ink); color: var(--sl-color-bg); }
+  .button.primary:hover { background: var(--sl-color-accent); border-color: var(--sl-color-accent); color: var(--sl-color-black); }
+  .button.secondary { color: var(--cr-ink); }
+  .button.secondary:hover { background: var(--sl-color-gray-6); }
+
+  .install {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    margin-top: 1.75rem;
+    font-size: .9rem;
+  }
+  .install code {
+    font-family: var(--__sl-font-mono);
+    background: none;
+    padding: 0;
+    color: var(--sl-color-gray-2);
+    overflow-wrap: anywhere;
+  }
+  .install code::before { content: '$ '; color: var(--sl-color-gray-4); }
+  .install button, figcaption button {
+    font: inherit;
+    cursor: pointer;
+    background: none;
+    border: 0;
+    padding: 0;
+    color: var(--sl-color-text-accent);
+    text-decoration: underline;
+    text-underline-offset: .2em;
+  }
+
+  /* The contract: one dark panel in both themes, read top to bottom. */
+  .contract {
+    margin: 0;
+    min-width: 0;
+    background: var(--cr-panel);
+    color: var(--cr-panel-text);
+    border-radius: 1rem;
+    overflow: hidden;
+    box-shadow: 0 1px 0 var(--cr-panel-edge) inset, 0 30px 60px -30px rgb(10 20 35 / .45);
+    font-family: var(--__sl-font-mono);
+    font-size: .86rem;
+  }
+  .request {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    padding: .9rem 1.25rem;
+    background: var(--cr-panel-raised);
+  }
+  .method { font-weight: 700; color: var(--cr-amber); }
+  .path { color: var(--cr-panel-muted); }
+  .request input {
+    flex: 1;
+    min-width: 3ch;
+    margin-left: -.6rem;
+    font: inherit;
+    font-weight: 700;
+    color: var(--cr-panel-strong);
+    background: transparent;
+    border: 0;
+    border-bottom: 2px dashed var(--cr-amber);
+    padding: .1rem;
+    outline: none;
+  }
+  .request input:focus-visible { border-bottom-style: solid; }
+
+  .code {
+    margin: 0;
+    padding: 1rem 0;
+    background: none;
+    overflow-x: auto;
+    line-height: 1.65;
+    font-size: inherit;
+  }
+  .code code { display: block; min-width: max-content; background: none; padding: 0; font-size: inherit; color: inherit; }
+  .ln { display: block; padding-inline: 1.25rem; border-left: 3px solid transparent; transition: opacity .2s, background-color .2s; }
+  .k { color: var(--cr-syn-keyword); }
+  .f { color: var(--cr-syn-fn); }
+  .s { color: var(--cr-syn-string); }
+  .n { color: var(--cr-syn-number); }
+
+  [data-state='ok'] .gate-in,
+  [data-state='ok'] .gate-out { background: var(--cr-pass-bg); border-left-color: var(--cr-pass); }
+  [data-state='rejected'] .gate-in { background: var(--cr-fail-bg); border-left-color: var(--cr-amber); }
+  [data-state='rejected'] .run,
+  [data-state='rejected'] .gate-out { opacity: .32; }
+
+  .tabs {
+    display: flex;
+    gap: 1.25rem;
+    padding: 0 1.25rem;
+    border-top: 1px solid var(--cr-panel-edge);
+    background: var(--cr-panel-raised);
+  }
+  .tabs button {
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+    background: none;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    padding: .75rem 0 .6rem;
+    color: var(--cr-panel-muted);
+  }
+  .tabs button:hover { color: var(--cr-panel-strong); }
+  .tabs [aria-selected='true'] { color: var(--cr-panel-strong); border-bottom-color: var(--cr-amber); }
+  .response { padding: 1rem 1.25rem 1.15rem; background: var(--cr-panel-raised); }
+  .response:not([hidden]) { display: block; }
+  .openapi { padding-inline: .25rem; background: var(--cr-panel-raised); }
+  .openapi :global(.expressive-code pre) { background: none; border: 0; font-size: inherit; }
+  .status { display: block; font-weight: 700; color: var(--cr-pass); margin-bottom: .35rem; }
+  [data-state='rejected'] .status { color: var(--cr-amber); }
+  .response pre { margin: 0; background: none; padding: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .response code { background: none; padding: 0; font-size: inherit; color: var(--cr-panel-strong); }
+
+  figcaption {
+    padding: .9rem 1.25rem 1.1rem;
+    font-family: var(--__sl-font);
+    font-size: .875rem;
+    line-height: 1.5;
+    color: var(--cr-panel-muted);
+    border-top: 1px solid var(--cr-panel-edge);
+  }
+  figcaption button { color: var(--cr-amber); font-family: var(--__sl-font-mono); }
+
+  @media (prefers-reduced-motion: reduce) { .ln { transition: none; } }
+</style>

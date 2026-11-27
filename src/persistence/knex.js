@@ -64,17 +64,65 @@ async function parseReturnedRow(model, query, returning) {
 /**
  * @guide database Connect a database
  *
- * Set the Knex client and connection in the app's `database` config. Cricket creates the connection, passes `db` to your services, and closes it during shutdown. Install the driver for the database you use.
+ * Cricket uses [Knex](https://knexjs.org) for databases. Add a `database` config to your app and Cricket opens the connection, hands `db` to your services, and closes it on shutdown.
  *
- * Use `createKnexRepository` when a service needs a small set of table operations. Your model describes the row, and your service owns the query and its access rules. Use Knex directly for queries that need more control.
+ * ## Configure it
  *
- * Keep schema changes in `api/migrations/` and run them as a separate step when you deploy.
+ * Install the driver for your database, like `pg` or `sqlite3`. Then describe each environment once:
+ *
+ * ```js
+ * export let app = defineCricketApp({
+ *   baseUrl: import.meta.url,
+ *   domains: './domains',
+ *   database: {
+ *     client: 'pg',
+ *     environments: {
+ *       development: { connection: process.env.DATABASE_URL },
+ *       test: { client: 'sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true },
+ *       production: { connection: process.env.DATABASE_URL }
+ *     }
+ *   }
+ * });
+ * ```
+ *
+ * Cricket picks the environment from `CRICKET_DATABASE_ENV`, then `NODE_ENV`, then `defaultEnvironment`, and falls back to `development`. `cricket test` sets `NODE_ENV=test` for you.
+ *
+ * ## Write migrations
+ *
+ * Migrations live in `api/migrations/`. Make one with the CLI:
  *
  * ```sh
  * pnpm exec cricket migrate make api/index.js create_projects
+ * ```
+ *
+ * Each one is a plain Knex migration:
+ *
+ * <!-- example examples/projects/api/migrations/20260101000000_create_projects.js api/migrations/20260101000000_create_projects.js -->
+ *
+ * Then run them:
+ *
+ * ```sh
  * pnpm exec cricket migrate latest api/index.js
  * pnpm exec cricket migrate status api/index.js
+ * pnpm exec cricket migrate rollback api/index.js
  * ```
+ *
+ * Cricket never runs migrations when the server starts. Run them as their own deploy step, so a bad migration can't take down a starting server.
+ *
+ * ## Query from a service
+ *
+ * `createKnexRepository` gives a service the common table operations, and it parses rows against your model.
+ *
+ * ```js
+ * let projects = createKnexRepository({ db, model: Project, insert: Project.row });
+ *
+ * await projects.insert({ id, owner_id, slug, name });
+ * await projects.findOne({ slug });
+ * ```
+ *
+ * You get `findOne`, `list`, `insert`, `updateById`, and `deleteById`.
+ *
+ * When you need joins, transactions, or anything fancier, use `db` directly. It's just Knex. Cricket isn't an ORM, and it doesn't hide your queries.
  */
 /**
  * Builds a Knex-backed repository around a Cricket model contract.

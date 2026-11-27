@@ -420,15 +420,73 @@ function parseRequestHeaders(schema, headers = {}) {
 /**
  * @guide contracts Define route contracts
  *
- * A route connects a method and path to your app. Use `defineEndpoint` to pass the Zod schemas for `params`, `query`, `body`, and `response` that the route needs. Put shared input schemas in a `*.validations.js` file and import them in the route.
+ * A route in Cricket is a contract. It says what the route accepts, what it checks, and what it returns. Let's walk through the projects domain from the [example app](../examples/projects/) one file at a time.
  *
- * Use `defineRule` for checks such as sign-in, ownership, and record existence. Put queries and writes in a service. That lets the same product operation run from a route or a background job.
+ * ## Describe the input
  *
- * ## Shape data at the edges
+ * Put request schemas in `*.validations.js`. They're plain Zod, so you can reuse them in routes, jobs, and services.
  *
- * A model describes a stored row. Use `field.public` and `field.private` to say what can leave the app, and add named views when different callers need different fields.
+ * <!-- example examples/projects/api/domains/projects/input.validations.js api/domains/projects/input.validations.js -->
  *
- * Use normalizers to shape data from webhooks, CSVs, and other outside sources. Use serializers to shape outgoing API data. `defineNormalizer` and `defineSerializer` can parse their output against a schema. See [a complete model-to-route example](../examples/one-file-app.js).
+ * ## Describe what you store
+ *
+ * A model describes a database row. Mark each field `public` or `private` to say whether it can leave your app.
+ *
+ * <!-- example examples/projects/api/domains/projects/schema.model.js api/domains/projects/schema.model.js -->
+ *
+ * `Project.public` is a schema with only the public fields, which comes in handy for responses. Every field also says whether it's `sensitive`, like tokens or personal data. `cricket inspect` shows both, so you can review what a model exposes at a glance.
+ *
+ * ## Shape the output
+ *
+ * A serializer turns your data into what the API sends back. `defineSerializer` checks its own output, so a private field can't sneak into a response.
+ *
+ * <!-- example examples/projects/api/domains/projects/output.serializers.js api/domains/projects/output.serializers.js -->
+ *
+ * Pulling data in from a webhook, CSV, or another API? Use `defineNormalizer` to turn it into your app's shape. Normalizers and serializers are pure functions. They don't fetch, write, or know about HTTP.
+ *
+ * ## Do the work in a service
+ *
+ * Services hold your reads and writes. They don't know about HTTP, so a route and a background job can call the same code.
+ *
+ * <!-- example examples/projects/api/domains/projects/domain.service.js api/domains/projects/domain.service.js -->
+ *
+ * `createKnexRepository` covers the simple table operations. Reach for Knex directly when a query needs more. See [Connect a database](guide.md#connect-a-database).
+ *
+ * ## Guard the route with rules
+ *
+ * A rule decides whether a request can keep going. Return an error like `unauthenticated()` or `notFound()` to stop it. Return an object to hand facts to the next rule and the handler.
+ *
+ * <!-- example examples/projects/api/domains/projects/access.rules.js api/domains/projects/access.rules.js -->
+ *
+ * Use rules for sign-in, ownership, existence, and business checks. Keeping them named and separate means you can read a route's access policy at a glance.
+ *
+ * ## Put it together in a route
+ *
+ * Routes stay thin. They connect the schemas, rules, service, and serializer.
+ *
+ * <!-- example examples/projects/api/domains/projects/http.routes.js api/domains/projects/http.routes.js -->
+ *
+ * Here's what happens on each request:
+ *
+ * 1. Cricket parses `params`, `query`, `headers`, and `body`. Bad input gets a 422 with the Zod issues.
+ * 2. Rules run in order. The first one to return an error ends the request.
+ * 3. The handler runs with the parsed `input`, your `services`, and any facts the rules returned.
+ * 4. Cricket parses the response against `response` before sending it. If it doesn't match, the client gets a 500 and you get a log entry, so bad data never leaves your app.
+ *
+ * Cricket also rejects unknown options when you define a route, so a typo fails right away instead of quietly doing nothing.
+ *
+ * ## Errors
+ *
+ * Return or throw Cricket's error helpers to send a specific status:
+ *
+ * | Helper | Status |
+ * | --- | --- |
+ * | `badRequest()` | 400 |
+ * | `unauthenticated()` | 401 |
+ * | `forbidden()` | 403 |
+ * | `notFound()` | 404 |
+ *
+ * Each takes an optional message and details. Every error uses the same body shape: `{ "error": { "code", "message" } }`. A plain `Error` becomes a 500 with nothing private in the body.
  */
 /**
  * Define a request/response contract around a handler.

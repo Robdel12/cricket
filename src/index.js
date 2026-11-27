@@ -1,9 +1,20 @@
 /**
  * @guide overview Cricket
  *
- * Cricket is a small Node framework for building APIs. Give each route a contract for what goes in and what comes out. Put data work in services, and group the files that change together in a domain.
+ * Cricket is a Node API framework where the code is the documentation. Every route says what it takes and what it returns, Cricket checks both, and your app's folders tell you where everything lives.
  *
- * When you're ready to split your app into files, see [Organize your app](guide.md#organize-your-app).
+ * It ships its own HTTP runtime, plus logging, tracing, jobs, state machines, migrations, and a test harness. There's no ORM, no classes to extend, and no magic wiring.
+ *
+ * ## What you get
+ *
+ * - **Self-documenting.** Contracts aren't comments. Cricket checks them on every request and turns them into OpenAPI, `cricket inspect` output, and agent guidance, so the docs can't drift from the code.
+ * - **Domain-first.** Each feature lives in one folder, and each file in it has one job. You'll know where code lives before you open anything.
+ * - **Functional and immutable.** Plain functions, plain objects, and definitions that are frozen once they're built. Compose them however you like.
+ * - **Built for agents.** Predictable files and explicit dependencies make Cricket apps safe to change, whether the next commit comes from you or a coding agent. `cricket init` writes the guidance for them.
+ *
+ * ## Where to start
+ *
+ * New here? You can [get a route running](guide.md#your-first-route) in a few minutes. Once you want more than one file, [organize your app](guide.md#organize-your-app) into domains. Curious why Cricket works this way? Read [the vision](../vision.md).
  */
 export {
   defineCricketApp,
@@ -13,9 +24,9 @@ export {
 /**
  * @guide api JavaScript API
  *
- * Pick the import path you want to use. Each page lists the exports for that path, with their signatures and links to the source for this version.
+ * Every export, grouped by import path. Each page shows the signature and links to the source for this version.
  *
- * For examples you can build on, start with [Using Cricket](guide.md#your-first-route). To describe your own HTTP API, see [Generate OpenAPI](guide.md#generate-openapi).
+ * New to Cricket? The [guides](guide.md#your-first-route) are a friendlier place to start.
  */
 export {
   defineCricketPlugin,

@@ -1,9 +1,7 @@
 import { createOidcProviderHost } from '@robdel12/cricket/oidc-provider';
 
-/**
- * Create the host during app setup. `adapter`, client configuration, and the
- * safe remote-metadata fetch function remain owned by the application.
- */
+// Call this from your app's setup. You bring the storage adapter, clients,
+// keys, and a safe fetch for remote metadata.
 export async function createExampleOidcSetup({
   origin,
   adapter,
@@ -47,10 +45,7 @@ export async function createExampleOidcSetup({
   };
 }
 
-/**
- * Call from `defineCricketApp({ services })`, after `services` includes the
- * app's domain services and before the runtime begins accepting requests.
- */
+// Call this from your app's services function, once your domain services exist.
 export function bindExampleOidcPolicy(host, oauthServices) {
   host.bind({
     authorizeRequest: facts => oauthServices.authorizeRequest(facts),

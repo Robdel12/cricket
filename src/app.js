@@ -278,11 +278,11 @@ function validateResolvedDomains(domains) {
 /**
  * @guide getting-started Your first route
  *
- * You'll need Node 24 or newer and pnpm.
+ * Let's get a route running. You'll need Node 24 or newer and pnpm.
  *
  * ## Install Cricket
  *
- * Run this in an empty project folder. If you already have a `package.json`, skip `pnpm init` and set `"type": "module"` there.
+ * Run this in an empty folder. Already have a `package.json`? Skip `pnpm init` and set `"type": "module"` in it.
  *
  * <!-- quickstart install -->
  *
@@ -290,7 +290,9 @@ function validateResolvedDomains(domains) {
  *
  * Save this as `api.js`.
  *
- * <!-- quickstart example -->
+ * <!-- example examples/docs-start.js api.js -->
+ *
+ * `defineEndpoint` is the contract. It says this route takes a `name` param and returns a `message`. Cricket checks both sides, so the handler only ever sees good input.
  *
  * ## Try it
  *
@@ -300,15 +302,19 @@ function validateResolvedDomains(domains) {
  * node api.js
  * ```
  *
- * Leave it running and open a second terminal.
+ * Then hit it from a second terminal.
  *
  * ```sh
  * curl http://localhost:3000/hello/Cricket
  * ```
  *
- * You should get `{"message":"Hey, Cricket!"}`. Cricket checks the path params before calling your handler and parses the response before it sends it.
+ * You should see `{"message":"Hey, Cricket!"}`. That's it, you've got a Cricket API!
  *
- * Once you want a folder for routes, services, and other domain code, run `pnpm exec cricket init .` and read [Organize your app](guide.md#organize-your-app).
+ * The `main: import.meta.url` option means the server only starts when you run this file directly. Tests and CLI commands can import `app` without opening a port.
+ *
+ * ## Next up
+ *
+ * One file gets crowded fast. [Organize your app](guide.md#organize-your-app) into domains, then [write a test](guide.md#test-your-api) for your route.
  */
 /**
  * Define the Cricket app contract that CLIs, docs generation, and runtimes all
@@ -398,8 +404,10 @@ export async function resolveCricketApp(app, {
   baseUrl
 } = {}) {
   let definedApp = definedAppFor(app);
+  // Resolve the base once so domains, migrations, and anything else relative agree.
+  let appBaseUrl = definedApp.baseUrl ?? baseUrl;
   let domains = await loadDomains(definedApp.domains, {
-    baseUrl: definedApp.baseUrl ?? baseUrl
+    baseUrl: appBaseUrl
   });
   domains = [...domains, ...definedApp.plugins.flatMap(plugin => plugin.domains)];
   validateResolvedDomains(domains);
@@ -415,6 +423,7 @@ export async function resolveCricketApp(app, {
 
   return freezeAppContract({
     ...definedApp,
+    ...(appBaseUrl === undefined ? {} : { baseUrl: appBaseUrl }),
     domains,
     endpoints,
     jobs: hasExplicitJobs ? definedApp.jobs : collectJobs(domains),

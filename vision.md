@@ -1,6 +1,8 @@
 # Cricket Vision
 
-Cricket is a tiny Node API framework for sturdy contracts.
+Cricket is a functional, domain-first Node API framework built to document
+itself. The code is the documentation: contracts, folders, and frozen
+definitions say what the app does, for humans and agents alike.
 
 The bet is simple: backend code stays easier to grow when every part of the
 system is plain, explicit, immutable by default, and easy to compose. Cricket
@@ -34,7 +36,7 @@ tables, migrations, imports, queues, workers, health, and deployment.
 explicit dependencies, inspect output, OpenAPI output, and boundary tests make
 apps easier for humans and agents to change safely.
 
-**Guidance is a contract, not a changelog.** README, examples, and generated
+**Guidance is a contract, not a changelog.** Guides, examples, and generated
 agent skills should describe the current framework as one cohesive system.
 Rewrite surrounding guidance and remove obsolete instructions when contracts
 change instead of preserving the order implementation work happened.
@@ -432,4 +434,4 @@ Node APIs easier to build.
 
 Cricket should make API architecture feel obvious.
 
-Tiny contracts for sturdy Node APIs.
+Node APIs that explain themselves.

@@ -105,11 +105,75 @@ function pluginServiceSchemasFor(services) {
 /**
  * @guide plugins Share domains with plugins
  *
- * Use `defineCricketPlugin` when several apps share a domain or a package owns a set of routes. The plugin declares domains and the host app supplies the services its handlers need.
+ * Got a feature several apps need, like an admin panel or a support tool? Put its domains in a package and share them as a plugin.
  *
- * Use `definePluginSchema` to describe the methods, inputs, and outputs at that boundary. Cricket checks that the host provides those methods at startup and parses data at each call. Run `cricket inspect` to see which domains the plugin added.
+ * The trick is that the plugin doesn't touch your tables. It says what data it needs, and each app supplies that data from its own services.
  *
- * See the [plugin composition example](../examples/plugin-composition/app.js) for the host and [the plugin factory](../examples/plugin-composition/plugin.js) it loads.
+ * ## Write the plugin
+ *
+ * A plugin is a name, a schema, and some domains. The schema lists the service methods the plugin calls, with Zod input and output for each.
+ *
+ * ```js
+ * import { defineCricketPlugin, definePluginSchema, z } from '@robdel12/cricket';
+ *
+ * let UserPage = z.object({
+ *   items: z.array(z.object({ id: z.string(), email: z.email() })),
+ *   nextCursor: z.string().nullable()
+ * });
+ *
+ * export let superAdminPlugin = defineCricketPlugin({
+ *   name: 'super-admin',
+ *   schema: definePluginSchema({
+ *     services: {
+ *       userSupport: {
+ *         listUsers: {
+ *           input: z.object({ search: z.string().optional() }),
+ *           output: UserPage
+ *         }
+ *       }
+ *     }
+ *   }),
+ *   domains: [userSupportDomain]
+ * });
+ * ```
+ *
+ * Keep `@robdel12/cricket` as a peer dependency so the plugin and app share one copy.
+ *
+ * ## Use it in an app
+ *
+ * Add the plugin to `plugins`, then supply the methods it needs from your own data:
+ *
+ * ```js
+ * import { superAdminPlugin } from '@acme/super-admin';
+ *
+ * export let app = defineCricketApp({
+ *   baseUrl: import.meta.url,
+ *   domains: './domains',
+ *   plugins: [superAdminPlugin],
+ *   services({ services }) {
+ *     return {
+ *       ...services,
+ *       userSupport: {
+ *         async listUsers({ search }) {
+ *           let rows = await services.accounts.search({ search });
+ *           return {
+ *             items: rows.map(row => ({ id: row.userId, email: row.primaryEmail })),
+ *             nextCursor: null
+ *           };
+ *         }
+ *       }
+ *     };
+ *   }
+ * });
+ * ```
+ *
+ * Cricket checks at startup that every method exists, and it validates the input and output of each call. Plugin routes show up in `inspect` and OpenAPI like your own.
+ *
+ * ## What stays with the app
+ *
+ * Plugins only add domains. They can't add middleware, run migrations, or decide who's allowed in. Your app owns auth, policy, and tables, including migrations for any model a plugin brings along. Shipping a UI too? Export it from a separate package entry and load it through your frontend build.
+ *
+ * See the [plugin composition example](../examples/plugin-composition/app.js) for a full app with [its plugin](../examples/plugin-composition/plugin.js).
  */
 /**
  * Define the Zod contracts that an app's service adapters must follow.

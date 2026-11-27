@@ -1,4 +1,4 @@
-import { defineCricketApp, defineEndpoint } from '../src/index.js';
+import { defineCricketApp, defineEndpoint } from '@robdel12/cricket';
 
 let events = defineEndpoint({
   method: 'get',

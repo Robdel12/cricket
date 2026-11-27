@@ -109,12 +109,137 @@ export function isJobContract(value) {
 /**
  * @guide jobs Run background jobs
  *
- * Put `defineJob` contracts in `*.jobs.js`. Give each job a name, an input schema, a queue, and a `run` function. Use the same services your routes use.
+ * Some work shouldn't happen during a request, like sending email or rendering a report. Jobs move it to a worker, and they keep the same contracts as your routes: validated input, your services, logs, and traces.
  *
- * Call `jobs.enqueue` where you need to hand off work. In a worker entrypoint under `api/workers/`, use `startCricketWorker` to read jobs from the queue. Set retry and concurrency policy where you define the job, and use an idempotency key for work that can be requested twice.
+ * Use Redis when you run more than one worker. A single-process app can skip Redis with the local queue, and tests use an in-memory one.
  *
- * Use `localQueue` with `queues.local: true` for a single-process app. Envelopes and cron positions live in memory. Keep durable work in app tables and rebuild pending wakeups at startup. A `coalesceKey` replaces only pending work for the same job and key. Use `jobs.cancelPending(job, key)` to cancel a pending wakeup.
- * Use `cronSchedule` for recurring work. Test scheduled work by advancing the test clock, calling `worker.schedules.tick()`, and draining available jobs. See the [jobs walkthrough](../README.md#jobs) for worker setup, retries, recovery, and the execution ledger.
+ * ## Define a job
+ *
+ * Put jobs in a `*.jobs.js` file in the domain.
+ *
+ * ```js
+ * import { z } from '@robdel12/cricket';
+ * import { defineJob, redisQueue, retry } from '@robdel12/cricket/jobs';
+ *
+ * export let generateReport = defineJob({
+ *   name: 'reports.generate',
+ *   input: z.object({ reportId: z.string(), accountId: z.string() }),
+ *   queue: redisQueue({
+ *     name: 'reports',
+ *     idempotencyKey: ({ input }) => input.reportId
+ *   }),
+ *   retry: retry.exponential({ attempts: 3, delayMs: 2_000, maxDelayMs: 60_000 }),
+ *   async run({ input, services, logger, trace }) {
+ *     logger.info('report.started', { reportId: input.reportId });
+ *     return trace.span('reports.render', () => services.reports.generate(input));
+ *   }
+ * });
+ * ```
+ *
+ * The idempotency key means asking for the same report twice while one is still running gives you the existing job instead of a duplicate.
+ *
+ * ## Enqueue work
+ *
+ * Create a producer in `setup` and pass it to your services as a dependency.
+ *
+ * ```js
+ * import { createCricketJobs } from '@robdel12/cricket/jobs';
+ *
+ * let producer = await createCricketJobs({
+ *   jobs: [generateReport],
+ *   queues: { redis: { url: process.env.REDIS_URL } }
+ * });
+ *
+ * await producer.jobs.enqueue(generateReport, { reportId, accountId });
+ * ```
+ *
+ * Pass `runAt` or `delayMs` as a third argument to run it later.
+ *
+ * ## Start a worker
+ *
+ * Workers live in `api/workers/`.
+ *
+ * ```js
+ * import { startCricketWorker } from '@robdel12/cricket/jobs';
+ * import { app } from '../index.js';
+ *
+ * let worker = await startCricketWorker(app, {
+ *   queues: { redis: { url: process.env.REDIS_URL } }
+ * });
+ *
+ * let shutdown = new AbortController();
+ * process.once('SIGTERM', () => shutdown.abort());
+ *
+ * try {
+ *   await worker.run({ signal: shutdown.signal, concurrency: 4 });
+ * } finally {
+ *   await worker.cleanup();
+ * }
+ * ```
+ *
+ * The worker waits on Redis instead of polling, so it picks up new work right away. When you abort, it stops claiming jobs and lets the running ones finish.
+ *
+ * ## Run jobs in one process
+ *
+ * Don't need Redis? Give the job a `localQueue` and start the worker with `queues: { local: true }`. Delays and cron work the same, all in memory.
+ *
+ * <!-- example examples/local-queue.js -->
+ *
+ * The queue disappears when the process stops, so keep real work in your own tables and re-enqueue anything pending at startup. A `coalesceKey` swaps out pending work with the same key instead of piling up duplicates, and `jobs.cancelPending(job, key)` drops it. Coalescing jobs keep their retries in your app state, not the queue.
+ *
+ * ## Retries, limits, and failures
+ *
+ * - **Retries.** `retry.exponential` waits `delayMs`, doubles it each time, and stops at `maxDelayMs`.
+ * - **Concurrency.** `concurrency.global` caps work across every worker. `concurrency.partition` keeps one account from hogging the queue.
+ * - **Failures.** `jobFailure({ exhausted })` runs when the last retry fails, so you can mark a record as failed.
+ * - **Priority.** Set `priority` on the queue. Higher numbers get claimed first.
+ *
+ * ## Recurring work
+ *
+ * Add a `schedule` to run a job on a cron:
+ *
+ * ```js
+ * schedule: cronSchedule({
+ *   key: 'daily-reports',
+ *   cron: '15 4 * * *',
+ *   timezone: 'America/Chicago',
+ *   input: ({ scheduledFor }) => ({ reportId: `daily:${scheduledFor.slice(0, 10)}`, accountId: 'system' })
+ * })
+ * ```
+ *
+ * No separate cron server needed. The worker runs due slots itself.
+ *
+ * ## Stuck jobs
+ *
+ * Cricket keeps a heartbeat on running jobs, but it doesn't guess what "stuck" means for your work. Give the job a `recover` function that looks at the facts and decides:
+ *
+ * ```js
+ * recover({ run, progress }) {
+ *   if (run.heartbeatAgeMs > 2 * 60_000)
+ *     return { action: 'retry', reason: { code: 'heartbeat_stale' } };
+ *
+ *   if (run.ageMs > 10 * 60_000 && !progress.seen({ within: '10 minutes' }))
+ *     return { action: 'retry', reason: { code: 'not_advancing' } };
+ *
+ *   return { action: 'continue' };
+ * }
+ * ```
+ *
+ * Call `progress.update({ current, total })` from `run` so recovery has something to go on.
+ *
+ * ## Keep a history
+ *
+ * Want a table of past runs for debugging? Add the job ledger in a migration:
+ *
+ * ```js
+ * import { createJobLedgerTable } from '@robdel12/cricket/jobs';
+ *
+ * export async function up(db) {
+ *   await createJobLedgerTable(db);
+ * }
+ * ```
+ *
+ * It's execution history, not product state, so keep your real data in your own tables. You decide how long to keep history. Clean it up with `jobs.removeFinished(ids)`.
  */
 /**
  * Define a Cricket background job contract.

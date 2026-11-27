@@ -1,8 +1,8 @@
 import { defineCricketApp, defineEndpoint, ok, startCricketApp } from '@robdel12/cricket';
 
-// This example trusts a same-machine proxy. Replace these peers with verified
-// deployment addresses, restrict network access, and overwrite forwarded
-// host/protocol at that proxy. Never infer trust from a private network alone.
+// This trusts a proxy on the same machine. Swap in your real proxy addresses,
+// and have the proxy overwrite forwarded headers. Being on a private network
+// isn't enough to trust a caller.
 export let app = defineCricketApp({
   name: 'Trusted proxy example',
   trustProxy: { peers: ['127.0.0.1', '::1'] },

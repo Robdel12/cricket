@@ -216,6 +216,8 @@ function runProcess(command, args, {
       ...process.env
     };
 
+    // Apps pick their test database and skip starting a server when NODE_ENV is test.
+    env.NODE_ENV ??= 'test';
     delete env.NODE_TEST_CONTEXT;
 
     let child = spawn(command, args, {

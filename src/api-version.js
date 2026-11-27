@@ -166,6 +166,52 @@ function normalizedEndpointVersions(family, overrides) {
 }
 
 /**
+ * @guide versions Version your API
+ *
+ * Clients don't all update at once. API versions let old clients keep working while your routes move forward, without copying every route.
+ *
+ * The idea is simple: each route has one current contract. Older versions only describe the differences, as a normalizer for old request bodies and a serializer for old responses.
+ *
+ * ## Define a version family
+ *
+ * A family names the header clients send, the current version, and the default for clients that send nothing.
+ *
+ * ```js
+ * import { defineApiVersions } from '@robdel12/cricket';
+ *
+ * export let sdkVersions = defineApiVersions({
+ *   name: 'sessions.sdk',
+ *   header: 'Sessions-Version',
+ *   current: '2026-09-01',
+ *   default: '2025-11-15',
+ *   versions: {
+ *     '2025-11-15': { deprecatedAt: '2026-09-01', sunsetAt: '2027-09-01' },
+ *     '2026-09-01': {}
+ *   }
+ * });
+ * ```
+ *
+ * ## Opt a route in
+ *
+ * Here the old API sent `duration_seconds`, and the current one uses `durationMinutes`:
+ *
+ * <!-- example examples/versioned-api.js -->
+ *
+ * Old requests run through the normalizer, then get checked against the current `body` schema. The handler only ever sees the current shape. On the way out, Cricket checks the current response first, then runs the old serializer.
+ *
+ * Routes without `apiVersions` ignore the version header completely. To negotiate a version on a route that hasn't changed, use `apiVersions: sdkVersions()`.
+ *
+ * ## What clients see
+ *
+ * Cricket echoes the selected version in a response header and adds `Vary`. A version it doesn't know gets a 400. Rules and handlers get `apiVersion` in case they need to load different data, but services never see it.
+ *
+ * ## Retire a version
+ *
+ * Deprecation and sunset dates are announcements. Nothing switches off on a timer. When you're ready, delete the version from the family and remove its normalizers and serializers. Requests asking for it then get a 400.
+ *
+ * Generate OpenAPI for a specific version with `cricket docs --api-version sessions.sdk=2025-11-15`.
+ */
+/**
  * Define one immutable API version family that endpoints can opt into.
  *
  * The returned function binds historical compatibility deltas to an endpoint.
