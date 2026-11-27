@@ -209,11 +209,22 @@ export function normalizeLogger(logger, context = {}) {
  * let project = await trace.span('projects.find', { slug }, () => services.projects.findBySlug(slug));
  * ```
  *
- * Then pull one request's timeline out of your JSON logs:
+ * When a request queues work, pass `{ requestId: request.id }` to `jobs.enqueue`. Cricket saves that link on the envelope. Pass the app logger to the producer to include the enqueue event in your JSON logs.
+ *
+ * <!-- example examples/request-job-trace.js -->
+ *
+ * Run the example and save its JSON logs. Then use either the request ID or the `jobRunId` from `job.started` to read the same workflow.
  *
  * ```sh
- * docker logs api | pnpm exec cricket trace req_123
+ * node examples/request-job-trace.js > cricket.log
+ * pnpm exec cricket trace <id> < cricket.log
  * ```
+ *
+ * ## Export events
+ *
+ * Set `observability: { export: sendEvent }` on the app to send request, span, and worker events to your own client. Use `cricket inspect` to check whether exports are enabled. Cricket queues up to 256 waiting events per runtime and sends them one at a time. It drops new events when the queue is full. Shutdown clears the queue without waiting for exports. Flush your client in app cleanup if it manages its own buffer.
+ *
+ * Export callbacks receive individual immutable events without replay or app services. Do asynchronous I/O in the callback and keep synchronous work small. Use `observe` when you need an awaited callback or the terminal replay in a test.
  *
  * ## Reporting errors
  *

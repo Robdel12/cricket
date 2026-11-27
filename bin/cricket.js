@@ -120,7 +120,7 @@ function apiVersionSelections(args) {
  * - `docs` writes OpenAPI from your app.
  * - `migrate` runs your Knex migrations.
  * - `test` runs your tests with `NODE_ENV=test`.
- * - `trace` pulls one request out of your JSON logs.
+ * - `trace` follows a request and its jobs by request ID or job run ID.
  *
  * `init agents` adds missing guidance. Use `init agents . --force` to refresh the marked block in `AGENTS.md` and the shipped skill files. This replaces edits inside those files and keeps project notes outside the block.
  */
@@ -140,7 +140,7 @@ function usage() {
   cricket migrate current-version <appModule> [--env name]
   cricket migrate make <appModule> <name> [--env name]
   cricket test [targets...] [--grep text] [--reporter cricket|spec|dot|tap] [--json] [--output report.json] [--coverage]
-  cricket trace <requestId>
+  cricket trace <requestId|jobRunId>
 
 Domain types:
   ${domainScaffoldFileTypes.join(', ')}
@@ -304,21 +304,21 @@ async function readStdin() {
 }
 
 /**
- * Run the `cricket trace` command and reconstruct one request from JSON logs.
+ * Run the `cricket trace` command and reconstruct a workflow from JSON logs.
  *
  * @param {string[]} args - Raw CLI arguments after `cricket`.
  * @returns {Promise<void>} Resolves after trace output is written.
  */
 async function runTrace(args) {
-  let [, requestId] = args;
+  let [, id] = args;
 
-  if (!requestId)
-    throw new Error('Request id is required');
+  if (!id)
+    throw new Error('Request ID or job run ID is required');
 
   let input = await readStdin();
-  let logs = traceLogs(input, requestId);
+  let logs = traceLogs(input, id);
 
-  console.log(formatTrace(logs, requestId));
+  console.log(formatTrace(logs, id));
 }
 
 /**

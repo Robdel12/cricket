@@ -1309,7 +1309,7 @@ let producer = await createCricketJobs({
 await producer.jobs.enqueue(generateReport, { reportId, accountId });
 ```
 
-Pass `runAt` or `delayMs` as a third argument to run it later.
+Pass `runAt` or `delayMs` as a third argument to run it later. For work started by HTTP, pass `requestId: request.id` in the same options to link the job to the [request trace](guide.md#follow-a-request).
 
 ### Start a worker
 
@@ -1459,11 +1459,85 @@ Wrap the slow or important bits in a span:
 let project = await trace.span('projects.find', { slug }, () => services.projects.findBySlug(slug));
 ```
 
-Then pull one request's timeline out of your JSON logs:
+When a request queues work, pass `{ requestId: request.id }` to `jobs.enqueue`. Cricket saves that link on the envelope. Pass the app logger to the producer to include the enqueue event in your JSON logs.
+
+```js title="examples/request-job-trace.js"
+import {
+  createCricketJobs,
+  createCricketLogger,
+  createLocalQueueDriver,
+  defineCricketApp,
+  defineEndpoint,
+  defineJob,
+  localQueue,
+  respond,
+  startCricketApp,
+  startCricketWorker,
+  z
+} from '@robdel12/cricket';
+
+let renderReport = defineJob({
+  name: 'reports.render',
+  input: z.object({ reportId: z.string() }),
+  queue: localQueue({ name: 'reports' }),
+  run: ({ input, trace }) =>
+    trace.span('reports.renderDocument', () => ({ rendered: input.reportId }))
+});
+
+let logger = createCricketLogger();
+let driver = createLocalQueueDriver();
+let producer = await createCricketJobs({ queues: { driver }, logger });
+
+let requestReport = defineEndpoint({
+  method: 'POST',
+  path: '/reports',
+  body: z.object({ reportId: z.string() }),
+  async handler({ input, request, trace }) {
+    let { envelope } = await trace.span('reports.enqueue', () =>
+      producer.jobs.enqueue(renderReport, input.body, { requestId: request.id })
+    );
+    return respond(202, { jobId: envelope.id });
+  }
+});
+
+let app = defineCricketApp({
+  domains: [{ name: 'reports', endpoints: [requestReport], jobs: [renderReport] }],
+  logger
+});
+let worker = await startCricketWorker(app, { queues: { driver } });
+
+try {
+  let server = await startCricketApp(app, { host: '127.0.0.1', port: 0 });
+  try {
+    let response = await fetch(new URL('/reports', server.origin), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ reportId: 'r1' })
+    });
+    if (response.status !== 202)
+      throw new Error(`Report enqueue failed with status ${response.status}`);
+    await response.json();
+    await worker.drain();
+  } finally {
+    await server.stop();
+  }
+} finally {
+  await worker.cleanup();
+}
+```
+
+Run the example and save its JSON logs. Then use either the request ID or the `jobRunId` from `job.started` to read the same workflow.
 
 ```sh
-docker logs api | pnpm exec cricket trace req_123
+node examples/request-job-trace.js > cricket.log
+pnpm exec cricket trace <id> < cricket.log
 ```
+
+### Export events
+
+Set `observability: { export: sendEvent }` on the app to send request, span, and worker events to your own client. Use `cricket inspect` to check whether exports are enabled. Cricket queues up to 256 waiting events per runtime and sends them one at a time. It drops new events when the queue is full. Shutdown clears the queue without waiting for exports. Flush your client in app cleanup if it manages its own buffer.
+
+Export callbacks receive individual immutable events without replay or app services. Do asynchronous I/O in the callback and keep synchronous work small. Use `observe` when you need an awaited callback or the terminal replay in a test.
 
 ### Reporting errors
 

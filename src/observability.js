@@ -30,6 +30,57 @@ function safeFailure(error) {
   };
 }
 
+let maxPendingExports = 256;
+
+function createEventExporter(send, logger) {
+  let pending = [];
+  let running = false;
+  let closed = false;
+
+  async function sendBatch() {
+    for (let remaining = pending.length; remaining > 0 && pending.length; remaining--) {
+      let event = pending.shift();
+
+      try {
+        await send(event);
+      } catch (error) {
+        if (closed)
+          return;
+
+        try {
+          logger?.error?.('observability.export_failed', { event: event.type, name: error?.name });
+        } catch {
+          // Export failures must stay outside the runtime path.
+        }
+      }
+    }
+
+    if (pending.length)
+      setImmediate(sendBatch);
+    else
+      running = false;
+  }
+
+  return {
+    enqueue(event) {
+      if (closed || pending.length >= maxPendingExports)
+        return;
+
+      pending.push(event);
+
+      if (!running) {
+        running = true;
+        setImmediate(sendBatch);
+      }
+    },
+
+    close() {
+      closed = true;
+      pending.length = 0;
+    }
+  };
+}
+
 let noopReplay = Object.freeze({
   async emit() {}
 });
@@ -37,13 +88,14 @@ let noopReplay = Object.freeze({
 /**
  * Normalize app observability config into Cricket's event emitter shape.
  *
- * Apps observe immutable lifecycle events. Observer failures are reported to the
- * logger and never change the HTTP response path.
+ * Apps observe immutable lifecycle events. Observers are awaited and their
+ * errors are logged. Exporters receive the same events without replay, on a
+ * bounded queue outside request and job completion.
  *
  * @param {Function|object|undefined} config - Observability config or observer.
  * @param {object} options
  * @param {object} options.logger - Cricket logger.
- * @returns {{enabled: boolean, requestId: Function, createReplay: Function, emit: Function}}
+ * @returns {{enabled: boolean, requestId: Function, createReplay: Function, emit: Function, close: Function|undefined}}
  */
 export function normalizeObservability(config, {
   logger
@@ -53,12 +105,14 @@ export function normalizeObservability(config, {
     ? config.requestId
     : randomUUID;
 
-  async function emit(event, context) {
-    if (!observers.length)
-      return;
+  let sendEvent = config?.export;
+  if (sendEvent !== undefined && typeof sendEvent !== 'function')
+    throw new Error('observability.export must be a function');
 
-    let observed = freezeEvent(event);
+  let exporter = sendEvent ? createEventExporter(sendEvent, logger) : undefined;
+  let enabled = observers.length > 0 || Boolean(exporter);
 
+  async function notifyObservers(observed, context) {
     for (let observe of observers) {
       try {
         await observe(observed, context);
@@ -76,9 +130,19 @@ export function normalizeObservability(config, {
     }
   }
 
+  async function emit(event, context) {
+    if (!enabled)
+      return;
+
+    let observed = freezeEvent(event);
+    exporter?.enqueue(observed);
+    if (observers.length)
+      await notifyObservers(observed, context);
+  }
+
   function createReplay(requestContext) {
     if (!observers.length)
-      return noopReplay;
+      return exporter ? { emit } : noopReplay;
 
     let events = [];
     let context = requestContext === undefined
@@ -90,18 +154,20 @@ export function normalizeObservability(config, {
         let replayEvent = freezeEvent(event);
         events.push(replayEvent);
 
-        await emit({
+        exporter?.enqueue(replayEvent);
+        await notifyObservers(Object.freeze({
           ...replayEvent,
           replay: event.terminal ? Object.freeze([...events]) : undefined
-        }, context);
+        }), context);
       }
     };
   }
 
   return {
-    enabled: observers.length > 0,
+    enabled,
     requestId,
     createReplay,
-    emit
+    emit,
+    close: exporter?.close
   };
 }

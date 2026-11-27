@@ -10,6 +10,10 @@ function requestIdFor(log) {
   return log?.requestId ?? log?.metadata?.requestId;
 }
 
+function jobRunIdFor(log) {
+  return log?.jobRunId ?? log?.metadata?.jobRunId ?? log?.span?.context?.jobRunId;
+}
+
 function routeNameFor(log) {
   let route = log.route ?? log.metadata?.route;
 
@@ -35,6 +39,7 @@ function objectValue(value) {
 function requestSummary(log) {
   let request = log.metadata?.request ?? {};
   let response = log.metadata?.response ?? {};
+  let { jobName, jobRunId, envelopeId, attempt, availableAt } = log.metadata ?? {};
   let parts = [
     log.time,
     log.level?.toUpperCase(),
@@ -42,7 +47,12 @@ function requestSummary(log) {
     routeNameFor(log),
     request.method,
     request.path,
-    response.status ? `status=${response.status}` : undefined
+    response.status ? `status=${response.status}` : undefined,
+    jobName,
+    jobRunId,
+    attempt ? `attempt=${attempt}` : undefined,
+    envelopeId ? `job=${envelopeId}` : undefined,
+    availableAt ? `availableAt=${availableAt}` : undefined
   ];
 
   return parts.filter(Boolean).join(' ');
@@ -206,16 +216,16 @@ function renderTimelineNode(node, depth, seen) {
   return lines;
 }
 
-function formatLifecycleTrace(logs, requestId) {
+function formatLifecycleTrace(logs, id) {
   return [
-    `Trace ${requestId}`,
+    `Trace ${id}`,
     ...logs.map(log => `  ${requestSummary(log)}`)
   ].join('\n');
 }
 
-function formatTimelineTrace(logs, requestId) {
+function formatTimelineTrace(logs, id) {
   let roots = createTimelineNodes(logs);
-  let lines = [`Trace ${requestId}`];
+  let lines = [`Trace ${id}`];
   let seen = new Set();
 
   for (let node of roots)
@@ -225,34 +235,38 @@ function formatTimelineTrace(logs, requestId) {
 }
 
 /**
- * Parse newline-delimited Cricket JSON logs and keep events for one request.
+ * Find the request and related jobs by a request ID or job run ID.
  *
- * @param {string} input - Raw log text, usually from stdin.
- * @param {string} requestId - Request id to trace.
+ * @param {string} input - Newline-delimited JSON logs.
+ * @param {string} id - Request ID or job run ID.
  * @returns {object[]} Matching structured log entries.
  */
-export function traceLogs(input, requestId) {
-  return input
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(Boolean)
-    .map(parseJsonLine)
-    .filter(log => requestIdFor(log) === requestId);
+export function traceLogs(input, id) {
+  let logs = input.split(/\r?\n/).map(parseJsonLine).filter(Boolean);
+  let linkedJob = logs.find(log => {
+    if (jobRunIdFor(log) !== id)
+      return false;
+
+    let requestId = requestIdFor(log);
+    return requestId && requestId !== id;
+  });
+  let requestId = requestIdFor(linkedJob) ?? id;
+  return logs.filter(log => requestIdFor(log) === requestId || jobRunIdFor(log) === id);
 }
 
 /**
- * Format a request trace for terminal output.
+ * Format a trace for terminal output.
  *
- * @param {object[]} logs - Structured log entries for one request.
- * @param {string} requestId - Request id being traced.
+ * @param {object[]} logs - Matching structured log entries.
+ * @param {string} id - Request ID or job run ID used for the lookup.
  * @returns {string} Human-readable trace.
  */
-export function formatTrace(logs, requestId) {
+export function formatTrace(logs, id) {
   if (!logs.length)
-    return `No Cricket logs found for ${requestId}`;
+    return `No Cricket logs found for ${id}`;
 
   if (logs.some(isSpanLog))
-    return formatTimelineTrace(logs, requestId);
+    return formatTimelineTrace(logs, id);
 
-  return formatLifecycleTrace(logs, requestId);
+  return formatLifecycleTrace(logs, id);
 }

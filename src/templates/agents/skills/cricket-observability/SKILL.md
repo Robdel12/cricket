@@ -7,16 +7,22 @@ description: Diagnose or change Cricket logs, traces, error reporting, readiness
 
 1. Run `pnpm exec cricket inspect api/index.js` to see the loaded contracts
    and reporting setup.
-2. Reproduce through HTTP or the worker. Find the request or job ID.
-3. Use the test state or runtime logs to check events and spans. Run
-   `pnpm exec cricket trace <requestId> < cricket.log` on newline-delimited
-   JSON logs to see the request timeline. Use the job run ID to find job spans.
+2. Reproduce through HTTP or the worker. Get the request ID or `jobRunId`.
+3. Run `pnpm exec cricket trace <id> < cricket.log` on the API and worker JSON
+   logs. Either ID finds the request and its linked jobs.
+
+Pass `{ requestId: request.id }` to `jobs.enqueue` when HTTP starts a job.
+Give the producer the app logger so the trace includes enqueue.
 
 Use the logger Cricket supplies. Add stable fields with a child logger and
 time real work with `trace.span(name, metadata, fn)`. Keep secrets, raw
 forwarding details, and request bodies out of logs. The default JSON format
 works with collectors and `cricket trace`. Use `format: 'pretty'` for
 local reading.
+
+Use `observability.export` for async delivery to an external client. It
+receives individual events from a bounded queue and can drop events under
+load or during shutdown. Use `observe` for awaited callbacks or replay.
 
 Configure `onError` once for HTTP error reporting. Use
 `withError(respond(status, safeBody), error)` when returning a safe error

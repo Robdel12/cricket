@@ -677,7 +677,7 @@ export function defineEndpoint(config) {
       let handlerTraceName = traceName ?? operationIdFor(endpoint);
       let result = await timePhase(timing, 'handlerMs', () => {
         if (typeof handlerContext.trace?.span === 'function')
-          return handlerContext.trace.span(handlerTraceName, () => handler(handlerContext));
+          return handlerContext.trace.span(handlerTraceName, trace => handler({ ...handlerContext, trace }));
 
         return handler(handlerContext);
       });
@@ -712,7 +712,7 @@ export function defineEndpoint(config) {
         response = await timePhase(timing, 'handlerMs', () => {
           let handlerTraceName = traceName ?? operationIdFor(endpoint);
           if (typeof handlerContext.trace?.span === 'function')
-            return handlerContext.trace.span(handlerTraceName, () => fetch(fetchRequest, handlerContext));
+            return handlerContext.trace.span(handlerTraceName, trace => fetch(fetchRequest, { ...handlerContext, trace }));
           return fetch(fetchRequest, handlerContext);
         });
         if (!(response instanceof Response))

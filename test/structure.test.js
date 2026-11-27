@@ -748,7 +748,8 @@ describe('Cricket CLI', () => {
           requestId() {
             return 'req_test';
           },
-          observe() {}
+          observe() {},
+          export() {}
         },
       });
     `);
@@ -774,8 +775,8 @@ describe('Cricket CLI', () => {
       disabledAppPath
     ]);
 
-    assert.match(result.stdout, /Observability: request IDs custom, events enabled, replay terminal events, errors onError/);
-    assert.match(disabled.stdout, /Observability: request IDs default, events disabled, replay disabled, errors disabled/);
+    assert.match(result.stdout, /Observability: request IDs custom, events enabled, replay terminal events, errors onError, exports enabled/);
+    assert.match(disabled.stdout, /Observability: request IDs default, events disabled, replay disabled, errors disabled, exports disabled/);
   });
 
   it('writes OpenAPI docs for a real Cricket app module', async () => {

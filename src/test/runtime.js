@@ -37,6 +37,7 @@ function appWithTestObservability(app, testState) {
   return {
     ...app,
     observability: {
+      export: original?.export,
       requestId(context) {
         return requestIdFromHeader(context)
           ?? original?.requestId?.(context)

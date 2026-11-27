@@ -77,6 +77,10 @@ function availableAtFor({
   return createdAt.toISOString();
 }
 
+export function jobRequestId(envelope) {
+  return envelope.requestId ?? envelope.context?.requestId;
+}
+
 export function parseJobInput(job, input) {
   return parseZod(job.input, input, jobInputFailed);
 }
@@ -96,6 +100,7 @@ export function parseJobContext(job, context) {
  * @param {object} input - Raw input to validate with the job input schema.
  * @param {object} [options]
  * @param {object} [options.context] - Raw enqueue context to validate.
+ * @param {string} [options.requestId] - Originating Cricket request ID for trace lookup.
  * @param {Date|string} [options.runAt] - Time when the envelope becomes claimable.
  * @param {number} [options.delayMs] - Relative delay before the envelope becomes claimable.
  * @param {string} [options.scheduleKey] - Schedule key that materialized this envelope.
@@ -107,6 +112,7 @@ export function parseJobContext(job, context) {
  */
 export function planJobEnvelope(job, input, {
   context,
+  requestId,
   runAt,
   delayMs,
   scheduleKey,
@@ -118,6 +124,7 @@ export function planJobEnvelope(job, input, {
   if (!job.queue)
     throw new Error(`Job ${job.name} needs a queue before it can be planned`);
 
+  let correlationId = optionalStringMetadata(requestId, 'Job requestId');
   let parsedInput = parseJobInput(job, input);
   let parsedContext = parseJobContext(job, context);
   let calculationContext = {
@@ -150,6 +157,7 @@ export function planJobEnvelope(job, input, {
     id: createId(),
     name: job.name,
     queueName: job.queue.name,
+    ...(correlationId ? { requestId: correlationId } : {}),
     ...(idempotencyKey ? { idempotencyKey } : {}),
     ...(coalesceKey ? { coalesceKey } : {}),
     ...(priority === undefined ? {} : { priority }),
