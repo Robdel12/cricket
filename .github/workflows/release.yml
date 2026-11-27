@@ -1,0 +1,67 @@
+name: Release package
+
+# Publishing a GitHub release stages that version on npm. A maintainer then
+# approves it with 2FA, so nothing reaches npm without a human. See
+# docs/releasing.md for the whole flow.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cricket-npm-release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.x
+      # Staged publishing needs npm 11.15 or newer. Pin it so releases don't
+      # depend on whichever npm ships with the runner's Node.
+      - run: npm install --global npm@11.19.1
+      - run: |
+          corepack enable
+          corepack prepare pnpm@11.3.0 --activate
+          pnpm install --frozen-lockfile
+
+      - name: Check the tag matches package.json and main
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="v$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$version" ]; then
+            echo "::error::Release tag $TAG doesn't match package.json version $version."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Release $TAG must point at a commit on main."
+            exit 1
+          fi
+
+      - run: pnpm run check
+      - run: pnpm test
+      - run: pnpm run test:redis
+
+      # Prereleases such as 1.0.0-rc.1 go to the next tag, so `pnpm add` keeps
+      # installing the latest stable version. Provenance is automatic with OIDC.
+      - name: Stage the package on npm
+        env:
+          PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          tag=latest
+          if [ "$PRERELEASE" = "true" ] || node -p "require('./package.json').version" | grep -q -- -; then tag=next; fi
+          npm stage publish --ignore-scripts --tag "$tag"

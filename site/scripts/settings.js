@@ -12,7 +12,7 @@ export function settings(environment = process.env) {
   return { version, path, base: `${path}${version}/` };
 }
 
-/** The package spec readers install: the repo for Next, or the release tag. */
+/** The package spec readers install: the repo for Next, or that release from npm. */
 export function installSource(version) {
-  return `github:Robdel12/cricket${version === 'next' ? '' : '#' + version}`;
+  return version === 'next' ? 'github:Robdel12/cricket' : `@robdel12/cricket@${version.slice(1)}`;
 }

@@ -11,7 +11,7 @@ No ORM, no classes to extend, no magic wiring. Just plain functions you can read
 You'll need Node 24 or newer.
 
 ```sh
-pnpm add github:Robdel12/cricket
+pnpm add @robdel12/cricket
 ```
 
 ## Your first route
@@ -64,7 +64,7 @@ pnpm test
 pnpm docs:dev
 ```
 
-The docs build from comments in the source. See [Working on the docs](docs/documentation.md) for how that works, and [the vision](vision.md) for why Cricket makes the choices it does.
+The docs build from comments in the source. [Releasing Cricket](docs/releasing.md) covers shipping a new version. See [Working on the docs](docs/documentation.md) for how that works, and [the vision](vision.md) for why Cricket makes the choices it does.
 
 ## License
 
