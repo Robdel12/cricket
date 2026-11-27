@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   workflow_run:
-    workflows: [Release documentation]
+    workflows: [Release]
     types: [completed]
   workflow_dispatch:
 

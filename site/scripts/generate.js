@@ -73,6 +73,8 @@ export async function generate({ base, commit, version }) {
   let modules = publicApi(root, exports);
   let output = join(site, 'src/content/docs');
   let sourceLink = (path, hash) => `${repository}/blob/${commit}/${path}${hash ? '#' + hash : ''}`;
+  // Pages under Contribute, keyed by the source file other docs link to.
+  let contributing = new Map([['docs/documentation.md', 'documentation'], ['vision.md', 'vision']]);
   let guideAnchors = new Map(guideOrder.map(key => [anchor(guides.get(key).title), `guides/${key}/`]));
 
   function siteLinks(body) {
@@ -80,7 +82,8 @@ export async function generate({ base, commit, version }) {
       let [file, hash] = href.split('#');
       if (file === 'api.md') return `](${base}api/)`;
       if (file === 'guide.md' && guideAnchors.has(hash)) return `](${base}${guideAnchors.get(hash)})`;
-      if (file === '../vision.md') return `](${base}contributing/vision/)`;
+      let contributingPage = contributing.get(file === '../vision.md' ? 'vision.md' : `docs/${file}`);
+      if (contributingPage) return `](${base}contributing/${contributingPage}/${hash ? '#' + hash : ''})`;
       if (file.startsWith('../')) return `](${sourceLink(file.slice(3), hash)})`;
       return link;
     });
@@ -163,7 +166,7 @@ export async function generate({ base, commit, version }) {
   }
   await page('api', { title: api.title }, `${siteLinks(api.body)}\n\n${imports.join('\n')}`);
 
-  for (let [file, slug] of [['docs/documentation.md', 'documentation'], ['vision.md', 'vision']]) {
+  for (let [file, slug] of contributing) {
     let [heading, ...body] = (await read(file)).split('\n');
     await page(`contributing/${slug}`, { title: heading.replace(/^# /, '') }, siteLinks(body.join('\n')));
   }

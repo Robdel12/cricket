@@ -11,7 +11,7 @@ No ORM, no classes to extend, no magic wiring. Just plain functions you can read
 You'll need Node 24 or newer.
 
 ```sh
-pnpm add github:Robdel12/cricket
+pnpm add @robdel12/cricket
 ```
 
 ## Your first route

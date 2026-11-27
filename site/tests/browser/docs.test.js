@@ -125,7 +125,7 @@ test('visitors can open the stable release, switch to Next, and search within ea
   await main.getByRole('heading', { name: 'Your first route' }).waitFor();
   assert.equal(await main.getByText(sentence, { exact: false }).count(), 0);
   assert.ok(await main.getByText('Hey, Cricket!', { exact: false }).count());
-  await main.getByText(`pnpm add github:Robdel12/cricket#${tag}`, { exact: true }).waitFor();
+  await main.getByText(`pnpm add @robdel12/cricket@${tag.slice(1)}`, { exact: true }).waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 390);
   let releaseResult = await search();
   assert.ok((await releaseResult.getAttribute('href')).startsWith(base + tag + '/api/'));

@@ -4,6 +4,18 @@
   "type": "module",
   "description": "Node APIs that explain themselves.",
   "license": "MIT",
+  "keywords": [
+    "api",
+    "framework",
+    "node",
+    "http",
+    "zod",
+    "openapi",
+    "contracts",
+    "functional",
+    "domain-driven",
+    "agents"
+  ],
   "packageManager": "pnpm@11.3.0",
   "engines": {
     "node": ">=24"

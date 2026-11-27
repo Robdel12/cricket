@@ -25,7 +25,7 @@ Restart the dev server after editing source comments. If code blocks look unstyl
 
 ## Versions and publishing
 
-Next builds from `main`. A published GitHub release builds from its exact tag, which has to match the version in `package.json`. The release gets a `cricket-docs-<tag>.tar.gz` asset with its HTML, search index, and commit info. Keep that asset with the release. To change published docs, cut a new version.
+Next builds from `main`. To ship a version, publish a GitHub release tagged `vX.Y.Z` from `main`. The Release workflow commits the version bump, moves the tag onto that commit, publishes to npm, pushes the bump to `main`, and builds that version's docs. The release gets a `cricket-docs-<tag>.tar.gz` asset with its HTML, search index, and commit info. Keep that asset with the release. To change published docs, cut a new version.
 
 The Docs workflow downloads those archives and puts them next to Next. The homepage opens the latest stable release, or Next until there is one. Prereleases show up in the version picker. Each version has its own search, and switching versions takes you to that version's homepage.
 
