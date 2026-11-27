@@ -28,6 +28,7 @@ test('publication retains frozen releases, prefers stable versions and refuses r
   let frozen = await fingerprint(join(output, 'v1.2.0'));
   let index = JSON.parse(await readFile(join(output, 'versions.json'), 'utf8'));
   assert.equal(index.latest, 'v1.2.0');
+  assert.match(await readFile(join(output, 'index.html'), 'utf8'), /<link rel="canonical" href="\/cricket\/v1\.2\.0\/">/);
   assert.deepEqual(index.versions.map(entry => entry.version), ['next', 'v2.0.0-rc.1', 'v1.2.0']);
   await writeFile(join(nextBuild, 'index.html'), 'A new guide');
   await assemble({ next: nextBuild, archives, output });

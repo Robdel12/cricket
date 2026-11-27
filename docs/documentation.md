@@ -19,6 +19,8 @@ After you change a guide, refresh the GitHub copies and commit them with the sou
 pnpm --filter cricket-docs generate --write-markdown
 ```
 
+Each page's search description is its intro: the prose before the first heading. So open every guide with a sentence or two that says what the page is for. Link previews use `site/public/og.png`, so update that card if the headline changes.
+
 Restart the dev server after editing source comments. If code blocks look unstyled after changing the code theme, delete `site/.astro` first.
 
 ## Versions and publishing

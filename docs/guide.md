@@ -18,7 +18,7 @@ New here? You can [get a route running](guide.md#your-first-route) in a few minu
 
 ## Your first route
 
-Let's get a route running. You'll need Node 24 or newer and pnpm.
+Let's get a route running. You'll need Node 24 or newer and pnpm. In a few minutes you'll have a real endpoint that checks what comes in and what goes out.
 
 ### Install Cricket
 
