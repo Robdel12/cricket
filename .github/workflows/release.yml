@@ -1,8 +1,8 @@
-name: Release package
+name: Release
 
-# Publishing a GitHub release stages that version on npm. A maintainer then
-# approves it with 2FA, so nothing reaches npm without a human. See
-# docs/releasing.md for the whole flow.
+# Publish a GitHub release tagged vX.Y.Z from main and this does the rest:
+# commits the version bump, moves the tag onto that commit, publishes to npm,
+# pushes the bump to main, and publishes that version's docs.
 on:
   release:
     types: [published]
@@ -11,44 +11,44 @@ permissions:
   contents: read
 
 concurrency:
-  group: cricket-npm-release-${{ github.event.release.tag_name }}
+  group: cricket-release-${{ github.event.release.tag_name }}
   cancel-in-progress: false
 
+env:
+  TAG: ${{ github.event.release.tag_name }}
+  CRICKET_DOCS_PATH: ${{ vars.CRICKET_DOCS_PATH || '/cricket/' }}
+
 jobs:
-  publish:
+  npm:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: read
+      contents: write
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: refs/tags/${{ github.event.release.tag_name }}
           fetch-depth: 0
-          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.x
-      # Staged publishing needs npm 11.15 or newer. Pin it so releases don't
-      # depend on whichever npm ships with the runner's Node.
+      # Trusted publishing needs a recent npm. Pin it so releases don't depend
+      # on whichever npm ships with the runner's Node.
       - run: npm install --global npm@11.19.1
       - run: |
           corepack enable
           corepack prepare pnpm@11.3.0 --activate
           pnpm install --frozen-lockfile
 
-      - name: Check the tag matches package.json and main
-        env:
-          TAG: ${{ github.event.release.tag_name }}
+      - name: Check the tag
         run: |
-          version="v$(node -p "require('./package.json').version")"
-          if [ "$TAG" != "$version" ]; then
-            echo "::error::Release tag $TAG doesn't match package.json version $version."
+          if ! node -e "process.exit(/^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(process.env.TAG) ? 0 : 1)"; then
+            echo "::error::Release tags look like v1.2.3 or v1.2.3-rc.1, not $TAG."
             exit 1
           fi
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::Release $TAG must point at a commit on main."
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::Release $TAG has to point at a commit on main."
             exit 1
           fi
 
@@ -56,12 +56,73 @@ jobs:
       - run: pnpm test
       - run: pnpm run test:redis
 
+      - run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+      # The tag moves onto the bump commit, so the release, the tag, and the
+      # npm package all have the same package.json. Reruns skip this.
+      - name: Commit the version and move the tag onto it
+        run: |
+          npm version "${TAG#v}" --no-git-tag-version --allow-same-version
+          if git diff --quiet; then exit 0; fi
+          git commit --all --message "🔖 Release $TAG"
+          git tag --force "$TAG"
+          git push --force origin "refs/tags/$TAG"
+
       # Prereleases such as 1.0.0-rc.1 go to the next tag, so `pnpm add` keeps
       # installing the latest stable version. Provenance is automatic with OIDC.
-      - name: Stage the package on npm
+      - name: Publish to npm
         env:
           PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
-          tag=latest
-          if [ "$PRERELEASE" = "true" ] || node -p "require('./package.json').version" | grep -q -- -; then tag=next; fi
-          npm stage publish --ignore-scripts --tag "$tag"
+          if npm view "@robdel12/cricket@${TAG#v}" version >/dev/null 2>&1; then
+            echo "${TAG#v} is already on npm."
+            exit 0
+          fi
+          dist_tag=latest
+          if [ "$PRERELEASE" = "true" ] || [[ "$TAG" == *-* ]]; then dist_tag=next; fi
+          npm publish --ignore-scripts --tag "$dist_tag"
+
+      # Main may have moved since the release was cut. The bump only touches
+      # the version line, so it replays cleanly on top.
+      - name: Push the version bump to main
+        run: |
+          git fetch origin main
+          if git merge-base --is-ancestor HEAD origin/main; then exit 0; fi
+          git rebase origin/main
+          git push origin HEAD:main
+
+  docs:
+    needs: npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ github.event.release.tag_name }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.x
+      - run: |
+          corepack enable
+          corepack prepare pnpm@11.3.0 --activate
+          pnpm install --frozen-lockfile
+      - name: Build the tagged documentation
+        env:
+          CRICKET_DOCS_VERSION: ${{ github.event.release.tag_name }}
+        run: pnpm docs:build
+      - name: Archive the documentation
+        env:
+          CRICKET_DOCS_VERSION: ${{ github.event.release.tag_name }}
+        run: node site/scripts/archive.js pack site/dist "$RUNNER_TEMP/cricket-release/cricket-docs-$CRICKET_DOCS_VERSION.tar.gz"
+      # The Docs workflow deploys this archive once the whole release finishes.
+      - name: Attach the archive to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: node site/scripts/releases.js upload "$RUNNER_TEMP/cricket-release" "$TAG"

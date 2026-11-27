@@ -65,7 +65,7 @@ export default defineConfig({
         { slug: 'api' },
         { label: 'Import paths', items: [{ autogenerate: { directory: 'api' } }], collapsed: true }
       ] },
-      { label: 'Contribute', items: [{ slug: 'contributing/documentation' }, { slug: 'contributing/releasing' }, { slug: 'contributing/vision' }] }
+      { label: 'Contribute', items: [{ slug: 'contributing/documentation' }, { slug: 'contributing/vision' }] }
     ]
   })]
 });

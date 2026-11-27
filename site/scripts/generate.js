@@ -74,7 +74,7 @@ export async function generate({ base, commit, version }) {
   let output = join(site, 'src/content/docs');
   let sourceLink = (path, hash) => `${repository}/blob/${commit}/${path}${hash ? '#' + hash : ''}`;
   // Pages under Contribute, keyed by the source file other docs link to.
-  let contributing = new Map([['docs/documentation.md', 'documentation'], ['docs/releasing.md', 'releasing'], ['vision.md', 'vision']]);
+  let contributing = new Map([['docs/documentation.md', 'documentation'], ['vision.md', 'vision']]);
   let guideAnchors = new Map(guideOrder.map(key => [anchor(guides.get(key).title), `guides/${key}/`]));
 
   function siteLinks(body) {
