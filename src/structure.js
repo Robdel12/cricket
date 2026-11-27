@@ -455,8 +455,12 @@ let agentGuidanceEnd = '<!-- /cricket-agent-guidance -->';
 let agentTemplateRoot = new URL('./templates/agents/', import.meta.url);
 let agentSkillFiles = [
   'cricket/SKILL.md',
+  'cricket/references/http.md',
   'cricket-jobs/SKILL.md',
+  'cricket-jobs/references/redis.md',
+  'cricket-machines/SKILL.md',
   'cricket-observability/SKILL.md',
+  'cricket-observability/references/errors-and-shutdown.md',
   'cricket-testing/SKILL.md'
 ];
 
@@ -474,20 +478,13 @@ function replaceMarkedSection(content, section) {
   if (start === -1 || end === -1 || end < start)
     return appendSection(content, section);
 
-  return `${content.slice(0, start)}${section}${content.slice(end + agentGuidanceEnd.length)}`;
+  let beforeBlock = content.slice(0, start);
+  let afterBlock = content.slice(end + agentGuidanceEnd.length);
+  return `${beforeBlock}${section.trimEnd()}${afterBlock}`;
 }
 
 async function createAgentGuidanceContent() {
   return await fs.readFile(new URL('AGENTS.md', agentTemplateRoot), 'utf8');
-}
-
-function trackScaffoldResult(result, buckets) {
-  if (result.status === 'created')
-    buckets.created.push(result.filePath);
-  else if (result.status === 'updated')
-    buckets.updated.push(result.filePath);
-  else
-    buckets.skipped.push(result.filePath);
 }
 
 async function upsertAgentGuidance(root, {
@@ -525,32 +522,29 @@ async function upsertAgentGuidance(root, {
  *
  * @param {object} [options]
  * @param {string} [options.root='.'] - Project root.
- * @param {boolean} [options.force=false] - Overwrite existing files when true.
+ * @param {boolean} [options.force=false] - Replace the Cricket block and shipped skill files.
  * @returns {Promise<{root: string, created: string[], skipped: string[], updated: string[]}>}
  */
 export async function scaffoldAgentFiles({
   root = '.',
   force = false
 } = {}) {
-  let created = [];
-  let skipped = [];
-  let updated = [];
-  let buckets = {
-    created,
-    skipped,
-    updated
+  let result = {
+    root,
+    created: [],
+    skipped: [],
+    updated: []
   };
 
-  trackScaffoldResult(await upsertAgentGuidance(root, {
-    force
-  }), buckets);
+  let guidance = await upsertAgentGuidance(root, { force });
+  result[guidance.status].push(guidance.filePath);
 
   for (let relativePath of agentSkillFiles) {
     let filePath = path.join(root, '.agents', 'skills', relativePath);
     let exists = await pathExists(filePath);
 
     if (exists && !force) {
-      skipped.push(filePath);
+      result.skipped.push(filePath);
       continue;
     }
 
@@ -559,15 +553,11 @@ export async function scaffoldAgentFiles({
       new URL(`skills/${relativePath}`, agentTemplateRoot),
       filePath
     );
-    created.push(filePath);
+    let writtenFiles = exists ? result.updated : result.created;
+    writtenFiles.push(filePath);
   }
 
-  return {
-    root,
-    created,
-    skipped,
-    updated
-  };
+  return result;
 }
 
 /**
@@ -595,10 +585,10 @@ export function formatAgentScaffoldResult(result) {
   lines.push(
     '',
     'Next',
-    '  - AGENTS.md explains the Cricket domain split.',
-    '  - .agents/skills/cricket/SKILL.md gives agents the framework workflow.',
-    '  - Focused skills cover jobs, observability, and testing.',
-    '  - Run `pnpm cricket check api/index.js`, `pnpm cricket inspect api/index.js`, and `pnpm cricket docs api/index.js --out openapi.json`.'
+    '  - Start with AGENTS.md. The linked skills cover domains, jobs, machines, observability, and testing.',
+    '  - Run `pnpm exec cricket check api/index.js` to check app structure.',
+    '  - Reruns add missing files and keep existing guidance.',
+    '  - Use `pnpm exec cricket init agents . --force` to replace the Cricket block and shipped skill files, including edits to those files.'
   );
 
   return lines.join('\n');

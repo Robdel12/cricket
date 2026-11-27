@@ -1426,7 +1426,7 @@ function createRuntimeHandler({
  *
  * <!-- example examples/fetch-endpoint.js -->
  *
- * Fetch routes declare their statuses and content types in `fetchResponses`. Cricket checks those without buffering the body, so streaming just works.
+ * Fetch routes declare their statuses and content types in `fetchResponses`. Cricket checks those without buffering the body. Use a normal handler for parsed bodies, raw bodies, multipart uploads, and endpoint API versions.
  *
  * ## Run behind a proxy
  *

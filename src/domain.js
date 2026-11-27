@@ -278,7 +278,9 @@ async function listDomainFolders(rootPath) {
  *   dev/           local-only tools
  * ```
  *
- * `init` also writes `AGENTS.md` and a few skills under `.agents/skills/`, so coding agents follow the same rules. In an app that already has this layout, `pnpm exec cricket init agents .` adds only the agent guidance.
+ * `init` adds a short Cricket block to `AGENTS.md`. It maps the domain files and links to local skills for domains, jobs, machines, observability, and testing.
+ *
+ * In an existing app, run `pnpm exec cricket init agents .` to add missing guidance. After upgrading Cricket, use `pnpm exec cricket init agents . --force` to refresh it. This replaces edits to the Cricket block and shipped skill files. Your other project notes stay in place.
  *
  * ## Add a domain
  *

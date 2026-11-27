@@ -1,196 +1,56 @@
 ---
 name: cricket
-description: Work in a Cricket Node API app. Use when changing Cricket domains, routes, validations, normalizers, serializers, services, rules, app structure, CLI usage, OpenAPI docs, or when deciding where product behavior belongs in a Cricket project.
+description: Build or change a Cricket API domain, endpoint, or app. Use for domain files, request and response contracts, app wiring, and OpenAPI.
 ---
 
-# Cricket Skill
+# Cricket
 
-Use this when changing a Cricket API app.
+Read the app entry and nearby domain files. Use `pnpm exec cricket check api/index.js`
+to check structure and `pnpm exec cricket inspect api/index.js` to see what the
+app loads. Use the actual entry path for the project.
 
-## Orientation
+## Change a domain
 
-Start with `pnpm cricket check api/index.js`, then inspect the app, read
-`api/index.js`, and open the domain files for the feature you are changing.
+- Put product contracts in domains. Reserve `architecture: 'manual'` for
+  migrating an existing app.
+- Scaffold only the files you need. For a basic endpoint, run
+  `pnpm exec cricket new domain projects api/domains --with validations,service,routes,test`.
+  Replace the test todo with a real behavior test.
+- Give `defineEndpoint` explicit `params`, `query`, `headers`, and `body`
+  schemas where needed. The handler reads parsed values from `input`. Use
+  named rules for access and other checks. Export a factory such as
+  `createProjectsService({ db })` from the domain service file. Call its
+  methods through `services.projects`.
+- Use a model for the stored row. Use a pure normalizer for outside data and a
+  serializer or explicit public schema for output. Put request schemas in
+  `*.validations.js`.
+- A bare return is the response body. Use `created`, `respond`, or `redirect`
+  to set status and `withHeaders` to add headers. Declare the public response
+  schema. Keep internal schema errors out of client responses.
+- Check changed contracts through HTTP. Regenerate OpenAPI with
+  `pnpm exec cricket docs api/index.js --out openapi.json`.
 
-## Principles
+## App wiring
 
-- Keep data plain: no model instances, hidden mutation, or ORM lifecycle.
-- Treat Cricket definitions as immutable values. Compose a new definition when
-  behavior changes; do not mutate apps, endpoints, rules, models, serializers,
-  normalizers, machines, or jobs after construction.
-- Put contracts at real boundaries: requests, responses, source payloads, jobs, and database rows.
-- Compose small functions. Keep side effects in services, handlers, jobs, middleware, migrations, or external clients.
-- Preserve predictable files. Agents should be able to guess where behavior lives.
+Export the app from its entry module. Pass `main: import.meta.url` to
+`startCricketApp` so the CLI can import the app without starting the listener.
+Set app `baseUrl: import.meta.url` so tests and workers find relative domain
+paths. Build shared dependencies in setup and clean them up there. Put
+database changes in app migrations. The app owns auth, queries, health, and
+deployment.
 
-## App Shape
+Use `defineCricketPlugin` to share named domains and `definePluginSchema` to
+check the host's service methods and their inputs and outputs. The host app
+owns authorization and storage.
 
-- Cricket provides the architecture, HTTP runtime, job runtime, logger, trace, and read-only runtime lifecycle. The app defines product behavior, auth policy, data work, worker entrypoints, product health, and deployment.
-- First-party protocol integrations such as `@robdel12/cricket/oidc-provider` return an opaque `protocolHost` from setup. Bind plain policy hooks in the app service composer after domains exist. Cricket owns the protocol engine and HTTP routing; the app owns clients, account/session rules, consent, persistence, and UI. Do not pass raw requests/responses or Koa contexts into app code, or start a second server.
-- `runtime.requests.pause()` closes application admission and returns an independent `idle({ signal })` / `resume()` hold. Idle joins accepted HTTP work through stream/async cleanup, including disconnected clients. Keep control operations outside the paused runtime and stop app-owned jobs separately. Standalone startup resolves after listening and exposes `origin`; terminal cleanup cannot be resumed.
-- Domains are required by default. Do not register product endpoints, jobs, machines, or models directly on `defineCricketApp`.
-- `architecture: 'manual'` is a migration escape hatch and visible tech debt. Never introduce it in a fresh app; move existing manual contracts into domains and remove the mode at a deliberate cutover.
-- Packages can export named domains with `defineCricketPlugin`; apps add them through `plugins`. Use `definePluginSchema` for Zod input/output contracts on required app service methods. Cricket checks those methods at runtime setup and validates calls. The app owns auth, product data access, and migrations.
-- Keep browser UI and styles in separate package exports, imported through the app's frontend build. Do not add CSS paths to plugin descriptors. The app owns routing and API clients. Custom product pages use ordinary domains and their own Zod contracts, without a shared row schema. Navigation does not grant API access.
-- `api/middleware/` is for request middleware, not domain authorization.
-- `api/services/` is for narrow app-wide capabilities not owned by one domain.
-- `api/workers/` is for background worker entrypoints that start Cricket workers.
-- `api/migrations/` is migration history for the app's Cricket database contract.
-- `api/dev/` is for local-only development support. If code touches product behavior, move that behavior into a real service, worker, migration, or domain.
+## More detail
 
-## Domain Files
-
-- Put durable row contracts in `*.model.js`.
-- Put request, source, and service input schemas in `*.validations.js`.
-- Put pure source-boundary projections in `*.normalizers.js`.
-- Put outgoing API projections in `*.serializers.js`.
-- Put data and integration operations in `*.service.js`.
-- Put auth, existence, ownership, and business checks in `*.rules.js`.
-- Put endpoint contracts in `*.routes.js`.
-- Put product states and transitions in `*.machine.js`.
-- Put asynchronous job contracts in `*.jobs.js`.
-- Put HTTP and worker-boundary behavior tests in `*.test.js`.
-
-The folder is the domain. Optional files stay optional; Cricket auto-loads direct domain-local `*.<type>.js` files.
-
-## Domain Machines
-
-Use `defineMachine(createMachine(config))` from `@robdel12/cricket` with a native
-XState v6 config, an explicit `id` and `version`, and Zod `schemas.events`.
-Scaffold `--with machine` and use `cricket inspect` to see the loaded chart.
-
-Services explicitly call `await machine.transition(snapshot, event)` within
-their transaction. Resolve state from app rows or use `machine.persist` and
-`machine.restore` for versioned JSON checkpoints. Keep guards and context
-updates pure. The machine parses the event, so shared schemas must accept
-values already parsed by a route or job. An unhandled event is a product outcome. Commit emitted intent
-alongside accepted state when delivery must survive a crash, then use Cricket
-Jobs to deliver it or schedule a future event.
-
-## HTTP Contracts
-
-Configure proxy trust only on `defineCricketApp`: `trustProxy: false` (default)
-or `trustProxy: { peers: ['127.0.0.1', '::1'] }` with verified deployment peers or
-CIDRs. Blanket `true` and hop counts are rejected. The socket peer must match
-before forwarding is considered; configure the proxy to overwrite forwarded
-host/protocol. Cricket validates XFF and walks right to left to the first
-untrusted hop. Use plain `request.clientIp`, `request.peerIp`, and
-`request.proxyTrusted`; do not parse forwarding headers in app code. OIDC uses
-the same validated facts and keeps hook `request.ip` equal to `clientIp`; it has
-no separate proxy option. Host allowlists and network access remain app policy.
-Automatic request snapshots omit the peer/client IP fields.
-
-Routes explicitly compose request schemas, rules, handlers, serializers, and
-response schemas. Bare handler, middleware, and fallback returns are response
-bodies. Use `ok`, `created`, `respond`, or `redirect` for transport intent, then
-compose headers, cookies, or cleanup with Cricket's response helpers. Do not
-return implicit `{ status, body }` transport objects.
-
-For shared HTTP defaults, `responseHeaders(request)` returns plain headers after
-request normalization. Explicit ordinary response headers override defaults
-case-insensitively. `Vary` keeps explicit tokens and appends missing default
-tokens, matching them without regard to case; `*` in either value wins. Protocol hosts apply defaults after their own header policy,
-so provider-owned checks and headers keep precedence. Hosts may reserve headers
-when a missing value represents a denial. `requestPolicy({ request
-})` may return `undefined` or an explicit Cricket response before protocol-host
-dispatch and ordinary middleware; keep it narrow, such as for trusted-origin
-preflight, and leave route authorization to rules. The app owns any response
-it returns here, including CORS; provider checks apply only after pass-through.
-
-For file streams with a known byte length, set `Content-Length` through
-`withHeaders`. Cricket checks the byte count, keeps backpressure, and closes
-mismatched responses. HEAD preserves the length without consuming the stream.
-Use `withResponseCleanup` for app-owned resources; omit length for open-ended streams.
-
-Use an endpoint's `fetch(request, context)` option when an integration already
-speaks the Web Fetch API. The request body is streamed with `maxBodyBytes`; the
-response body stays streamed through Cricket's HTTP writer. Use the ordinary
-endpoint rules for admission, and honor `request.signal` on disconnect or
-shutdown. Declare status and media types with `fetchResponses`. An empty status
-entry checks only status and documents no content. Fetch request bodies have no
-Cricket schema or OpenAPI request-body entry. Fetch endpoints
-do not accept parsed response schemas because Cricket does not buffer their
-response bodies. Do not expose Node request/response objects to the app.
-
-For a normal response schema served with several media types, declare
-`contentTypes: ['image/png', 'application/octet-stream']` instead of `contentType`.
-Use the same binary schema for each format and return the actual header with
-`withHeaders`. This metadata does not change runtime stream or header handling.
-
-Use framework errors such as `badRequest` for invalid input. Response, serializer,
-and normalizer contract details stay internal. Configure app `onError` once for
-HTTP reporting, and use `withError(response, error)` when a catch returns a safe
-error body. It retains the exception without bypassing validation; declare
-status-specific error responses. See `cricket-observability` for SDK integration,
-privacy, and cleanup ordering.
-
-API versioning is endpoint-owned and opt-in. Reuse one `defineApiVersions`
-family across participating routes, keep current schemas as the base endpoint
-contract, and place only historical body normalizers and response serializers
-inside `apiVersions`. Do not put API versions on models or branch services by SDK version. Routes without `apiVersions` ignore version headers.
-
-Reuse the endpoint body schema as a version normalizer's output; skipped
-bodies are contract failures. Historical serializers receive validated canonical data
-and validate their own output. Use explicit public Zod projections and
-test every supported version through HTTP. Query/params, authorization, and
-thrown errors stay shared. Sunset dates only announce policy; remove a version
-and its deltas to reject it, then regenerate each published OpenAPI projection.
-
-When canonical data differs from current output, use
-`response: { schema: Canonical, serializer: currentSerializer }` (also per status
-in `responses`). Cricket validates canonical data, then runs one validated public
-serializer. OpenAPI uses that serializer's output. Rules and handlers receive
-negotiated `apiVersion`; derive data requirements there and pass those to services.
-Keep field selection in app code and require each selected fact in its output schema.
-
-
-Declare app `authMethods` and endpoint `auth` to document authentication.
-Rules and middleware enforce access. Use lowercase `headers` schemas for
-validated `input.headers`; return response headers with `withHeaders`.
-
-Use `requestBody.files` for multipart docs and `requestBody.schema` for raw-body
-docs. Rules validate the files or raw data. If Cricket can't describe a type,
-supply `jsonSchema` metadata and check it through HTTP. Automatic model
-components exclude views containing private fields. Review endpoint responses
-and examples before publishing; generate docs without starting services.
-OpenAPI documents numeric `z.coerce.number()` parameters with their bounds and
-defaults. Coerced request body values need explicit `jsonSchema` metadata.
-Recursive Zod schemas and `z.json()` work in generated OpenAPI. Keep their
-validation intact; generated component names are internal.
-
-## Change Flow
-
-1. Update the schema at the boundary that changed.
-2. Put request/source input schemas in `*.validations.js` and import them explicitly.
-3. Normalize third-party/source payloads in `*.normalizers.js`.
-4. Shape API output in `*.serializers.js`.
-5. Keep data and integration work in services.
-6. Put auth, existence, and ownership checks in rules.
-7. Put async contracts in `*.jobs.js` when behavior leaves the request path.
-8. Keep endpoint handlers and job handlers focused on composition.
-9. Generate OpenAPI and check the contract diff when HTTP contracts changed.
-
-## Focused Skills
-
-- Use `cricket-jobs` for background work, scheduling, recovery, retries, worker entrypoints, and the `cricket_jobs` ledger.
-- Use `cricket-observability` for logging, tracing, lifecycle, request/job inspection, and `cricket trace`.
-- Use `cricket-testing` for HTTP-boundary tests, worker-boundary job tests, test state, and Cricket's test CLI.
-
-## Commands
-
-```sh
-pnpm cricket init .
-pnpm cricket check api/index.js
-pnpm cricket inspect api/index.js
-pnpm cricket docs api/index.js --out openapi.json
-pnpm cricket migrate status api/index.js
-pnpm cricket new domain project api/domains --with model,validations,service,routes,test
-pnpm test
-```
-
-Choose only the files the domain needs, or use `--with all` deliberately. A
-selected test starts as a todo until it proves behavior through the HTTP or
-worker boundary. Select `model` with `serializers`, unless the domain already
-has `schema.model.js`. After
-scaffolding, make sure the app's `domains` value points at the domain root, add
-table migrations in `api/migrations/` when the domain persists data, and
-regenerate OpenAPI when HTTP contracts changed.
+- Read [HTTP contracts](references/http.md) for Fetch, uploads, API versions,
+  OpenAPI metadata, streams, proxies, and protocol hosts.
+- Use [cricket-jobs](../cricket-jobs/SKILL.md) for background work,
+  [cricket-machines](../cricket-machines/SKILL.md) for product events,
+  [cricket-observability](../cricket-observability/SKILL.md) for runtime behavior,
+  and [cricket-testing](../cricket-testing/SKILL.md) for tests.
+- See the [Cricket docs](https://robdel12.github.io/cricket/) for examples and
+  the API reference. Check the installed Cricket source for signatures when
+  the app runs a different version.

@@ -298,186 +298,106 @@ describe('Cricket CLI', () => {
     assert.notEqual(await fs.readFile(modelPath, 'utf8'), 'custom model\n');
   });
 
-  it('scaffolds Cricket agent guidance', async () => {
+  it('installs discoverable skills whose local links resolve in the app', async t => {
     let root = await tempRoot();
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
 
-    let result = await execFileAsync(process.execPath, [
-      'bin/cricket.js',
-      'init',
-      'agents',
-      root
+    await execFileAsync(process.execPath, ['bin/cricket.js', 'init', 'agents', root]);
+
+    let skillRoot = path.join(root, '.agents', 'skills');
+    let skills = await fs.readdir(skillRoot);
+    assert.deepEqual(skills.toSorted(), [
+      'cricket',
+      'cricket-jobs',
+      'cricket-machines',
+      'cricket-observability',
+      'cricket-testing'
     ]);
 
-    assert.match(result.stdout, /Created Cricket agent guidance/);
-    assert.match(result.stdout, /AGENTS\.md/);
-    assert.match(result.stdout, /Next/);
+    for (let name of skills) {
+      let skill = await fs.readFile(path.join(skillRoot, name, 'SKILL.md'), 'utf8');
+      let frontmatter = /^---\nname: ([a-z0-9-]+)\ndescription: ([^\n]+)\n---\n/.exec(skill);
+      assert.ok(frontmatter, `Missing name or description in ${name}`);
+      assert.equal(frontmatter[1], name);
+      assert.ok(frontmatter[2].trim(), `Empty description in ${name}`);
+    }
 
-    let agents = await fs.readFile(path.join(root, 'AGENTS.md'), 'utf8');
-    let cricketSkill = await fs.readFile(
-      path.join(root, '.agents', 'skills', 'cricket', 'SKILL.md'),
-      'utf8'
-    );
-    let jobsSkill = await fs.readFile(
-      path.join(root, '.agents', 'skills', 'cricket-jobs', 'SKILL.md'),
-      'utf8'
-    );
-    let observabilitySkill = await fs.readFile(
-      path.join(root, '.agents', 'skills', 'cricket-observability', 'SKILL.md'),
-      'utf8'
-    );
-    let testingSkill = await fs.readFile(
-      path.join(root, '.agents', 'skills', 'cricket-testing', 'SKILL.md'),
-      'utf8'
-    );
+    let markdownFiles = fs.glob(['AGENTS.md', '.agents/skills/**/*.md'], { cwd: root });
+    for await (let relativeFile of markdownFiles) {
+      let filePath = path.join(root, relativeFile);
+      let contents = await fs.readFile(filePath, 'utf8');
 
-    assert.match(agents, /cricket-agent-guidance/);
-    assert.match(agents, /Cricket App Guidance/);
-    assert.match(agents, /Domains are Cricket's required default architecture/);
-    assert.match(agents, /manual mode as visible tech debt/);
-    assert.match(agents, /defineCricketPlugin/);
-    assert.match(agents, /definePluginSchema/);
-    assert.match(agents, /custom product\s+pages/);
-    assert.match(agents, /Navigation does not grant API access/);
-    assert.match(agents, /Apps own auth/);
-    assert.match(agents, /`fetch\(request, context\)`/);
-    assert.match(agents, /`fetchResponses`/);
-    assert.match(agents, /do not accept parsed body schemas, response schemas, or serializers/);
-    assert.match(agents, /pnpm cricket check api\/index\.js/);
-    assert.match(agents, /App Shape/);
-    assert.match(agents, /Domain Shape/);
-    assert.match(agents, /Jobs/);
-    assert.match(agents, /\*\.normalizers\.js/);
-    assert.match(agents, /\*\.jobs\.js/);
-    assert.match(agents, /\*\.machine\.js/);
-    assert.match(agents, /api\/middleware/);
-    assert.match(agents, /api\/services/);
-    assert.match(agents, /api\/workers/);
-    assert.match(agents, /api\/migrations/);
-    assert.match(agents, /api\/dev/);
-    assert.match(agents, /lifecycle/);
-    assert.match(agents, /runtime\.requests\.pause\(\)/);
-    assert.match(agents, /resolves after listening/);
-    assert.match(agents, /\{ dependencies, services, protocolHosts, cleanup \}/);
-    assert.match(agents, /Recovery receives evidence, time, logger, and trace/);
-    assert.match(agents, /format: 'pretty'/);
-    assert.match(observabilitySkill, /format: 'pretty'/);
-    assert.match(observabilitySkill, /NO_COLOR/);
-    assert.match(observabilitySkill, /may span multiple lines/);
-    assert.match(cricketSkill, /defineCricketPlugin/);
-    assert.match(cricketSkill, /definePluginSchema/);
-    assert.match(cricketSkill, /The app owns auth, product data access, and migrations/);
-    assert.match(agents, /defineJob/);
-    assert.match(agents, /cronSchedule/);
-    assert.match(agents, /createCricketJobs/);
-    assert.match(agents, /startCricketWorker/);
-    assert.match(agents, /jobFailure/);
-    assert.match(agents, /cricket_jobs/);
-    assert.match(agents, /\*\.test\.js/);
-    assert.match(agents, /worker boundary/);
-    assert.match(agents, /API versioning is optional and endpoint-owned/);
-    assert.match(agents, /first-party protocol host/);
-    assert.match(cricketSkill, /protocol integrations/);
-    assert.match(agents, /defineApiVersions/);
-    assert.match(agents, /Historical serializers receive validated canonical data/);
-    assert.match(agents, /Sunset dates only announce policy/);
-    for (let guidance of [agents, cricketSkill]) {
-      assert.match(guidance, /trustProxy: false/);
-      assert.match(guidance, /request\.clientIp/);
-      assert.match(guidance, /request\.peerIp/);
-      assert.match(guidance, /request\.proxyTrusted/);
-      assert.match(guidance, /first\s+untrusted hop/);
-      assert.match(guidance, /authMethods/);
-      assert.match(guidance, /serializer: currentSerializer/);
-      assert.match(guidance, /Recursive Zod schemas and `z.json\(\)` work/);
-      assert.match(guidance, /OpenAPI documents numeric `z.coerce.number\(\)` parameters/);
-      assert.match(guidance, /derive data requirements there/);
-      assert.match(guidance, /validated `input.headers`/);
-      assert.match(guidance, /components exclude views containing private fields/);
+      for (let [, link] of contents.matchAll(/\]\(([^)]+)\)/g)) {
+        if (link.startsWith('https://'))
+          continue;
+
+        let [target, fragment] = link.split('#');
+        let targetPath = target ? path.resolve(path.dirname(filePath), target) : filePath;
+        let targetText = await fs.readFile(targetPath, 'utf8');
+
+        if (!fragment)
+          continue;
+
+        let headings = [...targetText.matchAll(/^#+ (.+)$/gm)].map(([, heading]) =>
+          heading.toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-')
+        );
+        assert.ok(headings.includes(fragment), `Broken link in ${relativeFile}: ${link}`);
+      }
     }
-    assert.match(testingSkill, /compare generated OpenAPI with actual HTTP/);
-    assert.match(cricketSkill, /name: cricket/);
-    assert.match(cricketSkill, /Content-Length/);
-    assert.match(cricketSkill, /checks the byte count/);
-    assert.match(cricketSkill, /HEAD/);
-    assert.match(cricketSkill, /Domain Files/);
-    assert.match(cricketSkill, /normalizers/);
-    assert.match(cricketSkill, /API versioning is endpoint-owned and opt-in/);
-    assert.match(cricketSkill, /defineApiVersions/);
-    assert.match(cricketSkill, /Historical serializers receive validated canonical data/);
-    assert.match(cricketSkill, /Sunset dates only announce policy/);
-    assert.match(cricketSkill, /\*\.jobs\.js/);
-    assert.match(cricketSkill, /defineMachine/);
-    assert.match(cricketSkill, /OpenAPI/);
-    assert.match(cricketSkill, /contentTypes/);
-    assert.match(cricketSkill, /cricket-jobs/);
-    assert.match(cricketSkill, /cricket-observability/);
-    assert.match(cricketSkill, /cricket-testing/);
-    assert.match(cricketSkill, /pnpm cricket init \./);
-    assert.match(cricketSkill, /migration escape hatch and visible tech debt/);
-    assert.match(cricketSkill, /--with model,validations,service,routes,test/);
-    assert.match(jobsSkill, /name: cricket-jobs/);
-    assert.match(jobsSkill, /defineJob/);
-    assert.match(jobsSkill, /cronSchedule/);
-    assert.match(jobsSkill, /createCricketJobs/);
-    assert.match(jobsSkill, /startCricketWorker/);
-    for (let guidance of [agents, jobsSkill]) {
-      assert.match(guidance, /queues\.local/);
-      assert.match(guidance, /jobs\.cancelPending\(job, key\)/);
-      assert.match(guidance, /driver\.checkConnection\(\)/);
-      assert.match(guidance, /'connected' \| 'disconnected' \| 'closed'/);
-      assert.match(guidance, /blocking-wait/);
-    }
-    assert.match(jobsSkill, /jobFailure/);
-    assert.match(jobsSkill, /cricket_jobs/);
-    assert.match(jobsSkill, /Redis coordinates hot execution/);
-    assert.match(jobsSkill, /jobs\.removeFinished\(ids\)/);
-    assert.match(jobsSkill, /Never hard-code\s+Cricket Redis keys/);
-    assert.match(agents, /jobs\.removeFinished\(ids\)/);
-    assert.match(observabilitySkill, /name: cricket-observability/);
-    assert.match(observabilitySkill, /cricket trace/);
-    assert.match(observabilitySkill, /lifecycle/);
-    assert.match(observabilitySkill, /trace\.span/);
-    assert.match(observabilitySkill, /no-op startup trace/);
-    assert.match(observabilitySkill, /Endpoint API version families/);
-    for (let guidance of [agents, cricketSkill, observabilitySkill]) {
-      assert.match(guidance, /withError/);
-      assert.match(guidance, /onError/);
-    }
-    assert.match(observabilitySkill, /sentryErrorHandler/);
-    assert.match(testingSkill, /name: cricket-testing/);
-    assert.match(testingSkill, /createTestRuntime/);
-    assert.match(testingSkill, /harness\/client `origin`/);
-    assert.match(testingSkill, /runtime\.requests\.pause\(\)/);
-    assert.match(testingSkill, /without invoking standalone `onShutdown` hooks/);
-    assert.match(testingSkill, /worker boundary/);
-    assert.match(testingSkill, /worker\.schedules\.tick/);
   });
 
-  it('augments existing agent guidance without duplicating Cricket notes', async () => {
+  it('adds missing guidance on rerun and replaces only shipped guidance when forced', async t => {
     let root = await tempRoot();
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+
     let agentsPath = path.join(root, 'AGENTS.md');
+    let projectNotes = '# Existing guidance\n\nKeep this note.\n';
+    await fs.writeFile(agentsPath, projectNotes);
 
-    await fs.writeFile(agentsPath, '# Existing Guidance\n\nKeep this note.\n');
-
-    await execFileAsync(process.execPath, [
-      'bin/cricket.js',
-      'init',
-      'agents',
-      root
+    let runAgentsInit = (...args) => execFileAsync(process.execPath, [
+      'bin/cricket.js', 'init', 'agents', root, ...args
     ]);
-    await execFileAsync(process.execPath, [
-      'bin/cricket.js',
-      'init',
-      'agents',
-      root
-    ]);
+    await runAgentsInit();
 
-    let agents = await fs.readFile(agentsPath, 'utf8');
+    let originalAgents = await fs.readFile(agentsPath, 'utf8');
+    assert.ok(originalAgents.startsWith(projectNotes));
 
-    assert.match(agents, /# Existing Guidance/);
-    assert.match(agents, /Keep this note/);
-    assert.equal(agents.split('Cricket App Guidance').length - 1, 1);
-    assert.equal(agents.split('cricket-agent-guidance').length - 1, 2);
+    let projectSuffix = '\n## Another project note\n';
+    let editedAgents = originalAgents.replace(
+      '<!-- /cricket-agent-guidance -->',
+      'Local edit inside the Cricket block.\n<!-- /cricket-agent-guidance -->'
+    ) + projectSuffix;
+    await fs.writeFile(agentsPath, editedAgents);
+
+    let skillsPath = path.join(root, '.agents', 'skills');
+    let core = path.join(skillsPath, 'cricket/SKILL.md');
+    let machines = path.join(skillsPath, 'cricket-machines/SKILL.md');
+    let reference = path.join(skillsPath, 'cricket/references/http.md');
+    let localNotes = path.join(skillsPath, 'cricket/references/local-notes.md');
+    let originalCore = await fs.readFile(core, 'utf8');
+    let originalMachines = await fs.readFile(machines, 'utf8');
+    let originalReference = await fs.readFile(reference, 'utf8');
+    await fs.writeFile(core, 'Local skill edit.\n');
+    await fs.writeFile(localNotes, 'Local reference.\n');
+    await fs.unlink(machines);
+    await fs.unlink(reference);
+
+    let rerun = await runAgentsInit();
+    assert.match(rerun.stdout, /init agents \. --force/);
+    assert.equal(await fs.readFile(agentsPath, 'utf8'), editedAgents);
+    assert.equal(await fs.readFile(core, 'utf8'), 'Local skill edit.\n');
+    assert.equal(await fs.readFile(machines, 'utf8'), originalMachines);
+    assert.equal(await fs.readFile(reference, 'utf8'), originalReference);
+
+    let refresh = await runAgentsInit('--force');
+    assert.ok(refresh.stdout.includes(`~ ${core}`), refresh.stdout);
+    let refreshedAgents = originalAgents + projectSuffix;
+    assert.equal(await fs.readFile(agentsPath, 'utf8'), refreshedAgents);
+    assert.equal(await fs.readFile(core, 'utf8'), originalCore);
+    assert.equal(await fs.readFile(localNotes, 'utf8'), 'Local reference.\n');
+
+    await runAgentsInit('--force');
+    assert.equal(await fs.readFile(agentsPath, 'utf8'), refreshedAgents);
   });
 
   it('scaffolds the small Cricket app structure', async () => {
