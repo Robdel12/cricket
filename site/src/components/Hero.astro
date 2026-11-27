@@ -1,9 +1,36 @@
 ---
+import { Code } from '@astrojs/starlight/components';
+import { stringify } from 'yaml';
+import { generateOpenApi } from '../../../src/openapi.js';
+import { temperature } from '../../../examples/temperature.js';
+import source from '../../../examples/temperature.js?raw';
 import { installSource, settings } from '../../scripts/settings.js';
 
 // The copy lives in the homepage frontmatter, written by scripts/generate.js.
 let { title, tagline, actions = [] } = Astro.locals.starlightRoute.entry.data.hero ?? {};
 let install = `pnpm add ${installSource(settings().version)}`;
+
+// The demo shows a real, tested endpoint (examples/temperature.js). The code
+// panel is its source and the OpenAPI tab is what Cricket generates from it.
+let openapi = stringify(generateOpenApi({ endpoints: [temperature] }).paths).trimEnd();
+let block = source.slice(source.indexOf('let temperature'), source.indexOf('});') + 3);
+
+// Each line lights up with the part of the contract it belongs to.
+let roles = { query: 'gate-in', response: 'gate-out', handler: 'run' };
+let tokenPattern = /('[^']*')|\b(let|return)\b|(\b\d+\b)|(\w+)(?=\()/g;
+let role = '';
+let lines = block.split('\n').map(line => {
+  let key = line.match(/^  (\w+)/)?.[1];
+  if (key) role = roles[key] ?? '';
+  else if (!line.startsWith(' ')) role = '';
+  let tokens = [];
+  let last = 0;
+  for (let match of line.matchAll(tokenPattern)) {
+    tokens.push(['', line.slice(last, match.index)], [match[1] ? 's' : match[2] ? 'k' : match[3] ? 'n' : 'f', match[0]]);
+    last = match.index + match[0].length;
+  }
+  return { role, tokens: [...tokens, ['', line.slice(last)]] };
+});
 ---
 <section class="landing-hero" aria-labelledby="_top">
   <div class="intro">
@@ -24,36 +51,45 @@ let install = `pnpm add ${installSource(settings().version)}`;
       <label class="path" for="chirps-input">/temperature?chirps=</label>
       <input id="chirps-input" name="chirps" value="120" autocomplete="off" spellcheck="false" inputmode="numeric" aria-describedby="contract-caption" />
     </form>
-<pre class="code" aria-label="The endpoint that answers this request"><code><span class="ln"><span class="k">let</span> temperature = <span class="f">defineEndpoint</span>(&#123;</span><span class="ln">  method: <span class="s">'get'</span>,</span><span class="ln">  path: <span class="s">'/temperature'</span>,</span><span class="ln gate-in">  query: z.<span class="f">object</span>(&#123;</span><span class="ln gate-in">    chirps: z.coerce.<span class="f">number</span>().<span class="f">int</span>().<span class="f">positive</span>()</span><span class="ln gate-in">  &#125;),</span><span class="ln gate-out">  response: z.<span class="f">object</span>(&#123; fahrenheit: z.<span class="f">number</span>() &#125;),</span><span class="ln run">  <span class="f">handler</span>(&#123; input &#125;) &#123;</span><span class="ln run">    <span class="k">return</span> &#123; fahrenheit: <span class="n">50</span> + (input.query.chirps - <span class="n">40</span>) / <span class="n">4</span> &#125;;</span><span class="ln run">  &#125;</span><span class="ln">&#125;);</span></code></pre>
-    <output class="response" for="chirps-input" aria-live="polite">
+<pre class="code" aria-label="The endpoint that answers this request"><code>{lines.map(({ role, tokens }) => <span class:list={['ln', role]}>{tokens.map(([kind, text]) => kind ? <span class={kind}>{text}</span> : text)}</span>)}</code></pre>
+    <div class="tabs" role="tablist" aria-label="What Cricket makes from this contract">
+      <button type="button" role="tab" id="tab-response" aria-controls="panel-response" aria-selected="true">Response</button>
+      <button type="button" role="tab" id="tab-openapi" aria-controls="panel-openapi" aria-selected="false" tabindex="-1">OpenAPI</button>
+    </div>
+    <output class="response" id="panel-response" role="tabpanel" aria-labelledby="tab-response" for="chirps-input" aria-live="polite">
       <span class="status">200 OK</span>
 <pre><code class="body">&#123;"fahrenheit": 70&#125;</code></pre>
     </output>
+    <div class="openapi" id="panel-openapi" role="tabpanel" aria-labelledby="tab-openapi" hidden>
+      <Code code={openapi} lang="yaml" frame="none" />
+    </div>
     <figcaption id="contract-caption">
       Dolbear’s law turns chirps per minute into degrees. Try <button type="button" data-try="abc">abc</button>,
       <button type="button" data-try="-3">-3</button>, or <button type="button" data-try="1.5">1.5</button>,
-      and the handler never runs.
+      and the handler never runs. Then flip to OpenAPI to see the docs Cricket writes from the same contract.
     </figcaption>
   </figure>
 </section>
 
 <script>
-  // Mirrors the real responses Cricket sends for this endpoint, including Zod's
-  // coercion (an empty value becomes 0) and the VALIDATION_FAILED envelope.
+  // Mirrors the real responses Cricket sends for examples/temperature.js,
+  // including Zod's coercion (an empty value becomes 0). test/examples.test.js
+  // pins these exact bodies, so a Zod or Cricket change fails there first.
   function respond(raw: string) {
     let value = Number(raw);
+    let path = ['chirps'];
     let issue;
     if (Number.isNaN(value))
-      issue = { expected: 'number', code: 'invalid_type', received: 'NaN', message: 'Invalid input: expected number, received NaN' };
+      issue = { expected: 'number', code: 'invalid_type', received: 'NaN', path, message: 'Invalid input: expected number, received NaN' };
     else if (!Number.isSafeInteger(value))
-      issue = { expected: 'int', format: 'safeint', code: 'invalid_type', message: 'Invalid input: expected int, received number' };
+      issue = { expected: 'int', format: 'safeint', code: 'invalid_type', path, message: 'Invalid input: expected int, received number' };
     else if (value <= 0)
-      issue = { origin: 'number', code: 'too_small', minimum: 0, inclusive: false, message: 'Too small: expected number to be >0' };
+      issue = { origin: 'number', code: 'too_small', minimum: 0, inclusive: false, path, message: 'Too small: expected number to be >0' };
     if (!issue) return { ok: true, label: '200 OK', body: { fahrenheit: 50 + (value - 40) / 4 } };
     return {
       ok: false,
       label: '422 Unprocessable Entity',
-      body: { error: { code: 'VALIDATION_FAILED', message: 'Validation failed', issues: [{ ...issue, path: ['chirps'] }] } }
+      body: { error: { code: 'VALIDATION_FAILED', message: 'Validation failed', issues: [issue] } }
     };
   }
 
@@ -94,6 +130,26 @@ let install = `pnpm add ${installSource(settings().version)}`;
     button.addEventListener('blur', () => { button.textContent = 'Copy'; });
   }
   render();
+
+  // Two tabs: click to switch, and either arrow key flips to the other one.
+  let tabs = [...document.querySelectorAll<HTMLButtonElement>('.tabs [role="tab"]')];
+  function select(tab: HTMLButtonElement) {
+    for (let other of tabs) {
+      let selected = other === tab;
+      other.setAttribute('aria-selected', String(selected));
+      other.tabIndex = selected ? 0 : -1;
+      document.getElementById(other.getAttribute('aria-controls') ?? '')?.toggleAttribute('hidden', !selected);
+    }
+  }
+  for (let tab of tabs) {
+    tab.addEventListener('click', () => select(tab));
+    tab.addEventListener('keydown', event => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      let next = tabs.find(other => other !== tab) ?? tab;
+      select(next);
+      next.focus();
+    });
+  }
 </script>
 
 <style>
@@ -223,12 +279,29 @@ let install = `pnpm add ${installSource(settings().version)}`;
   [data-state='rejected'] .run,
   [data-state='rejected'] .gate-out { opacity: .32; }
 
-  .response {
-    display: block;
-    padding: 1rem 1.25rem 1.15rem;
+  .tabs {
+    display: flex;
+    gap: 1.25rem;
+    padding: 0 1.25rem;
     border-top: 1px solid var(--cr-panel-edge);
     background: var(--cr-panel-raised);
   }
+  .tabs button {
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+    background: none;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    padding: .75rem 0 .6rem;
+    color: var(--cr-panel-muted);
+  }
+  .tabs button:hover { color: var(--cr-panel-strong); }
+  .tabs [aria-selected='true'] { color: var(--cr-panel-strong); border-bottom-color: var(--cr-amber); }
+  .response { padding: 1rem 1.25rem 1.15rem; background: var(--cr-panel-raised); }
+  .response:not([hidden]) { display: block; }
+  .openapi { padding-inline: .25rem; background: var(--cr-panel-raised); }
+  .openapi :global(.expressive-code pre) { background: none; border: 0; font-size: inherit; }
   .status { display: block; font-weight: 700; color: var(--cr-pass); margin-bottom: .35rem; }
   [data-state='rejected'] .status { color: var(--cr-amber); }
   .response pre { margin: 0; background: none; padding: 0; white-space: pre-wrap; overflow-wrap: anywhere; }

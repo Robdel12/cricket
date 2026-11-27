@@ -6,6 +6,7 @@ import { app as quickstart } from '../examples/docs-start.js';
 import { app as fetchExample } from '../examples/fetch-endpoint.js';
 import { app as downloadExample } from '../examples/known-length-stream.js';
 import { app as proxyExample } from '../examples/trusted-proxy.js';
+import { app as temperatureExample } from '../examples/temperature.js';
 import { createSession } from '../examples/versioned-api.js';
 
 // The guides quote these examples, so they need to keep working.
@@ -23,6 +24,18 @@ test('the quickstart route answers', async t => {
 
   assert.equal(response.status, 200);
   assert.deepEqual(response.body, { message: 'Hey, Cricket!' });
+});
+
+// The homepage demo mirrors these exact bodies in the browser
+// (site/src/components/Hero.astro), so a change here means updating it too.
+test('the homepage temperature demo answers and rejects', async t => {
+  let api = await start(t, temperatureExample);
+  let rejected = async chirps => (await api.get('/temperature', { query: { chirps } })).body.error.issues;
+
+  assert.deepEqual((await api.get('/temperature', { query: { chirps: '120' } })).body, { fahrenheit: 70 });
+  assert.deepEqual(await rejected('abc'), [{ expected: 'number', code: 'invalid_type', received: 'NaN', path: ['chirps'], message: 'Invalid input: expected number, received NaN' }]);
+  assert.deepEqual(await rejected('1.5'), [{ expected: 'int', format: 'safeint', code: 'invalid_type', path: ['chirps'], message: 'Invalid input: expected int, received number' }]);
+  assert.deepEqual(await rejected('-3'), [{ origin: 'number', code: 'too_small', minimum: 0, inclusive: false, path: ['chirps'], message: 'Too small: expected number to be >0' }]);
 });
 
 test('the fetch example streams events', async t => {
