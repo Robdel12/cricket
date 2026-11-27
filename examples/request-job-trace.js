@@ -12,12 +12,22 @@ import {
   z
 } from '@robdel12/cricket';
 
+let publishReport = defineJob({
+  name: 'reports.publish',
+  input: z.object({ reportId: z.string() }),
+  queue: localQueue({ name: 'reports' }),
+  run: ({ input }) => ({ published: input.reportId })
+});
+
 let renderReport = defineJob({
   name: 'reports.render',
   input: z.object({ reportId: z.string() }),
   queue: localQueue({ name: 'reports' }),
-  run: ({ input, trace }) =>
-    trace.span('reports.renderDocument', () => ({ rendered: input.reportId }))
+  async run({ input, trace, jobs, jobRunId, requestId }) {
+    let report = await trace.span('reports.renderDocument', () => ({ reportId: input.reportId }));
+    await jobs.enqueue(publishReport, report, { parentJobRunId: jobRunId, requestId });
+    return report;
+  }
 });
 
 let logger = createCricketLogger();
@@ -37,7 +47,7 @@ let requestReport = defineEndpoint({
 });
 
 let app = defineCricketApp({
-  domains: [{ name: 'reports', endpoints: [requestReport], jobs: [renderReport] }],
+  domains: [{ name: 'reports', endpoints: [requestReport], jobs: [renderReport, publishReport] }],
   logger
 });
 let worker = await startCricketWorker(app, { queues: { driver } });

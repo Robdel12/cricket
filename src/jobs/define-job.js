@@ -153,7 +153,7 @@ export function isJobContract(value) {
  * await producer.jobs.enqueue(generateReport, { reportId, accountId });
  * ```
  *
- * Pass `runAt` or `delayMs` as a third argument to run it later. For work started by HTTP, pass `requestId: request.id` in the same options to link the job to the [request trace](guide.md#follow-a-request).
+ * Pass `runAt` or `delayMs` as a third argument to run it later. Pass `requestId: request.id` for HTTP work or `parentJobRunId: jobRunId` for work started by a job. Both link to the [workflow trace](guide.md#follow-a-request).
  *
  * ## Start a worker
  *

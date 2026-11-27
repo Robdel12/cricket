@@ -213,7 +213,9 @@ export function normalizeLogger(logger, context = {}) {
  *
  * <!-- example examples/request-job-trace.js -->
  *
- * Run the example and save its JSON logs. Then use either the request ID or the `jobRunId` from `job.started` to read the same workflow.
+ * A job can link work it starts by passing `parentJobRunId: jobRunId` to `jobs.enqueue`. Pass its `requestId` too when there is one. This also connects scheduled jobs to their children when there is no HTTP request.
+ *
+ * Run the example and save its JSON logs. Use the request ID or any linked `jobRunId` from `job.started` to read the same workflow.
  *
  * ```sh
  * node examples/request-job-trace.js > cricket.log

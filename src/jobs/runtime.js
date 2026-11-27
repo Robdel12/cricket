@@ -143,10 +143,16 @@ function parseJobResult(job, result) {
   return parseZod(job.result, result, jobResultFailed);
 }
 
+function jobParent(envelope) {
+  let { parentJobRunId } = envelope;
+  return parentJobRunId ? { parentJobRunId } : {};
+}
+
 function jobRunContext(envelope, jobRunId) {
   return {
     jobRunId,
-    requestId: jobRequestId(envelope)
+    requestId: jobRequestId(envelope),
+    ...jobParent(envelope)
   };
 }
 
@@ -168,8 +174,7 @@ function failureContext({
     failure: safeError(error),
     envelope,
     attempt,
-    jobRunId: jobRun.jobRunId,
-    requestId: jobRun.requestId,
+    ...jobRun,
     services: runtime.services,
     logger,
     trace,
@@ -412,10 +417,11 @@ function createJobsCapability({
       await recordEnqueue(result, envelope, recordLedger);
 
       let requestId = jobRequestId(envelope);
-      if (requestId && result?.enqueued) {
+      if ((requestId || envelope.parentJobRunId) && result?.enqueued) {
         try {
           logger?.info?.('job.enqueued', {
             requestId,
+            ...jobParent(envelope),
             jobName: envelope.name,
             queueName: envelope.queueName,
             envelopeId: envelope.id,
@@ -610,6 +616,7 @@ export async function startCricketWorker(cricketApp, {
       availableAt: envelope.availableAt,
       trigger: envelope.trigger,
       requestId: jobRequestId(envelope),
+      ...jobParent(envelope),
       ...metadata
     });
   }
@@ -717,6 +724,7 @@ export async function startCricketWorker(cricketApp, {
       envelopeId: envelope.id,
       queueName: envelope.queueName,
       attempt: claim.attempt,
+      ...jobParent(envelope),
       ...(envelope.scheduleKey ? { scheduleKey: envelope.scheduleKey } : {}),
       ...(envelope.scheduledFor ? { scheduledFor: envelope.scheduledFor } : {}),
       ...(jobRun.requestId ? { requestId: jobRun.requestId } : {})
@@ -731,6 +739,7 @@ export async function startCricketWorker(cricketApp, {
         jobRunId: jobRun.jobRunId,
         envelopeId: envelope.id,
         queueName: envelope.queueName,
+        ...jobParent(envelope),
         ...(envelope.scheduleKey ? { scheduleKey: envelope.scheduleKey } : {}),
         ...(envelope.scheduledFor ? { scheduledFor: envelope.scheduledFor } : {})
       }
@@ -778,6 +787,7 @@ export async function startCricketWorker(cricketApp, {
         context: envelope.context,
         envelope,
         attempt: claim.attempt,
+        ...jobRun,
         services: runtime.services,
         logger,
         trace: runTrace,
@@ -939,6 +949,7 @@ export async function startCricketWorker(cricketApp, {
           jobName: job.name,
           envelopeId: envelope.id,
           queueName: envelope.queueName,
+          ...jobParent(envelope),
           jobRunId: jobRun.jobRunId
         }
       });

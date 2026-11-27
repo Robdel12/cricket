@@ -12,7 +12,9 @@ description: Diagnose or change Cricket logs, traces, error reporting, readiness
    logs. Either ID finds the request and its linked jobs.
 
 Pass `{ requestId: request.id }` to `jobs.enqueue` when HTTP starts a job.
-Give the producer the app logger so the trace includes enqueue.
+In a job, pass `{ parentJobRunId: jobRunId, requestId }` when enqueueing a
+child so a job run ID can find the whole chain. Give producers the app logger
+so the trace includes enqueue.
 
 Use the logger Cricket supplies. Add stable fields with a child logger and
 time real work with `trace.span(name, metadata, fn)`. Keep secrets, raw

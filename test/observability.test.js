@@ -7,6 +7,7 @@ import {
   createCricketLogger,
   createCricketRuntime,
   createLocalQueueDriver,
+  cronSchedule,
   defineCricketApp,
   defineEndpoint,
   defineJob,
@@ -164,4 +165,88 @@ test('the exporter bounds pending events and keeps sending after a failure', { t
   await resumed.promise;
   assert.deepEqual(sent, [...Array.from({ length: capacity + 1 }, (_, sequence) => sequence), 'resumed']);
   assert.deepEqual(errors, ['observability.export_failed']);
+});
+
+test('a scheduled job, its child, and its grandchild share one trace', async t => {
+  let lines = [];
+  let events = [];
+  let queue = localQueue({ name: 'digests' });
+  let leafJob = defineJob({
+    name: 'digest.send',
+    input: z.object({}),
+    queue,
+    run: () => 'sent'
+  });
+  let child = defineJob({
+    name: 'digest.prepare',
+    input: z.object({}),
+    queue,
+    async run({ jobs, jobRunId }) {
+      await jobs.enqueue(leafJob, {}, { parentJobRunId: jobRunId });
+      return 'prepared';
+    }
+  });
+  let scheduled = defineJob({
+    name: 'digest.schedule',
+    input: z.object({}),
+    queue,
+    schedule: cronSchedule({
+      key: 'daily_digest',
+      cron: '15 9 * * *',
+      timezone: 'UTC',
+      input: () => ({})
+    }),
+    async run({ jobs, jobRunId }) {
+      await jobs.enqueue(child, {}, { parentJobRunId: jobRunId });
+      return 'scheduled';
+    }
+  });
+  let unrelated = defineJob({
+    name: 'unrelated',
+    input: z.object({}),
+    queue,
+    run: () => 'unrelated'
+  });
+  let app = defineCricketApp({
+    domains: [{ name: 'digests', jobs: [scheduled, child, leafJob, unrelated] }],
+    logger: { format: 'json', write: line => lines.push(line) },
+    observability: { observe: event => events.push(event) }
+  });
+  let now = new Date('2026-06-19T09:14:00Z');
+  let worker = await startCricketWorker(app, {
+    queues: { local: true },
+    clock: { now: () => now }
+  });
+  t.after(worker.cleanup);
+
+  await worker.jobs.enqueue(unrelated, {});
+  now = new Date('2026-06-19T09:15:00Z');
+  await worker.schedules.tick();
+  assert.deepEqual(await worker.drain(), ['unrelated', 'scheduled', 'prepared', 'sent']);
+
+  let started = events.filter(event => event.type === 'job.started').slice(1);
+  let [parentRun, childRun, leafRun] = started;
+  assert.equal(parentRun.requestId, undefined);
+  assert.equal(childRun.parentJobRunId, parentRun.jobRunId);
+  assert.equal(leafRun.parentJobRunId, childRun.jobRunId);
+  assert.ok(events.some(event =>
+    event.type === 'trace.span.finished' &&
+    event.jobRunId === leafRun.jobRunId &&
+    event.parentJobRunId === childRun.jobRunId
+  ));
+
+  let timelines = started.map(({ jobRunId }) => {
+    let trace = spawnSync(process.execPath, ['bin/cricket.js', 'trace', jobRunId], {
+      input: lines.join('\n'),
+      encoding: 'utf8'
+    });
+    assert.equal(trace.status, 0, trace.stderr);
+    return trace.stdout.slice(trace.stdout.indexOf('\n'));
+  });
+  let [timeline] = timelines;
+  assert.ok(timelines.every(candidate => candidate === timeline));
+  assert.match(timeline, /job\.run digest\.schedule/);
+  assert.match(timeline, /job\.enqueued digest\.prepare/);
+  assert.match(timeline, /job\.run digest\.send/);
+  assert.doesNotMatch(timeline, /unrelated/);
 });

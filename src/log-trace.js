@@ -6,12 +6,14 @@ function parseJsonLine(line) {
   }
 }
 
-function requestIdFor(log) {
-  return log?.requestId ?? log?.metadata?.requestId;
-}
-
-function jobRunIdFor(log) {
-  return log?.jobRunId ?? log?.metadata?.jobRunId ?? log?.span?.context?.jobRunId;
+function correlationIds(log) {
+  let { metadata } = log;
+  let context = log.span?.context ?? metadata?.span?.context;
+  return [
+    log.requestId ?? metadata?.requestId,
+    log.jobRunId ?? metadata?.jobRunId ?? context?.jobRunId,
+    log.parentJobRunId ?? metadata?.parentJobRunId ?? context?.parentJobRunId
+  ].filter(id => typeof id === 'string' && id);
 }
 
 function routeNameFor(log) {
@@ -39,7 +41,7 @@ function objectValue(value) {
 function requestSummary(log) {
   let request = log.metadata?.request ?? {};
   let response = log.metadata?.response ?? {};
-  let { jobName, jobRunId, envelopeId, attempt, availableAt } = log.metadata ?? {};
+  let { jobName, jobRunId, parentJobRunId, envelopeId, attempt, availableAt } = log.metadata ?? {};
   let parts = [
     log.time,
     log.level?.toUpperCase(),
@@ -52,6 +54,7 @@ function requestSummary(log) {
     jobRunId,
     attempt ? `attempt=${attempt}` : undefined,
     envelopeId ? `job=${envelopeId}` : undefined,
+    parentJobRunId ? `parent=${parentJobRunId}` : undefined,
     availableAt ? `availableAt=${availableAt}` : undefined
   ];
 
@@ -243,15 +246,30 @@ function formatTimelineTrace(logs, id) {
  */
 export function traceLogs(input, id) {
   let logs = input.split(/\r?\n/).map(parseJsonLine).filter(Boolean);
-  let linkedJob = logs.find(log => {
-    if (jobRunIdFor(log) !== id)
-      return false;
+  let links = new Map();
 
-    let requestId = requestIdFor(log);
-    return requestId && requestId !== id;
-  });
-  let requestId = requestIdFor(linkedJob) ?? id;
-  return logs.filter(log => requestIdFor(log) === requestId || jobRunIdFor(log) === id);
+  for (let log of logs) {
+    let ids = correlationIds(log);
+    if (ids.length < 2)
+      continue;
+
+    for (let id of ids) {
+      if (!links.has(id))
+        links.set(id, new Set());
+
+      let related = links.get(id);
+      for (let other of ids)
+        if (other !== id)
+          related.add(other);
+    }
+  }
+
+  let selected = new Set([id]);
+  for (let id of selected)
+    for (let other of links.get(id) ?? [])
+      selected.add(other);
+
+  return logs.filter(log => correlationIds(log).some(id => selected.has(id)));
 }
 
 /**

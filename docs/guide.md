@@ -1309,7 +1309,7 @@ let producer = await createCricketJobs({
 await producer.jobs.enqueue(generateReport, { reportId, accountId });
 ```
 
-Pass `runAt` or `delayMs` as a third argument to run it later. For work started by HTTP, pass `requestId: request.id` in the same options to link the job to the [request trace](guide.md#follow-a-request).
+Pass `runAt` or `delayMs` as a third argument to run it later. Pass `requestId: request.id` for HTTP work or `parentJobRunId: jobRunId` for work started by a job. Both link to the [workflow trace](guide.md#follow-a-request).
 
 ### Start a worker
 
@@ -1476,12 +1476,22 @@ import {
   z
 } from '@robdel12/cricket';
 
+let publishReport = defineJob({
+  name: 'reports.publish',
+  input: z.object({ reportId: z.string() }),
+  queue: localQueue({ name: 'reports' }),
+  run: ({ input }) => ({ published: input.reportId })
+});
+
 let renderReport = defineJob({
   name: 'reports.render',
   input: z.object({ reportId: z.string() }),
   queue: localQueue({ name: 'reports' }),
-  run: ({ input, trace }) =>
-    trace.span('reports.renderDocument', () => ({ rendered: input.reportId }))
+  async run({ input, trace, jobs, jobRunId, requestId }) {
+    let report = await trace.span('reports.renderDocument', () => ({ reportId: input.reportId }));
+    await jobs.enqueue(publishReport, report, { parentJobRunId: jobRunId, requestId });
+    return report;
+  }
 });
 
 let logger = createCricketLogger();
@@ -1501,7 +1511,7 @@ let requestReport = defineEndpoint({
 });
 
 let app = defineCricketApp({
-  domains: [{ name: 'reports', endpoints: [requestReport], jobs: [renderReport] }],
+  domains: [{ name: 'reports', endpoints: [requestReport], jobs: [renderReport, publishReport] }],
   logger
 });
 let worker = await startCricketWorker(app, { queues: { driver } });
@@ -1526,7 +1536,9 @@ try {
 }
 ```
 
-Run the example and save its JSON logs. Then use either the request ID or the `jobRunId` from `job.started` to read the same workflow.
+A job can link work it starts by passing `parentJobRunId: jobRunId` to `jobs.enqueue`. Pass its `requestId` too when there is one. This also connects scheduled jobs to their children when there is no HTTP request.
+
+Run the example and save its JSON logs. Use the request ID or any linked `jobRunId` from `job.started` to read the same workflow.
 
 ```sh
 node examples/request-job-trace.js > cricket.log

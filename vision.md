@@ -342,7 +342,8 @@ Development logs should be easy to scan without an app-owned formatter. Pretty
 output leads with the event and useful request/job/span facts, followed by
 redacted metadata and full IDs. JSON remains the collection format. Keep an
 explicit link from HTTP to the job envelope so either the request ID or a job
-run ID can find the workflow in `cricket trace`.
+run ID can find the workflow in `cricket trace`. Jobs explicitly link work
+they start so scheduled jobs and their children can share a trace too.
 
 Keep exports off the request and worker completion paths. Deliver individual
 events through a bounded queue. A slow destination can lose telemetry without
