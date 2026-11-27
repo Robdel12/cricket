@@ -39,6 +39,9 @@ await startCricketApp(app, { port: 3000, main: import.meta.url });
 
 Run `node api.js`, then `curl localhost:3000/hello/Cricket`. Cricket checks the params before your handler runs and the response before it goes out.
 
+For a structured app with local agent skills, run `pnpm exec cricket init .`
+and see [Organize your app](docs/guide.md#organize-your-app).
+
 ## What you get
 
 - **Self-documenting.** Contracts get checked on every request and become OpenAPI, `cricket inspect` output, and agent guidance.

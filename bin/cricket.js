@@ -121,6 +121,8 @@ function apiVersionSelections(args) {
  * - `migrate` runs your Knex migrations.
  * - `test` runs your tests with `NODE_ENV=test`.
  * - `trace` pulls one request out of your JSON logs.
+ *
+ * `init agents` adds missing guidance. Use `init agents . --force` to refresh the marked block in `AGENTS.md` and the shipped skill files. This replaces edits inside those files and keeps project notes outside the block.
  */
 function usage() {
   return `Usage:

@@ -418,8 +418,10 @@ Cricket skills together so agents learn the same architecture humans use.
 Focused `init app` and `init agents` commands remain useful when adopting
 Cricket inside an existing repository, but they are not the default path.
 
-The generated guidance is documentation. When Cricket's public contract changes,
-revise the relevant guidance as a whole and remove superseded instructions.
+Keep the generated `AGENTS.md` block short. It points to the right domain file
+and skill. Put task-specific choices in the skills and deeper examples in the
+guides. When a public contract changes, update the skill or reference agents
+use for that work. Keep the links usable from an installed app.
 
 ## What Cricket Is Not
 

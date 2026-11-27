@@ -108,7 +108,9 @@ api/
   dev/           local-only tools
 ```
 
-`init` also writes `AGENTS.md` and a few skills under `.agents/skills/`, so coding agents follow the same rules. In an app that already has this layout, `pnpm exec cricket init agents .` adds only the agent guidance.
+`init` adds a short Cricket block to `AGENTS.md`. It maps the domain files and links to local skills for domains, jobs, machines, observability, and testing.
+
+In an existing app, run `pnpm exec cricket init agents .` to add missing guidance. After upgrading Cricket, use `pnpm exec cricket init agents . --force` to refresh it. This replaces edits to the Cricket block and shipped skill files. Your other project notes stay in place.
 
 ### Add a domain
 
@@ -647,7 +649,7 @@ export let app = defineCricketApp({
 });
 ```
 
-Fetch routes declare their statuses and content types in `fetchResponses`. Cricket checks those without buffering the body, so streaming just works.
+Fetch routes declare their statuses and content types in `fetchResponses`. Cricket checks those without buffering the body. Use a normal handler for parsed bodies, raw bodies, multipart uploads, and endpoint API versions.
 
 ### Run behind a proxy
 
@@ -1255,6 +1257,7 @@ await reports.save(result.snapshot, result.emitted);
 - Keep guards and transitions pure. No fetching or writing inside the chart.
 - Save the new state and any follow-up work in the same transaction, then let a [job](guide.md#run-background-jobs) do the work. That way a crash can't lose it.
 - Lock the row or use a conditional write when two events could land at once.
+- Have HTTP and jobs call the same service. Check that a job attempt still owns the work before accepting a late result.
 
 If your state needs more than a status column, `persist(snapshot)` gives you a JSON checkpoint and `restore(checkpoint)` reads it back. When you change a stored chart, bump its `version` and migrate old checkpoints with `machineVersions`.
 
@@ -1264,7 +1267,7 @@ If your state needs more than a status column, `persist(snapshot)` gives you a J
 
 Some work shouldn't happen during a request, like sending email or rendering a report. Jobs move it to a worker, and they keep the same contracts as your routes: validated input, your services, logs, and traces.
 
-Use Redis when you run more than one worker. A single-process app can skip Redis with the local queue, and tests use an in-memory one.
+Use Redis to share a queue across processes. Use a local queue for one process and the test driver when testing job behavior.
 
 ### Define a job
 
@@ -1334,7 +1337,9 @@ The worker waits on Redis instead of polling, so it picks up new work right away
 
 ### Run jobs in one process
 
-Don't need Redis? Give the job a `localQueue` and start the worker with `queues: { local: true }`. Delays and cron work the same, all in memory.
+Give the job a `localQueue`, start the worker with `queues: { local: true }`, and enqueue through `worker.jobs`. Delays and cron run in memory.
+
+If you build a producer separately in the same process, pass the same `createLocalQueueDriver()` instance as `queues.driver` to both. Each runtime with `queues.local: true` gets its own queue.
 
 ```js title="examples/local-queue.js"
 import { defineCricketApp, defineJob, localQueue, startCricketWorker, z } from '@robdel12/cricket';
@@ -1363,7 +1368,7 @@ try {
 }
 ```
 
-The queue disappears when the process stops, so keep real work in your own tables and re-enqueue anything pending at startup. A `coalesceKey` swaps out pending work with the same key instead of piling up duplicates, and `jobs.cancelPending(job, key)` drops it. Coalescing jobs keep their retries in your app state, not the queue.
+The queue disappears when the process stops. Keep durable work in app tables and re-enqueue any pending work at startup. A `coalesceKey` replaces pending work with the same job and key. Cancel it with `jobs.cancelPending(job, key)`. Coalescing jobs reject Cricket retry policies. Keep their retry state in app tables.
 
 ### Retries, limits, and failures
 

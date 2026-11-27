@@ -111,7 +111,7 @@ export function isJobContract(value) {
  *
  * Some work shouldn't happen during a request, like sending email or rendering a report. Jobs move it to a worker, and they keep the same contracts as your routes: validated input, your services, logs, and traces.
  *
- * Use Redis when you run more than one worker. A single-process app can skip Redis with the local queue, and tests use an in-memory one.
+ * Use Redis to share a queue across processes. Use a local queue for one process and the test driver when testing job behavior.
  *
  * ## Define a job
  *
@@ -181,11 +181,13 @@ export function isJobContract(value) {
  *
  * ## Run jobs in one process
  *
- * Don't need Redis? Give the job a `localQueue` and start the worker with `queues: { local: true }`. Delays and cron work the same, all in memory.
+ * Give the job a `localQueue`, start the worker with `queues: { local: true }`, and enqueue through `worker.jobs`. Delays and cron run in memory.
+ *
+ * If you build a producer separately in the same process, pass the same `createLocalQueueDriver()` instance as `queues.driver` to both. Each runtime with `queues.local: true` gets its own queue.
  *
  * <!-- example examples/local-queue.js -->
  *
- * The queue disappears when the process stops, so keep real work in your own tables and re-enqueue anything pending at startup. A `coalesceKey` swaps out pending work with the same key instead of piling up duplicates, and `jobs.cancelPending(job, key)` drops it. Coalescing jobs keep their retries in your app state, not the queue.
+ * The queue disappears when the process stops. Keep durable work in app tables and re-enqueue any pending work at startup. A `coalesceKey` replaces pending work with the same job and key. Cancel it with `jobs.cancelPending(job, key)`. Coalescing jobs reject Cricket retry policies. Keep their retry state in app tables.
  *
  * ## Retries, limits, and failures
  *

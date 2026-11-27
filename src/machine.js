@@ -120,6 +120,7 @@ function resultFor(machine, [snapshot, effects]) {
  * - Keep guards and transitions pure. No fetching or writing inside the chart.
  * - Save the new state and any follow-up work in the same transaction, then let a [job](guide.md#run-background-jobs) do the work. That way a crash can't lose it.
  * - Lock the row or use a conditional write when two events could land at once.
+ * - Have HTTP and jobs call the same service. Check that a job attempt still owns the work before accepting a late result.
  *
  * If your state needs more than a status column, `persist(snapshot)` gives you a JSON checkpoint and `restore(checkpoint)` reads it back. When you change a stored chart, bump its `version` and migrate old checkpoints with `machineVersions`.
  *
