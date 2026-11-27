@@ -1074,111 +1074,35 @@ Plugins only add domains. They can't add middleware, run migrations, or decide w
 
 See the [plugin composition example](../examples/plugin-composition/app.js) for a full app with [its plugin](../examples/plugin-composition/plugin.js).
 
-## Host OAuth and OIDC
+## Host OAuth for MCP
 
-Need your API to be an OAuth or OpenID Connect provider, like for an MCP server? Cricket wraps the battle-tested [`oidc-provider`](https://github.com/panva/node-oidc-provider) package, and your app keeps control of accounts, consent, and storage.
+Use Cricket's OAuth plugin to let an MCP client connect to your API through
+your app's sign-in and consent flow.
 
-Install the optional packages first:
+Import `defineOAuthPlugin` from `@robdel12/cricket/oauth` and add
+`defineOAuthPlugin({ paths, serviceName: 'oauth' })` to the app's `plugins`.
+Set the plugin's `paths` for authorization, token exchange, revocation,
+JWKS, authorization discovery, resource discovery, and the browser
+interaction and consent page. Compose the `oauth` service with the public
+origin, issuer, resource, and app hooks when the
+app sets up its dependencies and domain services.
 
-```sh
-pnpm add oidc-provider koa koa-mount
-```
+Cricket serves authorization code with S256 PKCE and resource-bound opaque
+tokens. The app decides who can sign in, what a user can consent to, and how
+to check the user's current access. Use `createOAuthClients` for configured
+clients and Client ID Metadata Documents, and `fetchOAuthMetadata` for
+bounded requests to public HTTPS metadata.
 
-### Create the host in setup
+The app supplies a durable store to `createOAuthAuthorization` and
+`createOAuthTokenService`. Run each store operation inside one database
+transaction. Lock the grant and credential before consuming a code or
+refresh token. Commit the consumed credential and its replacements together.
+Keep the consumed marker until the credential expires so replay can revoke
+the affected grant.
 
-`createOidcProviderHost` builds the provider. Return its `protocolHost` from setup so Cricket can route to it.
-
-```js title="examples/oidc-provider-host.js"
-import { createOidcProviderHost } from '@robdel12/cricket/oidc-provider';
-
-// Call this from your app's setup. You bring the storage adapter, clients,
-// keys, and a safe fetch for remote metadata.
-export async function createExampleOidcSetup({
-  origin,
-  adapter,
-  clients,
-  jwks,
-  cookieKeys,
-  csrfKey,
-  fetchOAuthMetadata
-}) {
-  let host = await createOidcProviderHost({
-    origin,
-    issuer: `${origin}/oauth`,
-    resource: `${origin}/mcp`,
-    csrfKey,
-    adapter,
-    clients,
-    jwks,
-    cookieKeys,
-    cookieNames: {
-      session: 'example_oauth_session',
-      interaction: 'example_oauth_interaction',
-      resume: 'example_oauth_resume'
-    },
-    paths: {
-      providerMount: '/oauth',
-      resourceMetadata: '/.well-known/oauth-protected-resource/mcp',
-      authorizationMetadata: '/.well-known/oauth-authorization-server/oauth',
-      interaction: '/api/oauth-interactions',
-      interactionLanding: '/mcp/authorize'
-    },
-    resourceScopes: ['read'],
-    scopesSupported: ['read'],
-    bearerMethodsSupported: ['header'],
-    browserCredentialCookie: 'access_token',
-    fetch: fetchOAuthMetadata
-  });
-
-  return {
-    protocolHosts: [host.protocolHost],
-    dependencies: { oidcHost: host }
-  };
-}
-
-// Call this from your app's services function, once your domain services exist.
-export function bindExampleOidcPolicy(host, oauthServices) {
-  host.bind({
-    authorizeRequest: facts => oauthServices.authorizeRequest(facts),
-    authorizeRevocation: facts => oauthServices.authorizeRevocation(facts),
-    withRequest: (facts, run) => oauthServices.withProtocolRequest(facts, run),
-    resolveAccount: facts => oauthServices.resolveAccount(facts),
-    deleteGrantArtifacts: facts => oauthServices.deleteGrantArtifacts(facts),
-    prepareInteraction: facts => oauthServices.prepareInteraction(facts),
-    consentDetails: facts => oauthServices.consentDetails(facts),
-    decideConsent: facts => oauthServices.decideConsent(facts),
-    allowClientMetadata: facts => oauthServices.allowClientMetadata(facts),
-    allowClient: facts => oauthServices.allowClient(facts)
-  });
-}
-```
-
-Then bind your policy hooks from the app's `services` function, once your domain services exist:
-
-```js
-export let app = defineCricketApp({
-  baseUrl: import.meta.url,
-  domains: './domains',
-  setup: ({ db }) => createExampleOidcSetup({ adapter: createOAuthAdapter({ db }), ...oauthConfig }),
-  services({ dependencies, services }) {
-    bindExampleOidcPolicy(dependencies.oidcHost, services.oauth);
-    return services;
-  }
-});
-```
-
-### What your hooks decide
-
-The hooks get plain, validated facts. They never see Koa contexts or raw requests.
-
-- `withRequest(facts, run)` is your transaction. Await `run()` inside it so provider reads and your writes commit together.
-- `prepareInteraction`, `consentDetails`, and `decideConsent` drive your consent screen.
-- `resolveAccount` checks the account and grant every time a token is used.
-- `authorizeRequest` and `authorizeRevocation` can reject or rate-limit before the provider does any work.
-
-### What stays with the app
-
-Cricket handles the protocol and its routes. You own client registration, storage, sessions, scopes, and the consent UI. The provider uses the same [trusted proxy](guide.md#serve-http) settings as the rest of your app, so HTTPS redirects and secure cookies work behind a proxy.
+Test the browser consent and token flow over HTTP with your database. Cover
+concurrent redemption, rejected exchanges, refresh rotation, and revocation.
+Verify that revoking a connection leaves other connections working.
 
 ## Model domain state
 
