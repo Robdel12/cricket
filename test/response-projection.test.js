@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import http from 'node:http';
+import { PassThrough } from 'node:stream';
 import { describe, it } from 'node:test';
 
 import {
-  defineApiVersions, defineCricketApp, defineEndpoint, defineRule,
-  defineSerializer, generateOpenApi, ok, respond, unauthenticated, withHeaders, z
+  createCricketRuntime, defineApiVersions, defineCricketApp, defineEndpoint, defineRule,
+  defineSerializer, generateOpenApi, ok, respond, unauthenticated, withHeaders, withResponseCleanup, z
 } from '../src/index.js';
 import { createTestRuntime } from '../src/test/index.js';
 
@@ -96,6 +99,61 @@ let auth = { Authorization: 'Bearer fixture' };
 let currentHeaders = { ...auth, 'Comparison-Version': 'current' };
 
 describe('Canonical response data and public projections', () => {
+  it('rejects undeclared handler statuses and releases the discarded response', async t => {
+    let body = new PassThrough();
+    let responseFinished = false;
+    let release = Promise.withResolvers();
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/export',
+      responses: { 200: { description: 'Download' } },
+      handler: () => withResponseCleanup(respond(202, body), () => release.resolve(responseFinished))
+    });
+    let runtime = await createCricketRuntime(defineCricketApp({
+      domains: [{ name: 'exports', endpoints: [endpoint] }]
+    }), { logger() {} });
+    let server = http.createServer((req, res) => {
+      res.once('finish', () => { responseFinished = true; });
+      runtime.handle(req, res);
+    }).listen(0, '127.0.0.1');
+    t.after(async () => {
+      await new Promise(resolve => server.close(resolve));
+      await runtime.cleanup();
+    });
+    await once(server, 'listening');
+
+    let response = await fetch(`http://127.0.0.1:${server.address().port}/export`);
+    assert.equal(response.status, 500);
+    assert.equal((await response.json()).error.code, 'RESPONSE_CONTRACT_FAILED');
+    assert.equal(body.destroyed, true);
+    assert.equal(await release.promise, true);
+  });
+
+  it('applies exact, range, and default response declarations in order', async t => {
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/export',
+      responses: {
+        200: z.object({ exact: z.string() }),
+        '2XX': z.object({ range: z.string() }),
+        default: z.object({ fallback: z.string() })
+      },
+      handler: ({ request }) => respond(Number(request.query.status), {
+        exact: 'ok', range: 'ok', fallback: 'ok'
+      })
+    });
+    let runtime = await createTestRuntime(defineCricketApp({
+      domains: [{ name: 'exports', endpoints: [endpoint] }]
+    }));
+    t.after(() => runtime.cleanup());
+
+    for (let [status, field] of [[200, 'exact'], [202, 'range'], [404, 'fallback']]) {
+      let response = await runtime.api.get(`/export?status=${status}`);
+      assert.equal(response.status, status);
+      assert.deepEqual(response.body, { [field]: 'ok' });
+    }
+  });
+
   it('validates and serializes the default response when status-specific errors are declared', async t => {
     let endpoint = defineEndpoint({
       method: 'get',

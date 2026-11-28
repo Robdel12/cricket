@@ -87,8 +87,9 @@ export function formatPrettyLog(envelope, { color = false } = {}) {
     delete details.jobName;
   }
 
-  if (request.method !== undefined && request.path !== undefined) {
-    summary.push(`${valueLabel(request.method)} ${valueLabel(request.path)}`);
+  if (request.method !== undefined) {
+    let method = valueLabel(request.method);
+    summary.push(request.path === undefined ? method : `${method} ${valueLabel(request.path)}`);
     addDetails(details, 'request', without(request, ['method', 'path']));
   }
 

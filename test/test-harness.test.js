@@ -127,7 +127,7 @@ describe('Cricket test harness', () => {
         operationId: 'createProject'
       });
       assert.equal(request.request.headers.includes('authorization'), true);
-      assert.equal(request.request.query.includes('source'), true);
+      assert.equal(request.request.hasQuery, true);
       assert.equal(request.request.hasBody, true);
       assert.equal(Number.isFinite(request.timings.totalMs), true);
       assert.equal(Number.isFinite(request.timings.routeMatchMs), true);

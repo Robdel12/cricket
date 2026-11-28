@@ -168,7 +168,7 @@ function readCredentials(body, authorization) {
   if (authorization) {
     let parsed = decodeBasic(authorization);
     if (!parsed || (body.client_id && parsed.id !== body.client_id)) return;
-    return parsed;
+    return { ...parsed, method: 'client_secret_basic' };
   }
   if (body.client_assertion) {
     if (body.client_assertion_type !== assertionType) return;
@@ -181,7 +181,11 @@ function readCredentials(body, authorization) {
     }
   }
   if (!body.client_id) return;
-  return { id: body.client_id, secret: body.client_secret };
+  return {
+    id: body.client_id,
+    secret: body.client_secret,
+    method: body.client_secret ? 'client_secret_post' : 'none'
+  };
 }
 
 function sameSecret(left, right) {
@@ -221,10 +225,10 @@ export function createOAuthClients({
   async function findEntry(id, request) {
     if (configured.has(id)) return configured.get(id);
     if (!metadataUrl(id)) return;
+    if (allowClientMetadata && (await allowClientMetadata({ clientId: id, request })) !== true) return;
     let cached = fetched.get(id);
     let now = clock();
     if (cached && cached.expiresAt > now) return cached.entry;
-    if (allowClientMetadata && (await allowClientMetadata({ clientId: id, request })) !== true) return;
     let document = await metadata(id, 'client', request);
     let entry = normalizeClient(document, id);
     if (!entry) return;
@@ -248,7 +252,8 @@ export function createOAuthClients({
     let now = Math.floor(clock() / 1000);
     if (credentials.secretExpiresAt && credentials.secretExpiresAt <= now) return;
     if (client.authMethod === 'client_secret_basic' || client.authMethod === 'client_secret_post') {
-      if (input.secret && sameSecret(credentials.clientSecret, input.secret)) return client;
+      if (input.method === client.authMethod && sameSecret(credentials.clientSecret, input.secret))
+        return client;
       return;
     }
     if (!input.assertion || typeof recordAssertion !== 'function') return;

@@ -8,7 +8,7 @@ No ORM, no classes to extend, no magic wiring. Just plain functions you can read
 
 ## Install
 
-You'll need Node 24 or newer.
+You'll need Node 24.22.3 or newer in the 24.x line, or Node 26.13.1 or newer.
 
 ```sh
 pnpm add github:Robdel12/cricket

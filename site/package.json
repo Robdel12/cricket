@@ -14,7 +14,7 @@
     "@astrojs/starlight": "0.42.8",
     "@fontsource-variable/atkinson-hyperlegible-mono": "^5.3.0",
     "@fontsource-variable/atkinson-hyperlegible-next": "^5.3.0",
-    "astro": "7.4.5",
+    "astro": "7.4.7",
     "parse5": "8.0.0",
     "semver": "7.7.4",
     "tar": "7.5.22",

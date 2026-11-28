@@ -1,8 +1,8 @@
 import { defineCricketApp, defineEndpoint, ok, startCricketApp } from '@robdel12/cricket';
 
-// This trusts a proxy on the same machine. Swap in your real proxy addresses,
-// and have the proxy overwrite forwarded headers. Being on a private network
-// isn't enough to trust a caller.
+// This trusts a proxy on the same machine. Keep the backend port private and
+// have the proxy overwrite forwarded headers. Use the peer addresses and
+// public hostnames from your deployment.
 export let app = defineCricketApp({
   name: 'Trusted proxy example',
   trustProxy: { peers: ['127.0.0.1', '::1'] },

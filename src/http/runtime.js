@@ -512,8 +512,7 @@ function closeUnsupportedProtocolSocket(req, socket, logger, event) {
   try {
     logger.warn('server.unsupported_protocol', {
       event,
-      method: req?.method,
-      url: req?.url
+      method: req?.method
     });
   } catch {
     // Unsupported protocol paths should never create a logging failure path.
@@ -718,7 +717,7 @@ function createResponseTerminalObserver({
     let finished = kind === 'finished';
     let event = {
       requestId,
-      request: safeRequestSnapshot(request),
+      request: safeRequestSnapshot(request, route?.path),
       response: response(),
       route,
       terminal: true,
@@ -757,7 +756,7 @@ async function reportRequestError(appContract, {
       error: safeErrorSnapshot(error),
       ...(handled ? { handled: true } : {}),
       method: baseRequest?.method,
-      path: baseRequest?.path
+      path: route?.path
     });
   } catch {
     // Error reporting must never prevent Cricket from sending the response.
@@ -781,7 +780,7 @@ async function reportRequestError(appContract, {
         error: safeErrorSnapshot(onErrorFailure),
         originalError: safeErrorSnapshot(error),
         method: baseRequest?.method,
-        path: baseRequest?.path
+        path: route?.path
       });
     } catch {
       // Keep the original response path intact.
@@ -878,7 +877,7 @@ function createRuntimeHandler({
           error: safeErrorSnapshot(error),
           ...(handled ? { handled: true } : {}),
           requestId,
-          request: safeRequestSnapshot(observedRequest ?? baseRequest),
+          request: safeRequestSnapshot(observedRequest ?? baseRequest, route?.path),
           route
         }));
       }
@@ -946,7 +945,7 @@ function createRuntimeHandler({
         defaultResponseHeaders = normalizeHttpResponseHeaders(
           appContract.responseHeaders(policyRequest)
         );
-      assertAllowedHost(baseRequest, appContract.allowedHosts);
+      await assertAllowedHost(policyRequest, appContract.allowedHosts);
 
       if (unsupportedExpectation) {
         writeResponse(toHttpError(expectationFailed()), {
@@ -1109,7 +1108,7 @@ function createRuntimeHandler({
           if (apiVersionNegotiation)
             logRuntimeEvent(routeLogger, 'info', 'http.api_version.resolved', versionMetadata);
           logRuntimeEvent(routeLogger, 'info', 'http.route.matched', {
-            request: safeRequestSnapshot(matchedRequest),
+            request: safeRequestSnapshot(matchedRequest, route.path),
             route,
             ...versionMetadata,
             ...deprecationMetadata(routeEndpoint)
@@ -1117,7 +1116,7 @@ function createRuntimeHandler({
           await emitObserved(observability, replay, () => ({
             type: 'route.matched',
             requestId,
-            request: safeRequestSnapshot(matchedRequest),
+            request: safeRequestSnapshot(matchedRequest, route.path),
             route,
             ...versionMetadata,
             ...deprecationMetadata(routeEndpoint)
@@ -1214,6 +1213,7 @@ function createRuntimeHandler({
 
             let response = await routeEndpoint.handle(parsedRequest, contextAfterBeforeBodyRules, {
               apiVersionNegotiation,
+              discardResponse: writer.discardResponse,
               timing
             });
 
@@ -1427,6 +1427,8 @@ function createRuntimeHandler({
  *
  * `beforeBodyRules` run before Cricket reads the body. Return a Cricket response from a rule to end the request without reading the body first. When a limit comes from config, set it on the app with `requestBodyLimits`, keyed by the route's operation ID. Need the exact bytes, like for webhook signatures? Use `rawBody` instead.
  *
+ * URL-encoded forms have their own field limit. Cricket accepts up to 1,000 fields by default, counting each repeated value. Set `maxFormFields` on an endpoint when it needs a different limit. A form that exceeds it gets a 413. Request byte limits must be positive safe integers, including `rawBody.maxBytes` and `multipart.maxBytes`.
+ *
  * ## Use a Fetch handler
  *
  * Got a library that already speaks web-standard `Request` and `Response`? Give the route a `fetch` function. Cricket still matches the route and runs rules, then hands you a real `Request`.
@@ -1434,6 +1436,7 @@ function createRuntimeHandler({
  * <!-- example examples/fetch-endpoint.js -->
  *
  * Fetch routes declare their statuses and content types in `fetchResponses`. Cricket checks those without buffering the body. Use a normal handler for parsed bodies, raw bodies, multipart uploads, and endpoint API versions.
+ * The Fetch request uses the validated host and omits forwarding headers. Use `context.request.clientIp` and the other normalized proxy facts for access checks.
  *
  * ## Run behind a proxy
  *
@@ -1442,6 +1445,8 @@ function createRuntimeHandler({
  * <!-- example examples/trusted-proxy.js -->
  *
  * Only listed peers can set the client IP, host, or protocol. Use your real proxy addresses, and have the proxy overwrite forwarded headers rather than pass them through.
+ *
+ * Set `allowedHosts` to the hostnames your app serves. A list must contain at least one host, RegExp, or predicate. Cricket awaits predicates and accepts the host when one returns `true`. Keep the backend listener private and set request size, rate, and timeout limits at the proxy. Use your configured public origin for links sent to users.
  *
  * ## Shut down cleanly
  *

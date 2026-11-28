@@ -200,6 +200,7 @@ export function normalizeLogger(logger, context = {}) {
  * ```
  *
  * Cricket redacts fields that look like secrets, like `authorization`, `cookie`, `password`, and `token`.
+ * Automatic request logs and observer events use the matched route template. They report whether a query was present and omit the original path and query string.
  *
  * ## Tracing
  *

@@ -141,6 +141,51 @@ describe('Fetch endpoints', () => {
     }
   });
 
+  it('uses the validated authority and client address at the Fetch boundary', async () => {
+    let app = await startFetchApp(defineEndpoint({
+      method: 'get',
+      path: '/authority',
+      fetchResponses: { 200: { contentTypes: ['application/json'] } },
+      fetch(request, context) {
+        return Response.json({
+          url: request.url,
+          host: request.headers.get('host'),
+          forwarded: [...request.headers.keys()].filter(name =>
+            name === 'forwarded' || name === 'x-real-ip' || name.startsWith('x-forwarded-')),
+          clientIp: context.request.clientIp
+        }, {
+          headers: { connection: 'set-cookie', 'set-cookie': 'session=local; Path=/' }
+        });
+      }
+    }), {
+      trustProxy: { peers: ['127.0.0.1'] },
+      allowedHosts: ['api.example.test']
+    });
+    try {
+      let response = await new Promise((resolve, reject) => {
+        let request = http.get(`${app.origin}/authority`, { headers: {
+          host: 'internal.example.test',
+          forwarded: 'for=198.51.100.9',
+          'x-real-ip': '198.51.100.9',
+          'x-forwarded-for': '198.51.100.9',
+          'x-forwarded-host': 'api.example.test',
+          'x-forwarded-proto': 'https'
+        } }, resolve);
+        request.once('error', reject);
+      });
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(JSON.parse(await readResponse(response)), {
+        url: 'https://api.example.test/authority',
+        host: 'api.example.test',
+        forwarded: [],
+        clientIp: '198.51.100.9'
+      });
+      assert.equal(response.headers['set-cookie'], undefined);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('preserves HEAD metadata while cancelling the Fetch response body without reading it', async () => {
     let cancelledResolve;
     let cancelled = new Promise(resolve => { cancelledResolve = resolve; });

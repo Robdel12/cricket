@@ -66,6 +66,14 @@ describe('explicit trusted proxy peers', () => {
     });
   });
 
+  it('checks the direct Host even when a trusted proxy supplies the public host', async () => {
+    let app = await proxyApp(loopback);
+    let response = await request(app).get('/facts').set('Host', 'internal.example.test/path')
+      .set('X-Forwarded-Host', 'api.example.test');
+    assert.equal(response.status, 400);
+    assert.equal(response.body.error.message, 'Invalid Host header');
+  });
+
   it('combines repeated physical XFF headers in wire order and normalizes mapped IPv6', async () => {
     let app = await proxyApp({ peers: ['::ffff:7f00:0/104', '::ffff:a00:0/104'] });
     let response = await rawHttpResponse(app,

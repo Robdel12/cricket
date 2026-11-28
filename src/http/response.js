@@ -263,6 +263,18 @@ function isReadable(value) {
   return value instanceof Readable || typeof value?.pipe === 'function';
 }
 
+export function discardResponseBody(body) {
+  if (!isReadable(body))
+    return;
+
+  let completion = finished(body, { cleanup: true }).catch(error => {
+    if (error.code !== 'ERR_STREAM_PREMATURE_CLOSE')
+      throw error;
+  });
+  body.destroy();
+  return completion;
+}
+
 function isBinary(value) {
   return Buffer.isBuffer(value);
 }
@@ -575,15 +587,9 @@ export function createResponseWriter(req, res, {
   }
 
   function discard(body) {
-    if (!isReadable(body))
-      return;
-
-    let completion = finished(body, { cleanup: true }).catch(error => {
-      if (error.code !== 'ERR_STREAM_PREMATURE_CLOSE')
-        throw error;
-    });
-    own(completion);
-    body.destroy();
+    let completion = discardResponseBody(body);
+    if (completion)
+      own(completion);
   }
 
   function discardRequest(maxBodyBytes) {
@@ -675,9 +681,14 @@ export function createResponseWriter(req, res, {
     return drain;
   }
 
-  function cleanup(response, immediately = false) {
+  function cleanup(response) {
     if (typeof response?.onClose === 'function')
-      own((immediately ? Promise.resolve() : terminated).then(() => response.onClose()));
+      own(terminated.then(() => response.onClose()));
+  }
+
+  function discardResponse(response) {
+    cleanup(response);
+    own(Promise.resolve().then(() => discardResponseBody(response?.body)));
   }
 
   function observeTerminal(onTerminal) {
@@ -698,8 +709,7 @@ export function createResponseWriter(req, res, {
       assertValidStatus(prepared.status);
       assertValidHeaders(prepared.headers);
     } catch (error) {
-      cleanup(response, true);
-      discard(response?.body);
+      discardResponse(response);
       throw error;
     }
 
@@ -810,5 +820,5 @@ export function createResponseWriter(req, res, {
     }
   }
 
-  return { write, complete, drainRequest, observeTerminal };
+  return { write, complete, discardResponse, drainRequest, observeTerminal };
 }

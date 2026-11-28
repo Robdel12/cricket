@@ -10,24 +10,29 @@ let hopByHopHeaders = new Set([
   'trailer', 'transfer-encoding', 'upgrade'
 ]);
 
-function connectionTokens(headers) {
-  return String(headers.get('connection') ?? '')
+function connectionTokens(value) {
+  return String(value ?? '')
     .split(',')
     .map(name => name.trim().toLowerCase())
     .filter(Boolean);
 }
 
-function requestHeaders(req) {
+function requestHeaders(req, host) {
   let headers = new Headers();
-  let excluded = new Set([...hopByHopHeaders, ...connectionTokens(new Headers(req.headers))]);
+  let excluded = new Set([
+    ...hopByHopHeaders, ...connectionTokens(req.headers.connection),
+    'host', 'forwarded', 'x-real-ip'
+  ]);
   for (let [name, value] of Object.entries(req.headers)) {
-    if (excluded.has(name.toLowerCase())) continue;
+    let lower = name.toLowerCase();
+    if (excluded.has(lower) || lower.startsWith('x-forwarded-')) continue;
     if (Array.isArray(value)) {
       for (let item of value) headers.append(name, item);
     } else if (value !== undefined) {
       headers.append(name, value);
     }
   }
+  headers.set('host', host);
   return headers;
 }
 
@@ -83,7 +88,7 @@ export function createFetchRequest(req, cricketRequest, { maxBodyBytes, signal }
   try {
     let request = new Request(url, {
       method,
-      headers: requestHeaders(req),
+      headers: requestHeaders(req, url.host),
       ...(source ? { body: source.stream, duplex: 'half' } : {}),
       signal
     });
@@ -103,11 +108,11 @@ export function fetchResponseToHttpResponse(response, { signal } = {}) {
   if (!(response instanceof Response))
     throw new Error('Fetch endpoint must return a Fetch Response');
   let headers = {};
-  let excluded = new Set([...hopByHopHeaders, ...connectionTokens(response.headers)]);
+  let excluded = new Set([...hopByHopHeaders, ...connectionTokens(response.headers.get('connection'))]);
   for (let [name, value] of response.headers) {
     if (!excluded.has(name.toLowerCase())) headers[name] = value;
   }
-  let setCookies = response.headers.getSetCookie?.();
+  let setCookies = excluded.has('set-cookie') ? undefined : response.headers.getSetCookie?.();
   if (setCookies?.length) headers['set-cookie'] = setCookies;
   let body = response.body
     ? Readable.fromWeb(response.body)

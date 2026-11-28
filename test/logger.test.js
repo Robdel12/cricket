@@ -119,7 +119,7 @@ describe('human-readable Cricket logs', () => {
       assert.equal(response.status, 200);
       let started = events.find(event => event.includes('http.request.started'));
       let finished = events.find(event => event.includes('http.response.finished'));
-      assert.match(started, /http.request.started · GET \/stations/);
+      assert.match(started.split('\n')[0], /http.request.started · GET$/);
       assert.match(finished.split('\n')[0], /http.response.finished · GET \/stations · listStations · 200/);
       assert.match(finished, /requestId=req_stations_full/);
       assert.doesNotMatch(events.join('\n'), /private-query/);
