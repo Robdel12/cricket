@@ -377,6 +377,9 @@ describe('Cricket CLI', () => {
     let originalCore = await fs.readFile(core, 'utf8');
     let originalMachines = await fs.readFile(machines, 'utf8');
     let originalReference = await fs.readFile(reference, 'utf8');
+    assert.match(originalReference, /maxFormFields/);
+    assert.match(originalReference, /Include every\s+handler status/);
+    assert.match(originalReference, /non-empty\s+`allowedHosts`/);
     await fs.writeFile(core, 'Local skill edit.\n');
     await fs.writeFile(localNotes, 'Local reference.\n');
     await fs.unlink(machines);

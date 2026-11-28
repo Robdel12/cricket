@@ -6,6 +6,7 @@ import { parseMultipartBody } from './multipart.js';
 import { proxyFacts } from './proxy.js';
 import { defaultMaxBodyBytes, recordRequestBodyBytes } from './body-bytes.js';
 
+let defaultMaxFormFields = 1000;
 let securityHeaderNames = [
   'authorization',
   'cookie'
@@ -32,17 +33,12 @@ function headerValues(headers, rawHeaders, name) {
 
 export function singleHeaderValue(req, name, {
   ambiguousMessage,
-  rejectCommaSeparated = false,
-  requiredMessage
+  rejectCommaSeparated = false
 } = {}) {
   let values = headerValues(req.headers, req.rawHeaders, name);
 
-  if (!values.length) {
-    if (requiredMessage)
-      throw badRequest(requiredMessage);
-
+  if (!values.length)
     return undefined;
-  }
 
   if (values.length > 1)
     throw badRequest(ambiguousMessage ?? `Ambiguous ${name} header`);
@@ -91,24 +87,23 @@ function hasValidPort(value) {
 }
 
 function hostFrom(req, trustProxy) {
-  let host = trustProxy
+  let directHost = singleHeaderValue(req, 'host', {
+    ambiguousMessage: 'Ambiguous Host header'
+  })?.trim();
+  let forwardedHost = trustProxy
     ? singleHeaderValue(req, 'x-forwarded-host', {
       ambiguousMessage: 'Ambiguous x-forwarded-host header',
       rejectCommaSeparated: true
-    })
+    })?.trim()
     : undefined;
 
-  host ??= singleHeaderValue(req, 'host', {
-    ambiguousMessage: 'Ambiguous Host header',
-    requiredMessage: 'Host header is required'
-  });
-
-  host = String(host).trim();
-
-  if (!isValidHost(host))
+  if (directHost === undefined && forwardedHost === undefined)
+    throw badRequest('Host header is required');
+  if ((directHost !== undefined && !isValidHost(directHost)) ||
+      (forwardedHost !== undefined && !isValidHost(forwardedHost)))
     throw badRequest('Invalid Host header');
 
-  return host;
+  return forwardedHost ?? directHost;
 }
 
 function protocolFrom(req, proxyTrusted) {
@@ -147,10 +142,11 @@ function appendPlainValue(object, name, value) {
     return;
   }
 
-  setPlainValue(object, name, [
-    ...(Array.isArray(object[name]) ? object[name] : [object[name]]),
-    value
-  ]);
+  let previous = object[name];
+  if (Array.isArray(previous))
+    previous.push(value);
+  else
+    setPlainValue(object, name, [previous, value]);
 }
 
 function parseCookieHeader(header) {
@@ -166,12 +162,10 @@ function parseCookieHeader(header) {
       continue;
 
     let separatorIndex = trimmed.indexOf('=');
-    let name = safeDecodeUriComponent(
-      separatorIndex === -1 ? trimmed : trimmed.slice(0, separatorIndex)
-    );
-    let value = safeDecodeUriComponent(
-      separatorIndex === -1 ? '' : trimmed.slice(separatorIndex + 1)
-    );
+    if (separatorIndex < 1)
+      continue;
+    let name = safeDecodeUriComponent(trimmed.slice(0, separatorIndex));
+    let value = safeDecodeUriComponent(trimmed.slice(separatorIndex + 1));
 
     if (Object.hasOwn(cookies, name))
       continue;
@@ -193,7 +187,7 @@ function hasDotSegment(path) {
 }
 
 function assertRouteSafePath(path) {
-  if (!path.startsWith('/') || path.startsWith('//') || hasDotSegment(path))
+  if (!path.startsWith('/') || path.startsWith('//') || path.includes('\\') || hasDotSegment(path))
     throw badRequest('Invalid request target');
 }
 
@@ -319,33 +313,34 @@ export function createBaseRequest(req, {
 /**
  * Return a redacted request snapshot for logs, events, and replay artifacts.
  *
- * Values that commonly carry secrets or user input are represented by names or
- * booleans only: headers, cookies, query values, body, and raw body.
+ * Only a matched route's configured path can appear in the snapshot. Values
+ * that commonly carry secrets or user input are represented by names or booleans.
  *
  * @param {object} request - Cricket request object.
+ * @param {string} [routePath] - Configured path template of the matched endpoint.
  * @returns {object} Safe request summary.
  */
-export function safeRequestSnapshot(request = {}) {
+export function safeRequestSnapshot(request = {}, routePath) {
   return {
     id: request.id,
     method: request.method,
-    path: request.path,
+    ...(routePath === undefined ? {} : { path: routePath }),
     protocol: request.protocol,
     host: request.host,
     origin: request.origin,
     secure: request.secure,
     headers: sortedKeys(request.headers),
     cookies: sortedKeys(request.cookies),
-    query: sortedKeys(request.query),
+    hasQuery: Object.keys(request.query ?? {}).length > 0,
     params: sortedKeys(request.params),
     hasBody: request.body !== undefined,
     hasRawBody: request.rawBody !== undefined
   };
 }
 
-function hostAllowedBy(allowedHost, host, request) {
+async function hostAllowedBy(allowedHost, host, request) {
   if (typeof allowedHost === 'function')
-    return allowedHost(host, request);
+    return (await allowedHost(host, request)) === true;
 
   if (allowedHost instanceof RegExp) {
     allowedHost.lastIndex = 0;
@@ -364,20 +359,19 @@ function hostAllowedBy(allowedHost, host, request) {
  * strings, RegExp patterns, or functions that evaluate the host dynamically.
  *
  * @param {object} request - Cricket request object with a `host` property.
- * @param {string|RegExp|Function|string[]|undefined} allowedHosts - Host allowlist.
+ * @param {string|RegExp|Function|Array<string|RegExp|Function>|undefined} allowedHosts - Host allowlist.
  * @throws {Error} When the host is not in the allowed list.
  */
-export function assertAllowedHost(request, allowedHosts) {
-  if (!allowedHosts)
+export async function assertAllowedHost(request, allowedHosts) {
+  if (allowedHosts === undefined)
     return;
 
   let hosts = Array.isArray(allowedHosts) ? allowedHosts : [allowedHosts];
 
-  if (!hosts.length)
-    return;
-
-  if (hosts.some(allowedHost => hostAllowedBy(allowedHost, request.host, request)))
-    return;
+  for (let allowedHost of hosts) {
+    if (await hostAllowedBy(allowedHost, request.host, request))
+      return;
+  }
 
   throw badRequest('Host not allowed');
 }
@@ -572,9 +566,18 @@ function parseJson(buffer, headers) {
   }
 }
 
-function parseForm(buffer, headers) {
-  let params = new URLSearchParams(bufferToString(buffer, headers));
-  return paramsFromSearchParams(params);
+function parseForm(buffer, headers, maxFields = defaultMaxFormFields) {
+  let text = bufferToString(buffer, headers);
+  let start = text.startsWith('?') ? 1 : 0;
+  let fields = 0;
+  // Count pairs before URLSearchParams allocates an entry for each one.
+  for (let index = start; index < text.length; index++) {
+    if (text[index] === '&' || (index !== start && text[index - 1] !== '&'))
+      continue;
+    if (++fields > maxFields)
+      throw payloadTooLarge(`Form exceeds ${maxFields} fields`, { maxFields });
+  }
+  return paramsFromSearchParams(new URLSearchParams(text));
 }
 
 /**
@@ -644,7 +647,7 @@ export async function completeRequestBody(req, request, endpoint) {
   if (contentType === 'application/x-www-form-urlencoded') {
     return {
       ...request,
-      body: parseForm(raw, request.headers)
+      body: parseForm(raw, request.headers, endpoint?.maxFormFields)
     };
   }
 

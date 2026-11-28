@@ -9,12 +9,16 @@
   app `requestBodyLimits` keyed by operation ID for deployment-specific byte limits.
   Use `beforeBodyRules` when access must be checked before an upload is read.
   A rule can return a Cricket response to end the request early.
+  URL-encoded forms cap submissions at 1,000 fields by default. Set
+  `maxFormFields` on the endpoint when it needs a different limit.
+  Set raw body and multipart byte limits to positive safe integers.
 - Use `fetch(request, context)` with an integration built around web
   `Request` and `Response`. Keep rules for access, set `maxBodyBytes`, and
   honor `request.signal`. Declare allowed statuses and media types with
   `fetchResponses`. The body stays streamed. Fetch rejects `body`, `rawBody`,
   `multipart`, `apiVersions`, `requestBody`, `response`, and `responses`.
-  Params, query, and header validation still work.
+  Params, query, and header validation still work. The Fetch request uses the
+  validated host. Read normalized proxy facts from `context.request`.
 
 ## Describe responses
 
@@ -25,7 +29,8 @@
   for wire types Cricket cannot infer. Numeric `z.coerce.number()` params and
   query fields have schema support. Coerced request body values need explicit
   wire metadata.
-- Use status-specific `responses` for different output schemas. Use
+- Use status-specific `responses` for different output schemas. Include every
+  handler status explicitly or through a range or `default`. Use
   `contentTypes` if the same schema is served in several media types and set
   the actual response header with `withHeaders`. OpenAPI uses the serializer's
   public output schema when the response includes a serializer.
@@ -51,8 +56,9 @@ version and its deltas when support ends.
 
 - Set app `trustProxy` to verified peer IPs or CIDRs. Trust is off by default.
   Have the proxy overwrite forwarded host and protocol. Read `request.clientIp`,
-  `request.peerIp`, and `request.proxyTrusted` from Cricket. The app owns host
-  allowlists.
+  `request.peerIp`, and `request.proxyTrusted` from Cricket. Set a non-empty
+  `allowedHosts` list in production. Async predicates must resolve to `true`
+  to admit a host. Keep direct access to the backend listener private.
 - Use app `responseHeaders(request)` for defaults and `requestPolicy({ request })`
   for early responses such as trusted-origin preflight. Policy runs before
   protocol hosts and normal middleware. Explicit response headers take
@@ -62,5 +68,7 @@ version and its deltas when support ends.
   `@robdel12/cricket/oauth` for authorization code with S256 PKCE and opaque
   access and refresh tokens. Install the plugin on the app and compose
   `services.oauth` when setup dependencies and domain services are ready.
+  The OAuth origin must match the request host and verified scheme. Public
+  origins require HTTPS. Loopback HTTP is available for local development.
   Keep account checks, consent, UI, and storage in the app. Run code consumption,
   token rotation, and revocation in the app store's transaction.

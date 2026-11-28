@@ -162,18 +162,29 @@ apps explicitly allow verified socket peers or CIDRs. Cricket validates authorit
 and forwarded IP hops once, exposes plain peer/client facts, and stops the IP
 walk at the nearest untrusted hop. Cricket endpoints and protocol integrations
 use those same request facts. Apps own proxy deployment, header replacement,
-network access, and host allowlists. IP values stay out of automatic request
+network access, and the list of accepted public hosts. The runtime rejects an
+empty configured host list and waits for an affirmative predicate decision.
+The Fetch request carries the validated authority. Integrations get client IP
+and proxy facts from Cricket's context. IP values stay out of automatic request
 snapshots.
 
 OAuth is an opt-in domain plugin. Cricket owns the authorization flow and
 token rules. Apps own user sign-in, consent, permissions, and the durable store.
 Atomic code exchange and token rotation keep each connection independent.
+OAuth verifies the configured origin's host and scheme using Cricket's
+normalized request facts. Public origins require HTTPS.
 
 Handler, middleware, and fallback return values are domain bodies by default.
 Only explicit, function-shaped Cricket response helpers control status,
 headers, cookies, redirects, streaming, and cleanup. This keeps domain objects
 from accidentally becoming transport instructions because they happen to have
 a field named `status` or `redirect`.
+
+A status-specific response map covers each handler result. An unlisted status
+must match a declared range or default, or Cricket rejects the response. Form
+parsing caps both bytes and field count, and collects repeated values in order.
+Route matching walks path segments and takes the rightmost valid separators
+for parameters that share a segment.
 
 Known-length file streams should preserve their byte metadata without loading
 an entire file into memory. The runtime verifies framing, retains backpressure,
@@ -360,8 +371,9 @@ still obey their contracts. Request execution and later response cleanup are
 separate reporting phases, while retries and product failure policy remain with
 background jobs.
 
-Default logs and observer events exclude raw auth headers, cookies, query values,
-request/response bodies, `Set-Cookie` values, raw error objects, and open-ended
+Default logs and observer events use route templates and omit the raw path and
+query string. They exclude raw auth headers, cookies, request/response bodies,
+`Set-Cookie` values, raw error objects, and open-ended
 trace dumps. Optional reporting adapters add only bounded metadata and reuse
 app-owned SDKs. Apps own initialization,
 exception scrubbing, and flushing after HTTP work drains; shutdown hooks stop

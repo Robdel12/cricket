@@ -212,20 +212,18 @@ describe('Cricket HTTP runtime', () => {
       let terminal = observations
         .map(({ event }) => event)
         .filter(event => ['response.finished', 'response.closed'].includes(event.type));
-      assert.equal(terminal.length, 6, JSON.stringify(terminal.map(({ type, request }) => [type, request.method, request.path])));
-      let byRequest = new Map(terminal.map(event => [
-        `${event.request.method} ${event.request.path}`,
-        event
-      ]));
-      assert.equal(byRequest.get('GET /protocol/success').response.status, 200);
-      assert.equal(byRequest.get('GET /protocol/success').route, 'protocol:test-protocol');
-      assert.equal(byRequest.get('GET /protocol/success').response.body, 'opaque');
-      assert.deepEqual(byRequest.get('GET /protocol/success').response.cookies, ['session']);
-      assert.equal(byRequest.get('GET /protocol/denied').response.status, 401);
-      assert.equal(byRequest.get('GET /protocol/throw').response.status, 500);
-      assert.equal(byRequest.get('GET /protocol/stream').response.status, 200);
-      assert.equal(byRequest.get('GET /ordinary').response.status, 200);
-      assert.equal(byRequest.get('OPTIONS /protocol/success').response.status, 204);
+      assert.equal(terminal.length, 6);
+      let protocolEvents = terminal.filter(event => event.route === 'protocol:test-protocol');
+      assert.deepEqual(protocolEvents.map(event => event.response.status).sort(), [200, 200, 401, 500]);
+      assert.ok(protocolEvents.every(event => event.request.path === undefined));
+      let sessionResponse = protocolEvents.find(event => event.response.cookies.includes('session'));
+      assert.equal(sessionResponse.response.status, 200);
+      assert.equal(sessionResponse.response.body, 'opaque');
+      let ordinaryResponse = terminal.find(event => event.request.path === '/ordinary');
+      assert.equal(ordinaryResponse.response.status, 200);
+      let preflightResponse = terminal.find(event => event.request.method === 'OPTIONS');
+      assert.equal(preflightResponse.response.status, 204);
+      assert.equal(preflightResponse.request.path, undefined);
       assert.equal(
         JSON.stringify(observations).includes('protocol-secret'),
         false,
@@ -356,12 +354,12 @@ describe('Cricket HTTP runtime', () => {
       assert.equal(secondResponse.status, 200);
 
       let finished = observations.filter(({ event }) => event.type === 'response.finished');
-      let first = finished.find(({ event }) => event.request.path === '/protocol/first');
-      let second = finished.find(({ event }) => event.request.path === '/protocol/second');
+      let first = finished.find(({ context }) => context.services === firstRuntime.services);
+      let second = finished.find(({ context }) => context.services === secondRuntime.services);
       assert.ok(first);
       assert.ok(second);
-      assert.equal(first.context.services, firstRuntime.services);
-      assert.equal(second.context.services, secondRuntime.services);
+      assert.equal(first.event.request.path, undefined);
+      assert.equal(second.event.request.path, undefined);
       assert.notEqual(first.context.services, second.context.services);
       assert.notEqual(first.context.logger, second.context.logger);
       assert.equal(Object.isFrozen(first.context), true);
@@ -759,9 +757,9 @@ describe('Cricket HTTP runtime', () => {
     });
 
     let response = await request(runtime.app)
-      .post('/projects/018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0?token=query-secret')
+      .post('/projects/018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0?token=query-secret&bare-query-secret')
       .set('authorization', 'Bearer auth-secret')
-      .set('cookie', 'session=request-secret')
+      .set('cookie', 'session=request-secret; malformed-cookie-value')
       .send({ name: 'Launch Plan' });
 
     assert.equal(response.status, 201);
@@ -778,20 +776,22 @@ describe('Cricket HTTP runtime', () => {
     ]);
     assert.equal(events[0].requestId, 'req_observable_1');
     assert.equal(events[0].request.method, 'POST');
-    assert.equal(events[0].request.path, '/projects/018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0');
+    assert.equal(events[0].request.path, undefined);
     assert.ok(events[0].request.headers.includes('authorization'));
     assert.ok(events[0].request.headers.includes('cookie'));
     assert.equal(events[0].request.headers.includes('mutated'), false);
     assert.equal(mutatedEvents[0].request.headers.includes('mutated'), false);
     assert.deepEqual(events[0].request.cookies, ['session']);
-    assert.deepEqual(events[0].request.query, ['token']);
+    assert.equal(events[0].request.hasQuery, true);
     assert.equal(events[0].request.hasBody, false);
     assert.deepEqual(events[1].route, {
       method: 'POST',
       path: '/projects/:projectId',
       operationId: 'createProjectById'
     });
+    assert.equal(events[1].request.path, '/projects/:projectId');
     assert.deepEqual(events[1].request.params, ['projectId']);
+    assert.equal(events[3].request.path, '/projects/:projectId');
     assert.equal(events[3].response.status, 201);
     assert.deepEqual(events[3].response.cookies, ['session']);
     assert.equal(events[3].response.body, 'json');
@@ -806,8 +806,10 @@ describe('Cricket HTTP runtime', () => {
 
     assert.equal(serializedEvents.includes('auth-secret'), false);
     assert.equal(serializedEvents.includes('request-secret'), false);
+    assert.equal(serializedEvents.includes('malformed-cookie-value'), false);
     assert.equal(serializedEvents.includes('response-secret'), false);
     assert.equal(serializedEvents.includes('query-secret'), false);
+    assert.equal(serializedEvents.includes('018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0'), false);
     assert.equal(serializedEvents.includes('Launch Plan'), false);
   });
 
@@ -1332,6 +1334,11 @@ describe('Cricket HTTP runtime', () => {
     });
     assert.equal(handlerLog.metadata.authorization, '[Redacted]');
     assert.equal(responseLog.metadata.response.status, 200);
+    assert.equal(responseLog.metadata.request.path, '/projects/:projectId');
+
+    let unmatched = await request(runtime.app).get('/unknown/private-path');
+    assert.equal(unmatched.status, 404);
+    assert.equal(logs.at(-1).metadata.request.path, undefined);
 
     let serializedLogs = JSON.stringify(logs);
 
@@ -1339,6 +1346,8 @@ describe('Cricket HTTP runtime', () => {
     assert.equal(serializedLogs.includes('request-secret'), false);
     assert.equal(serializedLogs.includes('query-secret'), false);
     assert.equal(serializedLogs.includes('should-redact'), false);
+    assert.equal(serializedLogs.includes('private-path'), false);
+    assert.equal(serializedLogs.includes('018f5f7e-9b5f-7d9a-8f69-3f6c3df71af0'), false);
   });
 
 

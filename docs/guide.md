@@ -18,7 +18,7 @@ New here? You can [get a route running](guide.md#your-first-route) in a few minu
 
 ## Your first route
 
-Let's get a route running. You'll need Node 24 or newer and pnpm. In a few minutes you'll have a real endpoint that checks what comes in and what goes out.
+Let's get a route running. You'll need Node 24.22.3 or newer in the 24.x line, or Node 26.13.1 or newer, plus pnpm.
 
 ### Install Cricket
 
@@ -613,6 +613,8 @@ let upload = defineEndpoint({
 
 `beforeBodyRules` run before Cricket reads the body. Return a Cricket response from a rule to end the request without reading the body first. When a limit comes from config, set it on the app with `requestBodyLimits`, keyed by the route's operation ID. Need the exact bytes, like for webhook signatures? Use `rawBody` instead.
 
+URL-encoded forms have their own field limit. Cricket accepts up to 1,000 fields by default, counting each repeated value. Set `maxFormFields` on an endpoint when it needs a different limit. A form that exceeds it gets a 413. Request byte limits must be positive safe integers, including `rawBody.maxBytes` and `multipart.maxBytes`.
+
 ### Use a Fetch handler
 
 Got a library that already speaks web-standard `Request` and `Response`? Give the route a `fetch` function. Cricket still matches the route and runs rules, then hands you a real `Request`.
@@ -650,6 +652,7 @@ export let app = defineCricketApp({
 ```
 
 Fetch routes declare their statuses and content types in `fetchResponses`. Cricket checks those without buffering the body. Use a normal handler for parsed bodies, raw bodies, multipart uploads, and endpoint API versions.
+The Fetch request uses the validated host and omits forwarding headers. Use `context.request.clientIp` and the other normalized proxy facts for access checks.
 
 ### Run behind a proxy
 
@@ -658,9 +661,9 @@ Cricket ignores `X-Forwarded-*` headers by default. If a proxy you control sits 
 ```js title="examples/trusted-proxy.js"
 import { defineCricketApp, defineEndpoint, ok, startCricketApp } from '@robdel12/cricket';
 
-// This trusts a proxy on the same machine. Swap in your real proxy addresses,
-// and have the proxy overwrite forwarded headers. Being on a private network
-// isn't enough to trust a caller.
+// This trusts a proxy on the same machine. Keep the backend port private and
+// have the proxy overwrite forwarded headers. Use the peer addresses and
+// public hostnames from your deployment.
 export let app = defineCricketApp({
   name: 'Trusted proxy example',
   trustProxy: { peers: ['127.0.0.1', '::1'] },
@@ -685,6 +688,8 @@ await startCricketApp(app, { port: 4020, main: import.meta.url });
 ```
 
 Only listed peers can set the client IP, host, or protocol. Use your real proxy addresses, and have the proxy overwrite forwarded headers rather than pass them through.
+
+Set `allowedHosts` to the hostnames your app serves. A list must contain at least one host, RegExp, or predicate. Cricket awaits predicates and accepts the host when one returns `true`. Keep the backend listener private and set request size, rate, and timeout limits at the proxy. Use your configured public origin for links sent to users.
 
 ### Shut down cleanly
 
@@ -985,6 +990,7 @@ A few things to know:
 - `authMethods` on the app names your auth schemes. `auth` on a route says which ones it takes. This only documents auth. Your rules still enforce it.
 - `headers` parses the request headers you list and puts them in `input.headers`. Use lowercase names.
 - When a response `schema` and `serializer` are both set, the docs show the serializer's output. Internal fields like `internalNote` above stay out of the docs and out of the response.
+- When you set `responses`, every status your handler returns needs a declaration. Cricket uses the exact status first, then a range like `2XX`, then `default`. A shorthand `response` also counts as an exact declaration for the method's default status. An undeclared status produces a redacted 500.
 
 ### Custom types
 
@@ -1092,6 +1098,11 @@ tokens. The app decides who can sign in, what a user can consent to, and how
 to check the user's current access. Use `createOAuthClients` for configured
 clients and Client ID Metadata Documents, and `fetchOAuthMetadata` for
 bounded requests to public HTTPS metadata.
+Public OAuth origins require HTTPS. Loopback origins can use HTTP for
+development. If your proxy terminates TLS, configure Cricket's trusted peers
+so requests match the public origin's host and scheme.
+A configured `allowClientMetadata` policy runs for each lookup, including
+cached documents. Confidential clients must use their registered auth method.
 
 The app supplies a durable store to `createOAuthAuthorization` and
 `createOAuthTokenService`. Run each store operation inside one database
@@ -1374,6 +1385,7 @@ logger.info('project.created', { projectId: project.id });
 ```
 
 Cricket redacts fields that look like secrets, like `authorization`, `cookie`, `password`, and `token`.
+Automatic request logs and observer events use the matched route template. They report whether a query was present and omit the original path and query string.
 
 ### Tracing
 

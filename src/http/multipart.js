@@ -14,18 +14,14 @@ let defaultMaxFiles = 100;
 let defaultMaxFields = 1000;
 
 function appendValue(object, name, value) {
-  if (!Object.hasOwn(object, name)) {
-    Object.defineProperty(object, name, {
-      value,
-      enumerable: true,
-      configurable: true,
-      writable: true
-    });
+  let previous = Object.hasOwn(object, name) ? object[name] : undefined;
+  if (Array.isArray(previous)) {
+    previous.push(value);
     return;
   }
 
   Object.defineProperty(object, name, {
-    value: Array.isArray(object[name]) ? [...object[name], value] : [object[name], value],
+    value: previous === undefined ? value : [previous, value],
     enumerable: true,
     configurable: true,
     writable: true

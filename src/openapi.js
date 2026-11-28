@@ -497,6 +497,7 @@ function validateAuthRequirements(requirements, schemes) {
  * - `authMethods` on the app names your auth schemes. `auth` on a route says which ones it takes. This only documents auth. Your rules still enforce it.
  * - `headers` parses the request headers you list and puts them in `input.headers`. Use lowercase names.
  * - When a response `schema` and `serializer` are both set, the docs show the serializer's output. Internal fields like `internalNote` above stay out of the docs and out of the response.
+ * - When you set `responses`, every status your handler returns needs a declaration. Cricket uses the exact status first, then a range like `2XX`, then `default`. A shorthand `response` also counts as an exact declaration for the method's default status. An undeclared status produces a redacted 500.
  *
  * ## Custom types
  *

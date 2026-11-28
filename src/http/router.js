@@ -29,30 +29,77 @@ export function joinPaths(...parts) {
   return `/${path}`;
 }
 
-function compilePath(path) {
+function compileSegment(segment) {
   let names = [];
-  let normalizedPath = String(path).replace(/\/+$/g, '') || '/';
-  let parts = [];
+  let literals = [];
   let lastIndex = 0;
-  let paramPattern = /:([A-Za-z0-9_]+)/g;
 
-  for (let match of normalizedPath.matchAll(paramPattern)) {
-    parts.push(escapeRegex(normalizedPath.slice(lastIndex, match.index)));
-    parts.push('([^/]+)');
+  for (let match of segment.matchAll(/:([A-Za-z0-9_]+)/g)) {
+    literals.push(segment.slice(lastIndex, match.index));
     names.push(match[1]);
     lastIndex = match.index + match[0].length;
   }
 
-  parts.push(escapeRegex(normalizedPath.slice(lastIndex)));
-
-  return {
-    names,
-    regex: new RegExp(`^${parts.join('')}$`)
-  };
+  if (!names.length)
+    return segment;
+  literals.push(segment.slice(lastIndex));
+  return { names, literals };
 }
 
-function escapeRegex(value) {
-  return value.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+function pathSegments(path) {
+  let end = path.length;
+  while (end > 1 && path[end - 1] === '/')
+    end -= 1;
+  return (path.slice(0, end) || '/').split('/');
+}
+
+function compilePath(path) {
+  let segments = pathSegments(String(path)).map(compileSegment);
+  return { segments, names: segments.flatMap(segment => segment.names ?? []) };
+}
+
+function matchSegment(value, { names, literals }) {
+  let prefix = literals[0];
+  let suffix = literals.at(-1);
+  if (!value.startsWith(prefix) || !value.endsWith(suffix))
+    return;
+
+  let captures = new Array(names.length);
+  let end = value.length - suffix.length;
+  // Take the rightmost possible separators so the earlier captures stay greedy.
+  for (let index = captures.length - 1; index > 0; index--) {
+    let literal = literals[index];
+    let latest = end - literal.length - 1;
+    if (latest < prefix.length)
+      return;
+    let start = value.lastIndexOf(literal, latest);
+    if (start < prefix.length)
+      return;
+    captures[index] = value.slice(start + literal.length, end);
+    end = start;
+  }
+  if (end <= prefix.length)
+    return;
+  captures[0] = value.slice(prefix.length, end);
+  return captures;
+}
+
+function matchPath({ segments }, parts) {
+  if (segments.length !== parts.length)
+    return;
+
+  let captures = [];
+  for (let [index, segment] of segments.entries()) {
+    let value = parts[index];
+    if (typeof segment === 'string') {
+      if (segment !== value) return;
+    } else {
+      let matched = matchSegment(value, segment);
+      if (!matched) return;
+      captures.push(...matched);
+    }
+  }
+  return captures;
 }
 
 /**
@@ -140,13 +187,12 @@ function assertUniqueRoute(route, seen) {
 }
 
 /**
- * Prepare endpoints for routing by compiling paths and sorting by specificity.
+ * Prepare endpoints for routing by compiling path segments and sorting by specificity.
  *
- * Creates route objects with compiled regex patterns for path matching and sorts
- * them so static segments are matched before parameterized ones.
+ * Static segments are matched before parameterized ones.
  *
  * @param {Array<object>} endpoints - Endpoint contracts with `method` and `path`.
- * @returns {Array<{endpoint: object, method: string, match: {names: string[], regex: RegExp}, score: object}>} Prepared routes.
+ * @returns {Array<{endpoint: object, method: string, match: object, score: object}>} Prepared routes.
  */
 export function prepareRoutes(endpoints = []) {
   let seen = new Set();
@@ -178,10 +224,10 @@ export function prepareRoutes(endpoints = []) {
  */
 export function matchRoute(routes, request) {
   let method = request.method.toUpperCase();
-  let path = request.path.replace(/\/+$/g, '') || '/';
+  let parts = pathSegments(request.path);
   let exactMatch = findRouteMatch(routes, {
     method,
-    path
+    parts
   });
 
   if (exactMatch)
@@ -190,7 +236,7 @@ export function matchRoute(routes, request) {
   if (method === 'HEAD') {
     return findRouteMatch(routes, {
       method: 'GET',
-      path
+      parts
     });
   }
 
@@ -199,13 +245,13 @@ export function matchRoute(routes, request) {
 
 function findRouteMatch(routes, {
   method,
-  path
+  parts
 }) {
   for (let route of routes) {
     if (route.method !== method)
       continue;
 
-    let match = route.match.regex.exec(path);
+    let match = matchPath(route.match, parts);
     if (!match)
       continue;
 
@@ -213,7 +259,7 @@ function findRouteMatch(routes, {
       endpoint: route.endpoint,
       params: Object.fromEntries(route.match.names.map((name, index) => [
         name,
-        decodeParam(match[index + 1])
+        decodeParam(match[index])
       ]))
     };
   }
@@ -232,11 +278,11 @@ function findRouteMatch(routes, {
  * @returns {string[]} Sorted array of allowed HTTP methods.
  */
 export function allowedMethodsForPath(routes, request) {
-  let path = request.path.replace(/\/+$/g, '') || '/';
+  let parts = pathSegments(request.path);
   let methods = new Set();
 
   for (let route of routes) {
-    if (!route.match.regex.exec(path))
+    if (!matchPath(route.match, parts))
       continue;
 
     methods.add(route.method);

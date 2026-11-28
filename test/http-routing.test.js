@@ -26,6 +26,26 @@ function healthEndpoint(path = '/health') {
 }
 
 describe('Cricket HTTP routing', () => {
+  it('preserves greedy captures and method discovery for parameters in one segment', async () => {
+    let endpoint = defineEndpoint({
+      method: 'get',
+      path: '/reports/:namespace-:name.:extension',
+      handler: ({ request }) => ok(request.params)
+    });
+    let app = await createHttpApp({ endpoints: [endpoint] });
+
+    let matched = await request(app).get('/reports/my-team-year-end.json/');
+    assert.equal(matched.status, 200);
+    assert.deepEqual(matched.body, { namespace: 'my-team-year', name: 'end', extension: 'json' });
+
+    let method = await request(app).post('/reports/my-team-year-end.json');
+    assert.equal(method.status, 405);
+    assert.equal(method.headers.allow, 'GET, HEAD, OPTIONS');
+
+    let incomplete = await request(app).get('/reports/report.json');
+    assert.equal(incomplete.status, 404);
+  });
+
   it('threads rule facts, route params, and app context to handlers', async () => {
     let loadProject = defineRule('loadProject', ({ input }) => {
       return {
@@ -391,6 +411,7 @@ describe('Cricket HTTP routing', () => {
     '//evil.example.test/session',
     '/api/%2e%2e/session',
     '/api/../session',
+    '/api\\session',
     'https://api.example.test/session'
   ]) {
     it(`rejects route-confusing request target ${target}`, async () => {
@@ -509,6 +530,32 @@ describe('Cricket HTTP routing', () => {
 
     assert.equal(first.status, 200);
     assert.equal(second.status, 200);
+  });
+
+  it('requires an affirmative host decision before serving an endpoint', async () => {
+    let app = await createHttpApp({
+      allowedHosts: [
+        () => 'truthy',
+        async host => {
+          if (host === 'unavailable.example.test')
+            throw new Error('host lookup unavailable');
+          return host === 'api.example.test';
+        }
+      ],
+      endpoints: [healthEndpoint()]
+    });
+
+    let accepted = await request(app).get('/health').set('host', 'api.example.test');
+    let rejected = await request(app).get('/health').set('host', 'other.example.test');
+    let unavailable = await request(app).get('/health').set('host', 'unavailable.example.test');
+    assert.equal(accepted.status, 200);
+    assert.equal(rejected.status, 400);
+    assert.equal(unavailable.status, 500);
+    assert.equal(unavailable.body.error.message, 'Internal server error');
+  });
+
+  it('rejects an explicitly empty host allowlist during app definition', () => {
+    assert.throws(() => defineManualTestApp({ allowedHosts: [] }), /allowedHosts must contain at least one/);
   });
 
   it('keeps framework context fields authoritative while merging app context', async () => {

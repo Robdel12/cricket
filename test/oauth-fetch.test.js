@@ -13,6 +13,16 @@ let documentUrl = 'https://client.example/client.json';
 let publicAddress = { address: '8.8.8.8', family: 4 };
 let publicIpv6 = { address: '2606:4700::1111', family: 6 };
 let metadata = { client_id: documentUrl, client_name: 'Sample client' };
+let oauthPaths = {
+  authorization: '/oauth/authorize',
+  token: '/oauth/token',
+  revocation: '/oauth/revoke',
+  jwks: '/oauth/jwks',
+  resourceMetadata: '/.well-known/oauth-protected-resource/mcp',
+  authorizationMetadata: '/.well-known/oauth-authorization-server/oauth',
+  interaction: '/oauth/interactions',
+  interactionLanding: '/consent'
+};
 
 function createHttpsFixture({
   chunks = [Buffer.from(JSON.stringify(metadata))],
@@ -183,6 +193,47 @@ test('only HTTPS and loopback HTTP callbacks are accepted from OAuth client meta
   }
 });
 
+test('cached client documents still require the current request to pass metadata policy', async () => {
+  let fetches = 0;
+  let clients = createOAuthClients({
+    issuer: 'https://api.example/oauth',
+    allowClientMetadata: async ({ request }) => request.clientIp === '192.0.2.10',
+    async fetchMetadata() {
+      fetches += 1;
+      return {
+        client_id: documentUrl,
+        redirect_uris: ['https://client.example/callback'],
+        grant_types: ['authorization_code', 'refresh_token']
+      };
+    }
+  });
+
+  assert.equal((await clients.find(documentUrl, { clientIp: '192.0.2.10' })).id, documentUrl);
+  assert.equal(await clients.find(documentUrl, { clientIp: '192.0.2.11' }), undefined);
+  assert.equal((await clients.find(documentUrl, { clientIp: '192.0.2.10' })).id, documentUrl);
+  assert.equal(fetches, 1);
+});
+
+test('confidential clients use the credential transport registered for the client', async () => {
+  let clients = createOAuthClients({
+    issuer: 'https://api.example/oauth',
+    clients: ['client_secret_basic', 'client_secret_post'].map(method => ({
+      client_id: method,
+      client_secret: 'fixture-secret',
+      token_endpoint_auth_method: method,
+      redirect_uris: ['https://client.example/callback']
+    }))
+  });
+
+  for (let method of ['client_secret_basic', 'client_secret_post']) {
+    let authorization = `Basic ${Buffer.from(`${method}:fixture-secret`).toString('base64')}`;
+    let basic = await clients.authenticate({ authorization, body: {} });
+    let posted = await clients.authenticate({ body: { client_id: method, client_secret: 'fixture-secret' } });
+    assert.equal(basic?.id, method === 'client_secret_basic' ? method : undefined);
+    assert.equal(posted?.id, method === 'client_secret_post' ? method : undefined);
+  }
+});
+
 
 test('an unapproved metadata client gets OAuth errors without navigating the browser', async () => {
   let origin = 'https://api.example';
@@ -198,18 +249,8 @@ test('an unapproved metadata client gets OAuth errors without navigating the bro
   });
   let runtime = await createCricketRuntime(defineCricketApp({
     domains: [],
-    plugins: [defineOAuthPlugin({
-      paths: {
-        authorization: '/oauth/authorize',
-        token: '/oauth/token',
-        revocation: '/oauth/revoke',
-        jwks: '/oauth/jwks',
-        resourceMetadata: '/.well-known/oauth-protected-resource/mcp',
-        authorizationMetadata: '/.well-known/oauth-authorization-server/oauth',
-        interaction: '/oauth/interactions',
-        interactionLanding: '/consent'
-      }
-    })],
+    trustProxy: { peers: ['127.0.0.1', '::1'] },
+    plugins: [defineOAuthPlugin({ paths: oauthPaths })],
     setup() {
       return {
         services: {
@@ -225,9 +266,16 @@ test('an unapproved metadata client gets OAuth errors without navigating the bro
     }
   }), { logger() {} });
   try {
+    let insecure = await request(runtime.app)
+      .get('/oauth/authorize')
+      .set('Host', new URL(origin).host);
+    assert.equal(insecure.status, 421);
+    assert.equal(insecure.headers['cache-control'], 'no-store');
+
     let rejected = await request(runtime.app)
       .get('/oauth/authorize')
       .set('Host', new URL(origin).host)
+      .set('X-Forwarded-Proto', 'https')
       .query({ client_id: documentUrl, redirect_uri: client.redirect_uris[0] });
     assert.equal(rejected.status, 400);
     assert.equal(rejected.body.error, 'unsupported_response_type');
@@ -235,5 +283,23 @@ test('an unapproved metadata client gets OAuth errors without navigating the bro
     assert.equal(rejected.headers['cache-control'], 'no-store');
   } finally {
     await runtime.cleanup();
+  }
+});
+
+test('OAuth allows local HTTP development and requires HTTPS for a public origin', async () => {
+  for (let [origin, status] of [['http://localhost', 200], ['http://api.example.test', 503]]) {
+    let runtime = await createCricketRuntime(defineCricketApp({
+      domains: [],
+      plugins: [defineOAuthPlugin({ paths: oauthPaths })],
+      setup: () => ({ services: { oauth: { origin, publicKeys: { keys: [] } } } })
+    }), { logger() {} });
+    try {
+      let response = await request(runtime.app).get(oauthPaths.jwks)
+        .set('Host', new URL(origin).host);
+      assert.equal(response.status, status);
+      assert.equal(response.headers['cache-control'], 'no-store');
+    } finally {
+      await runtime.cleanup();
+    }
   }
 });

@@ -182,6 +182,7 @@ function freezeAppContract(contract) {
     stable.authMethods = frozenPlain(stable.authMethods);
 
   stable[definedAppContract] = Object.freeze({
+    allowedHosts: stable.allowedHosts,
     architecture: stable.architecture,
     domains: stable.domains,
     endpoints: stable.endpoints,
@@ -205,6 +206,7 @@ function definedAppFor(app) {
     return defineCricketApp(app);
 
   let replacedContracts = [
+    'allowedHosts',
     'architecture',
     'domains',
     'endpoints',
@@ -278,7 +280,7 @@ function validateResolvedDomains(domains) {
 /**
  * @guide getting-started Your first route
  *
- * Let's get a route running. You'll need Node 24 or newer and pnpm. In a few minutes you'll have a real endpoint that checks what comes in and what goes out.
+ * Let's get a route running. You'll need Node 24.22.3 or newer in the 24.x line, or Node 26.13.1 or newer, plus pnpm.
  *
  * ## Install Cricket
  *
@@ -324,6 +326,8 @@ function validateResolvedDomains(domains) {
  * @param {'domains'|'manual'} [options.architecture='domains'] - Manual is a migration escape hatch.
  * @param {string|URL|object[]} [options.domains] - Domain root or inline domains. Required unless architecture is manual.
  * @param {object[]} [options.plugins=[]] - Explicit `defineCricketPlugin` descriptors contributing domains.
+ * @param {string|RegExp|Function|Array<string|RegExp|Function>} [options.allowedHosts]
+ *   Accepted request hosts. Functions may be async and must return true to allow a host.
  * @param {Function|object} [options.observability] - Awaited observers or a configuration object.
  * @param {Function} [options.observability.export] - Send individual events through a bounded background queue.
  * @param {(request: object) => object} [options.responseHeaders]
@@ -366,6 +370,14 @@ export function defineCricketApp(options = {}) {
   let machines = collectedDomains.machines;
   let models = hasExplicitModels ? options.models : collectedDomains.models;
   let allowedHosts = options.allowedHosts;
+  if (allowedHosts !== undefined) {
+    let hosts = Array.isArray(allowedHosts) ? allowedHosts : [allowedHosts];
+    if (!hosts.length || !Array.from(hosts).every(host =>
+      (typeof host === 'string' && host.trim() !== '') ||
+      typeof host === 'function' || host instanceof RegExp
+    ))
+      throw new Error('defineCricketApp allowedHosts must contain at least one hostname, RegExp, or predicate');
+  }
   let prefix = options.prefix ?? '';
   let trustProxy = normalizeTrustProxy(options.trustProxy);
   let middleware = options.middleware ?? [];

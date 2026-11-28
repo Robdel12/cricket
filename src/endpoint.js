@@ -20,6 +20,7 @@ import {
   withResponseBody
 } from './response.js';
 import { fetchResponseToHttpResponse } from './http/fetch.js';
+import { discardResponseBody } from './http/response.js';
 
 export let supportedEndpointMethods = Object.freeze([
   'DELETE',
@@ -41,6 +42,7 @@ let endpointOptionKeys = new Set([
   'operationId',
   'traceName',
   'maxBodyBytes',
+  'maxFormFields',
   'multipart',
   'rawBody',
   'apiVersions',
@@ -104,12 +106,18 @@ function parseRequestObjectSchema(schema, value) {
 function responseDefinitionFor(endpoint, status) {
   if (!endpoint.responses) return endpoint.response;
 
-  let definition = endpoint.responses?.[status] ?? endpoint.responses?.[String(status)];
-  if (definition) return definition;
+  if (Object.hasOwn(endpoint.responses, status))
+    return endpoint.responses[status];
+  if (endpoint.response !== undefined && status === defaultStatusForMethod(endpoint.method))
+    return endpoint.response;
 
-  return String(status) === String(defaultStatusForMethod(endpoint.method))
-    ? endpoint.response
-    : undefined;
+  let statusRange = `${Math.floor(status / 100)}XX`;
+  if (Object.hasOwn(endpoint.responses, statusRange))
+    return endpoint.responses[statusRange];
+  if (Object.hasOwn(endpoint.responses, 'default'))
+    return endpoint.responses.default;
+
+  throw responseContractFailed({ issues: [{ message: `Undeclared response status ${status}` }] });
 }
 
 function normalizeFetchResponses(responses, method, path) {
@@ -173,12 +181,15 @@ function normalizeResponseDefinition(definition, method, path, label) {
 }
 
 function normalizeResponseDefinitions(responses, method, path) {
-  if (!isPlainObject(responses)) return responses;
+  if (responses === undefined) return undefined;
+  if (!isPlainObject(responses) || !Object.keys(responses).length)
+    throw new Error(`${method} ${path} responses must be a non-empty status map`);
 
-  return Object.fromEntries(Object.entries(responses).map(([status, definition]) => [
-    status,
-    normalizeResponseDefinition(definition, method, path, `response ${status}`)
-  ]));
+  return Object.fromEntries(Object.entries(responses).map(([status, definition]) => {
+    if (!/^(?:[1-5][0-9]{2}|[1-5]XX|default)$/.test(status))
+      throw new Error(`${method} ${path} responses has invalid status ${status}`);
+    return [status, normalizeResponseDefinition(definition, method, path, `response ${status}`)];
+  }));
 }
 
 function assertResponseSerializer(definition, label) {
@@ -503,6 +514,7 @@ function parseRequestHeaders(schema, headers = {}) {
  * @param {string} [config.operationId]
  * @param {string} [config.traceName] - Optional request trace span name for the handler.
  * @param {number} [config.maxBodyBytes] - Maximum request body size for this endpoint.
+ * @param {number} [config.maxFormFields=1000] - Maximum number of URL-encoded fields, including repeated names.
  * @param {boolean|object} [config.multipart=false] - Parse multipart form data for this endpoint.
  * @param {boolean|object} [config.rawBody=false] - Endpoint option for requests that need the unparsed request body.
  * @param {object} [config.apiVersions] - Optional endpoint version contract returned by defineApiVersions().
@@ -528,6 +540,7 @@ function parseRequestHeaders(schema, headers = {}) {
  *   operationId?: string,
  *   traceName?: string,
  *   maxBodyBytes?: number,
+ *   maxFormFields?: number,
  *   multipart?: boolean|object,
  *   rawBody?: boolean|object,
  *   body?: any,
@@ -561,6 +574,7 @@ export function defineEndpoint(config) {
     operationId,
     traceName,
     maxBodyBytes,
+    maxFormFields,
     multipart = false,
     rawBody = false,
     apiVersions,
@@ -584,6 +598,13 @@ export function defineEndpoint(config) {
   let normalizedMethod = normalizeEndpointMethod(method);
   if (maxBodyBytes !== undefined && (!Number.isSafeInteger(maxBodyBytes) || maxBodyBytes < 1))
     throw new Error(`${normalizedMethod} ${path} maxBodyBytes must be a positive safe integer`);
+  if (maxFormFields !== undefined && (!Number.isSafeInteger(maxFormFields) || maxFormFields < 1))
+    throw new Error(`${normalizedMethod} ${path} maxFormFields must be a positive safe integer`);
+  for (let [name, options] of [['rawBody', rawBody], ['multipart', multipart]]) {
+    let maxBytes = options?.maxBytes;
+    if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes < 1))
+      throw new Error(`${normalizedMethod} ${path} ${name}.maxBytes must be a positive safe integer`);
+  }
 
   if (fetch !== undefined && typeof fetch !== 'function')
     throw new Error(`${normalizedMethod} ${path} fetch must be a function`);
@@ -591,6 +612,8 @@ export function defineEndpoint(config) {
     throw new Error(`${normalizedMethod} ${path} must use either handler or fetch`);
   if (fetch && (body || multipart || rawBody || apiVersions || requestBody))
     throw new Error(`${normalizedMethod} ${path} Fetch handlers cannot use parsed body, rawBody, multipart, apiVersions, or requestBody contracts`);
+  if (maxFormFields !== undefined && (fetch || rawBody || ['GET', 'HEAD'].includes(normalizedMethod)))
+    throw new Error(`${normalizedMethod} ${path} maxFormFields requires a parsed request body`);
   if (fetch && (response !== undefined || responses !== undefined))
     throw new Error(`${normalizedMethod} ${path} Fetch endpoints use fetchResponses instead of parsed response contracts`);
   if (fetch && fetchResponses === undefined)
@@ -628,6 +651,7 @@ export function defineEndpoint(config) {
     operationId,
     traceName,
     maxBodyBytes,
+    maxFormFields,
     multipart: frozenPlain(multipart),
     rawBody: frozenPlain(rawBody),
     ...(apiVersions === undefined ? {} : { apiVersions }),
@@ -646,6 +670,7 @@ export function defineEndpoint(config) {
 
     async handle(request, context = {}, {
       apiVersionNegotiation,
+      discardResponse,
       timing
     } = {}) {
       let negotiation = apiVersions
@@ -687,7 +712,7 @@ export function defineEndpoint(config) {
       } : handlerContext;
 
       return await timePhase(timing, 'responseValidationMs', () =>
-        parseEndpointResponse(endpoint, result, versionContract, serializerContext)
+        parseEndpointResponse(endpoint, result, versionContract, serializerContext, discardResponse)
       );
     },
 
@@ -764,20 +789,27 @@ export function deprecateEndpoint(endpoint, deprecation) {
  * Validate canonical handler data before the selected public projection.
  * Historical serializers replace the base serializer; they never run after it.
  */
-function parseEndpointResponse(endpoint, result, versionContract, context) {
+async function parseEndpointResponse(endpoint, result, versionContract, context, discardResponse) {
   let response = resolveHttpResponse(result, defaultStatusForMethod(endpoint.method));
 
-  if (response.redirect)
-    return response;
+  try {
+    let definition = responseDefinitionFor(endpoint, response.status);
+    if (response.redirect)
+      return response;
 
-  let definition = responseDefinitionFor(endpoint, response.status);
-  let serializer = responseSerializerFor(versionContract, response.status)
-    ?? definition?.serializer;
-  let canonicalBody = parseResponse(
-    responseSchemaFrom(definition),
-    response.body
-  );
-  let body = serializer ? serializer(canonicalBody, context) : canonicalBody;
-
-  return withResponseBody(response, body);
+    let serializer = responseSerializerFor(versionContract, response.status)
+      ?? definition?.serializer;
+    let canonicalBody = parseResponse(responseSchemaFrom(definition), response.body);
+    let body = serializer ? serializer(canonicalBody, context) : canonicalBody;
+    return withResponseBody(response, body);
+  } catch (error) {
+    if (discardResponse)
+      discardResponse(response);
+    else
+      await Promise.allSettled([
+        Promise.resolve().then(() => discardResponseBody(response.body)),
+        Promise.resolve().then(() => response.onClose?.())
+      ]);
+    throw error;
+  }
 }

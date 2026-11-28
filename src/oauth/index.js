@@ -27,6 +27,11 @@ export { createOAuthTokenService } from './token-service.js';
  * to check the user's current access. Use `createOAuthClients` for configured
  * clients and Client ID Metadata Documents, and `fetchOAuthMetadata` for
  * bounded requests to public HTTPS metadata.
+ * Public OAuth origins require HTTPS. Loopback origins can use HTTP for
+ * development. If your proxy terminates TLS, configure Cricket's trusted peers
+ * so requests match the public origin's host and scheme.
+ * A configured `allowClientMetadata` policy runs for each lookup, including
+ * cached documents. Confidential clients must use their registered auth method.
  *
  * The app supplies a durable store to `createOAuthAuthorization` and
  * `createOAuthTokenService`. Run each store operation inside one database

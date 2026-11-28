@@ -22,6 +22,7 @@ function endpointFor(method = 'post', options = {}) {
     path: options.path ?? '/events',
     body: options.body,
     maxBodyBytes: options.maxBodyBytes,
+    maxFormFields: options.maxFormFields,
     rawBody: options.rawBody,
     handler({ input, request: cricketRequest }) {
       return ok({
@@ -337,6 +338,30 @@ describe('Cricket HTTP requests', () => {
       assert.match(response, /^HTTP\/1\.1 400 |^HTTP\/1\.1 413 /);
     });
   }
+
+  it('counts submitted form fields and keeps repeated values in order', async () => {
+    let app = await createHttpApp({
+      endpoints: [endpointFor('post', { maxFormFields: 2 })]
+    });
+    let accepted = await request(app).post('/events').type('form').send('tag=first&&tag=second');
+    assert.equal(accepted.status, 200);
+    assert.deepEqual(accepted.body.body, { tag: ['first', 'second'] });
+
+    let rejected = await request(app).post('/events').type('form').send('tag=first&tag=second&tag=third');
+    assert.equal(rejected.status, 413);
+    assert.equal(rejected.body.error.code, 'PAYLOAD_TOO_LARGE');
+  });
+
+  it('rejects unbounded raw and multipart byte limits during endpoint definition', () => {
+    for (let name of ['rawBody', 'multipart']) {
+      assert.throws(() => defineEndpoint({
+        method: 'post',
+        path: '/events',
+        [name]: { maxBytes: Infinity },
+        handler: () => ok({})
+      }), new RegExp(`${name}.maxBytes must be a positive safe integer`));
+    }
+  });
 
   it('enforces endpoint body byte limits for fixed and chunked bodies', async () => {
     let endpoint = endpointFor('post', {
